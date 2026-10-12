@@ -1,0 +1,109 @@
+#!/bin/bash
+# m3-testboot: one self-recovering test boot of the M3 Max, driven from the M1 Air.
+#
+#   m3-testboot NAME [--image FILE] [--source-entry ENTRY] [-- PARAM...]
+#
+#   NAME      a short label for the results directory (~/m3-results/<time>-NAME/)
+#   --image   a raw m1n1 boot.bin to chainload over the stage-1 proxy (never written to the ESP);
+#             without it the M3 boots its own ESP boot.bin after the proxy window times out
+#   PARAM...  kernel parameters for this boot only, armed with m3-oneshot on the M3 (plus the
+#             kit's safety parameters and panic=10); without them the boot is a normal one
+#
+# Steps: refuse unless the ESP boot.bin is a16a1fcd; arm (if PARAMs); start the proxy watcher (if
+# --image); reboot; wait for SSH (5 min max); collect; disarm. Recovery needs nothing: a missed
+# window boots the ESP image, a panic or watchdog reboots into the normal entry.
+set -euo pipefail
+
+ESP_SHA=${M3_EXPECT_ESP_SHA:-a16a1fcd1687b5a9863e7997417ffc8f06ede718db96e5c1dbc00edaf6097d82}
+TOOLS=$(cd "$(dirname "$0")" && pwd)
+VENV_PY=$HOME/m1n1-venv/bin/python
+SSH=(ssh -o BatchMode=yes -o ConnectTimeout=5 m3)
+ONESHOT=/home/naeem/aurora-test/bin/m3-oneshot
+
+die() { echo "m3-testboot: $*" >&2; exit 1; }
+now() { date +%H:%M:%S; }
+
+name=${1:-}; [[ -n $name && $name != -* ]] || die "usage: m3-testboot NAME [--image FILE] [--source-entry ENTRY] [-- PARAM...]"
+shift
+image="" source_entry=linux-aurora params=()
+while (($#)); do
+  case $1 in
+    --image) image=$(realpath "$2"); shift 2 ;;
+    --source-entry) source_entry=$2; shift 2 ;;
+    --) shift; params=("$@"); break ;;
+    *) die "unknown argument $1" ;;
+  esac
+done
+
+out=$HOME/m3-results/$(date +%Y%m%d-%H%M%S)-$name
+mkdir -p "$out"
+exec > >(tee -a "$out/run.log") 2>&1
+echo "== $(now) m3-testboot $name image=${image:-none} source=$source_entry params=${params[*]:-none}"
+
+# 1. preconditions
+esp=$("${SSH[@]}" 'sudo -n sha256sum /boot/efi/m1n1/boot.bin' | cut -d' ' -f1)
+[[ $esp == "$ESP_SHA" ]] || die "the ESP boot.bin is $esp, not the expected ${ESP_SHA:0:8}; refusing."
+if [[ -n $image ]]; then
+  [[ -f $image ]] || die "no image $image"
+  sha256sum "$image" | tee "$out/image.sha256"
+  [[ -x $VENV_PY ]] || die "no $VENV_PY"
+fi
+before=$("${SSH[@]}" 'cat /proc/sys/kernel/random/boot_id')
+echo "boot_id before: $before"
+
+# 2. arm
+armed=0
+if ((${#params[@]})); then
+  "${SSH[@]}" "sudo -n SOURCE_ENTRY=$source_entry $ONESHOT arm ${params[*]}" || die "arming refused; nothing changed."
+  armed=1
+fi
+disarm() { ((armed)) && "${SSH[@]}" "sudo -n $ONESHOT disarm" || true; }
+
+# 3. watcher
+wpid=""
+if [[ -n $image ]]; then
+  sudo -n "$VENV_PY" -u "$TOOLS/watch-chainload.py" "$image" 240 >"$out/watcher.log" 2>&1 &
+  wpid=$!
+  sleep 2
+  kill -0 "$wpid" 2>/dev/null || { cat "$out/watcher.log"; disarm; die "the watcher did not start."; }
+fi
+
+# 4. reboot
+echo "== $(now) rebooting the M3"
+"${SSH[@]}" 'sudo -n systemctl reboot' || true
+
+# 5. wait
+if [[ -n $wpid ]]; then
+  wrc=0; wait "$wpid" || wrc=$?
+  echo "== $(now) watcher exit $wrc: $(grep -E 'appeared|no proxy window|jumped|chainload done|Error|Traceback' "$out/watcher.log" | tr '\n' ' ')"
+fi
+# Poll until a new boot answers: right after the reboot request the old system may still answer.
+deadline=$((SECONDS + 300)) after=""
+while :; do
+  after=$("${SSH[@]}" 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null) || after=""
+  [[ -n $after && $after != "$before" ]] && break
+  ((SECONDS < deadline)) || { echo "== $(now) NO new boot on SSH after 5 minutes: stop and report; do not retry"; exit 2; }
+  sleep 3
+done
+echo "== $(now) SSH back, boot_id $after"
+
+# 6. collect (settle first: the display path waits up to 30 s for the PMP)
+sleep 40
+"${SSH[@]}" "sudo -n bash -s" >"$out/collect.txt" 2>&1 <<EOF || true
+echo "uname: \$(uname -r)  nproc: \$(nproc)  boot_id: \$(cat /proc/sys/kernel/random/boot_id)"
+echo "stage1: \$({ tr -d '\0' </proc/device-tree/chosen/asahi,m1n1-stage1-version; } 2>/dev/null || echo 'absent (stage 2 was chainloaded over the proxy)')  stage2: \$(tr -d '\0' </proc/device-tree/chosen/asahi,m1n1-stage2-version)"
+echo "t6031-gpu chosen: \$(tr -d '\0' </proc/device-tree/chosen/asahi,t6031-gpu 2>/dev/null)"
+echo "esp boot.bin: \$(sha256sum /boot/efi/m1n1/boot.bin | cut -d' ' -f1)"
+echo "cmdline: \$(cat /proc/cmdline)"
+echo "failed units: \$(systemctl --failed --no-legend | wc -l)"
+$ONESHOT status
+echo "== verdict lines"
+dmesg | grep -E 'M3 G15C|apple-t6031-display|apple-dcp|apple-pmp-report|apple_pmp|asahi [0-9a-f]+\.gpu|simpledrm|Kernel panic|watchdog' || true
+echo "== drm"; for c in /sys/class/drm/card*-*; do echo "\${c##*/} \$(cat \$c/status 2>/dev/null)"; done; ls /sys/class/backlight
+EOF
+cat "$out/collect.txt"
+
+# 7. disarm (the one-shot is already consumed by Limine; this removes the entry)
+disarm
+grep -q "^esp boot.bin: $ESP_SHA" "$out/collect.txt" && echo "== ESP boot.bin unchanged" || echo "== WARNING: ESP boot.bin changed"
+echo "== $(now) done: $out"

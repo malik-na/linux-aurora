@@ -1,0 +1,37 @@
+uname: 7.1.12-2-20261011.911-sep-ARCH  nproc: 16  boot_id: 59bebfbf-e77e-45ae-a91a-db4e17ca2ef9
+stage1: absent (stage 2 was chainloaded over the proxy)  stage2: v1.6.1-omarchy.aurora17.t6031.1
+bash: line 2: /proc/device-tree/chosen/asahi,m1n1-stage1-version: No such file or directory
+t6031-gpu chosen: 0
+esp boot.bin: a16a1fcd1687b5a9863e7997417ffc8f06ede718db96e5c1dbc00edaf6097d82
+cmdline: root=UUID=<root-uuid> rw rootflags=subvol=@,x-systemd.device-timeout=0 zswap.enabled=0 rootfstype=btrfs quiet splash loglevel=0 systemd.show_status=false rd.udev.log_level=0 vt.global_cursor_default=0 plymouth.ignore-serial-consoles apple_t6031_display.enable=0 softlockup_panic=1 hung_task_panic=1 systemd.watchdog_sec=30 panic=10 air_test.boot=1012-194512
+failed units: 0
+m3-oneshot: this boot is armed boot 1012-194512: 
+m3-oneshot: one-shot variable: not set
+m3-oneshot: /boot/efi/ubootefi.var: does not name air-test
+m3-oneshot: /boot/efi/limine.conf: has the air-test entry ()
+== verdict lines
+[    0.000000] Kernel command line: root=UUID=<root-uuid> rw rootflags=subvol=@,x-systemd.device-timeout=0 zswap.enabled=0 rootfstype=btrfs quiet splash loglevel=0 systemd.show_status=false rd.udev.log_level=0 vt.global_cursor_default=0 plymouth.ignore-serial-consoles apple_t6031_display.enable=0 softlockup_panic=1 hung_task_panic=1 systemd.watchdog_sec=30 panic=10 air_test.boot=1012-194512
+[    0.010793] apple-t6031-display: handoff: apple,t6031-handoff dcp 0x1 display 0x1 piodma 0x1; dcp firmware-compat 14.7.0 version 14.7.0 uuid F493F03E-CC40-3D89-9A08-5F259BA2B246; 8 memory regions, 1 OS log
+[    0.010803] apple-t6031-display: handoff: PMP values /chosen/asahi,t6031-pmp: board-id 0x46 dram-vendor-id 0x6 tunable-uuid 07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB, 72 tunables (image pinned: 2F4EB4C4-001B-3ACF-A9A0-68D8E42FC3A7)
+[    0.010817] apple-t6031-display: handoff: dcp-oslog [mem 0x10005d58000-0x10005d77fff] no-map
+[    0.010823] apple-t6031-display: handoff: dcp-oslog [mem 0x10005d38000-0x10005d57fff] no-map
+[    0.010827] apple-t6031-display: handoff: dcp-oslog [mem 0x10005d18000-0x10005d37fff] no-map
+[    0.010831] apple-t6031-display: handoff: dcp-oslog [mem 0x10005cf8000-0x10005d17fff] no-map
+[    0.010835] apple-t6031-display: handoff: dcp-oslog [mem 0x10005cd8000-0x10005cf7fff] no-map
+[    0.010837] apple-t6031-display: handoff: 5 dcp-oslog reservations
+[    0.010838] apple-t6031-display: handoff: firmware image gfx=F9BEA4A3-D65B-386D-B884-ECF2DF7B159E
+[    0.010839] apple-t6031-display: handoff: firmware image dcp=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010840] apple-t6031-display: handoff: firmware image dcpext0=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010840] apple-t6031-display: handoff: firmware image dcpext1=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010841] apple-t6031-display: handoff: firmware image dcpext2=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010842] apple-t6031-display: handoff: firmware image dcpext3=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010842] apple-t6031-display: handoff: firmware image pmp=07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB
+[    0.010843] apple-t6031-display: native display not requested (apple_t6031_display.enable=1 is not on the command line), display stays on the boot framebuffer
+[    0.101506] watchdog: NMI not fully supported
+[    0.101507] watchdog: Hard watchdog permanently disabled
+[    0.531661] [drm] Initialized simpledrm 1.0.0 for 10bd1485c00.framebuffer on minor 0
+[    0.549916] simple-framebuffer 10bd1485c00.framebuffer: [drm] fb0: simpledrmdrmfb frame buffer device
+[    1.066309] systemd[1]: Using hardware watchdog /dev/watchdog0: 'Apple SoC Watchdog', version 0.
+[    2.948348] systemd[1]: Using hardware watchdog /dev/watchdog0: 'Apple SoC Watchdog', version 0.
+== drm
+card0-Unknown-1 connected

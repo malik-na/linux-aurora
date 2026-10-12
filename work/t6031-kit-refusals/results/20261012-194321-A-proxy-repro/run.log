@@ -1,0 +1,42 @@
+== 19:43:21 m3-testboot A-proxy-repro image=/home/naeem/m3-images/t01/boot.bin.repro source=linux-aurora params=none
+a16a1fcd1687b5a9863e7997417ffc8f06ede718db96e5c1dbc00edaf6097d82  /home/naeem/m3-images/t01/boot.bin.repro
+boot_id before: 4ed1fc41-29fd-4556-a00f-2e60a4ec26fd
+== 19:43:24 rebooting the M3
+== 19:43:57 watcher exit 1: [  14.3s] /dev/ttyACM0 appeared; chainloading /home/naeem/m3-images/t01/boot.bin.repro Waiting for reconnection... ........................................................................................................................................................................................................Traceback (most recent call last): Traceback (most recent call last): 
+== 19:44:01 SSH back, boot_id 58f08437-92df-42e4-8a79-3e58e27cc951
+uname: 7.1.12-2-20261011.911-sep-ARCH  nproc: 16  boot_id: 58f08437-92df-42e4-8a79-3e58e27cc951
+stage1:   stage2: v1.6.1-omarchy.aurora17.t6031.1
+bash: line 2: /proc/device-tree/chosen/asahi,m1n1-stage1-version: No such file or directory
+t6031-gpu chosen: 0
+esp boot.bin: a16a1fcd1687b5a9863e7997417ffc8f06ede718db96e5c1dbc00edaf6097d82
+cmdline: root=UUID=<root-uuid> rw rootflags=subvol=@,x-systemd.device-timeout=0 zswap.enabled=0 rootfstype=btrfs quiet splash loglevel=0 systemd.show_status=false rd.udev.log_level=0 vt.global_cursor_default=0 plymouth.ignore-serial-consoles
+failed units: 0
+m3-oneshot: this boot is a normal boot (no air_test.boot= on the command line)
+m3-oneshot: one-shot variable: not set
+m3-oneshot: /boot/efi/ubootefi.var: does not name air-test
+m3-oneshot: /boot/efi/limine.conf: no air-test entry
+== verdict lines
+[    0.010752] apple-t6031-display: handoff: apple,t6031-handoff dcp 0x1 display 0x1 piodma 0x1; dcp firmware-compat 14.7.0 version 14.7.0 uuid F493F03E-CC40-3D89-9A08-5F259BA2B246; 8 memory regions, 1 OS log
+[    0.010762] apple-t6031-display: handoff: PMP values /chosen/asahi,t6031-pmp: board-id 0x46 dram-vendor-id 0x6 tunable-uuid 07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB, 72 tunables (image pinned: 2F4EB4C4-001B-3ACF-A9A0-68D8E42FC3A7)
+[    0.010775] apple-t6031-display: handoff: dcp-oslog [mem 0x10004a3c000-0x10004a5bfff] no-map
+[    0.010781] apple-t6031-display: handoff: dcp-oslog [mem 0x10004a1c000-0x10004a3bfff] no-map
+[    0.010786] apple-t6031-display: handoff: dcp-oslog [mem 0x100049fc000-0x10004a1bfff] no-map
+[    0.010790] apple-t6031-display: handoff: dcp-oslog [mem 0x100049dc000-0x100049fbfff] no-map
+[    0.010794] apple-t6031-display: handoff: dcp-oslog [mem 0x100049bc000-0x100049dbfff] no-map
+[    0.010796] apple-t6031-display: handoff: 5 dcp-oslog reservations
+[    0.010797] apple-t6031-display: handoff: firmware image gfx=F9BEA4A3-D65B-386D-B884-ECF2DF7B159E
+[    0.010798] apple-t6031-display: handoff: firmware image dcp=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010798] apple-t6031-display: handoff: firmware image dcpext0=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010799] apple-t6031-display: handoff: firmware image dcpext1=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010800] apple-t6031-display: handoff: firmware image dcpext2=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010800] apple-t6031-display: handoff: firmware image dcpext3=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010801] apple-t6031-display: handoff: firmware image pmp=07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB
+[    0.010801] apple-t6031-display: native display not requested (apple_t6031_display.enable=1 is not on the command line), display stays on the boot framebuffer
+[    0.102790] watchdog: NMI not fully supported
+[    0.102791] watchdog: Hard watchdog permanently disabled
+[    0.531624] [drm] Initialized simpledrm 1.0.0 for 10bd1485c00.framebuffer on minor 0
+[    0.551715] simple-framebuffer 10bd1485c00.framebuffer: [drm] fb0: simpledrmdrmfb frame buffer device
+== drm
+card0-Unknown-1 connected
+== ESP boot.bin unchanged
+== 19:44:41 done: /home/naeem/m3-results/20261012-194321-A-proxy-repro

@@ -1,0 +1,2 @@
+== 19:43:16 m3-testboot refusal-test image=none source=linux-aurora params=none
+m3-testboot: the ESP boot.bin is a16a1fcd1687b5a9863e7997417ffc8f06ede718db96e5c1dbc00edaf6097d82, not a16a1fcd; refusing.

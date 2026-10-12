@@ -1,0 +1,4 @@
+== 19:46:40 m3-testboot C-plain image=none source=linux-aurora params=none
+boot_id before: 59bebfbf-e77e-45ae-a91a-db4e17ca2ef9
+== 19:46:41 rebooting the M3
+ssh: connect to host 192.168.1.2 port 22: Connection refused

@@ -1,0 +1,106 @@
+#!/bin/bash
+# m3-oneshot: arm ONE boot of the M3 Max (J516C / T6031) with extra kernel parameters, through the
+# .911 kit's own one-shot mechanism (air-gpu-oneshot.sh: a temporary Limine entry chosen once via
+# LoaderEntryOneShot, which Limine deletes before the kernel starts). Runs on the M3, as root.
+#
+#   sudo m3-oneshot arm PARAM...     arm the next boot with PARAMs plus the kit's safety parameters
+#   sudo m3-oneshot check PARAM...   say whether it could arm; changes nothing
+#   sudo m3-oneshot disarm           clear the one-shot and remove the entry
+#   sudo m3-oneshot status           this boot's arming, and the one-shot variable
+#
+# Same mechanism, locks and checks as the kit (m3max_kit_oneshot_setup in the kit's installer),
+# with its own entry name, tag and state dir so it never collides with the kit. SOURCE_ENTRY
+# (env) picks the Limine entry to copy (default linux-aurora).
+set -euo pipefail
+
+ONESHOT=/usr/local/libexec/aurora-m3max-kit/air-gpu-oneshot.sh
+ONESHOT_SHA256=d0259869b8519439a4dbcdae08ef1b0e17fdcaf84ac746fca61febf6a325f8aa
+# The kit plan's safety line (aurora-2026.10.11.911); new_cmdline adds panic=10 itself.
+SAFETY=(softlockup_panic=1 hung_task_panic=1 systemd.watchdog_sec=30)
+
+[[ $(sha256sum "$ONESHOT" 2>/dev/null | cut -d' ' -f1) == "$ONESHOT_SHA256" ]] ||
+  { echo "m3-oneshot: refused: $ONESHOT is missing or not the pinned version" >&2; exit 1; }
+
+action=${1:-}
+shift || true
+want_source=${SOURCE_ENTRY:-linux-aurora}
+
+AIR_GPU_SOURCE_ONLY=1
+# shellcheck source=/dev/null
+source "$ONESHOT"
+
+# shellcheck disable=SC2034  # air-gpu-oneshot.sh's variables
+PROG=m3-oneshot
+ENTRY=air-test
+TAG=air_test.boot
+SOURCE_ENTRY=$want_source
+STATE_DIR=/var/lib/air-test
+BEGIN_MARK="# >>> air-test: one test boot driven from the M1 Air, chosen only through LoaderEntryOneShot (remove with: sudo m3-oneshot disarm)"
+END_MARK="# <<< air-test"
+
+check_board() {
+  tr '\0' '\n' <"$DT/compatible" 2>/dev/null | grep -qx 'apple,t6031' &&
+    tr '\0' '\n' <"$DT/compatible" | grep -qx 'apple,j516c' ||
+    refuse "this is not the J516C / T6031 this tool is for."
+}
+gpu_node_note() { :; }
+block() {
+  printf '%s\n/%s\n    comment: one test boot from the Air (%s)\n    protocol: efi\n    path: %s\n    cmdline: %s\n%s\n' \
+    "$BEGIN_MARK" "$ENTRY" "$1" "$2" "$3" "$END_MARK"
+}
+new_cmdline() {
+  local w out=() p skip words
+  set -f
+  read -ra words <<<"$SRC_CMDLINE"
+  set +f
+  for w in "${words[@]}"; do
+    skip=0
+    [[ $w == asahi.t6031[_-]* || $w == apple_t6031_display.* || $w == "$TAG"=* || $w == panic=* ]] && skip=1
+    for p in "${PARAMS[@]}" "${SAFETY[@]}"; do
+      [[ $w == "${p%%=*}" || $w == "${p%%=*}"=* ]] && skip=1
+    done
+    ((skip)) || out+=("$w")
+  done
+  printf '%s\n' "${out[*]} ${PARAMS[*]} ${SAFETY[*]} panic=10 $TAG=$ID"
+}
+# The script's checks, plus: the normal entry must not already set a parameter this boot sets.
+eval "oneshot_preflight() $(declare -f preflight | tail -n +2)"
+preflight() {
+  local p
+  oneshot_preflight
+  for p in "${PARAMS[@]}"; do
+    [[ " $SRC_CMDLINE " != *" ${p%%=*}="* && " $SRC_CMDLINE " != *" ${p%%=*} "* ]] ||
+      refuse "the normal //$SOURCE_ENTRY entry already sets ${p%%=*}, so every boot would run with it."
+  done
+}
+
+# Arming a test kernel's entry (SOURCE_ENTRY=linux-aurora-dev) while the normal kernel runs: the
+# script checks the entry against the running kernel ($KREL, "Reboot into the installed kernel
+# first"). Take KREL from that entry's own "Kernel version" instead; preflight still checks that
+# its UKI is that kernel and has every parameter.
+if [[ $SOURCE_ENTRY != linux-aurora && $action == @(arm|check) ]]; then
+  find_esp && find_conf || refuse "no EFI partition or limine.conf to read //$SOURCE_ENTRY from."
+  KEYS=$(entry_keys)
+  [[ $(key count) == 1 && -n $(key kver) ]] || refuse "no single //$SOURCE_ENTRY entry with a Kernel version."
+  KREL=$(key kver)
+  say "arming //$SOURCE_ENTRY, kernel $KREL (this boot runs $(uname -r))"
+fi
+
+case $action in
+  arm)
+    (($#)) || refuse "arm needs at least one parameter."
+    PARAMS=("$@")
+    do_arm
+    ;;
+  check)
+    PARAMS=("$@")
+    QUIET_LOG=1
+    do_check
+    ;;
+  disarm) do_disarm ;;
+  status) do_status ;;
+  *)
+    echo "usage: sudo m3-oneshot {arm PARAM...|check [PARAM...]|disarm|status}" >&2
+    exit 2
+    ;;
+esac

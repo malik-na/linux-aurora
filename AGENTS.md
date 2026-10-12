@@ -1,6 +1,8 @@
 ## Current work
 
-M3 Max (T6031) bring-up, driven from the M1 Air from 2026-10-12. Read `docs/agents/handoff.md` before doing anything.
+M3 Max (T6031) bring-up, driven from the M1 Air from 2026-10-12. Read `docs/agents/handoff.md` before doing anything, then `work/t6031-kit-refusals/README.md` (in the kernel tree: `.scratch/t6031-kit-refusals/`).
+
+**Push every step of progress to the fork, right away** (Naeem, 2026-10-12), so nothing is lost if a machine or a session is: kernel fix branches to `origin` (`malik-na/linux-aurora`), and specs, tickets, tools and results to `agent-docs` under `work/`. The fork is public: never push firmware dumps or crash logs (Apple firmware memory), or anything with serial numbers, MAC addresses or credentials. Nothing goes to `omacom` unless Naeem asks.
 
 ## Agent skills
 

@@ -1,0 +1,4 @@
+# >>> aurora-sep: M3 Max boot loader variant (remove with: install-aurora-sep.sh --uninstall)
+chosen.asahi,t6031-dcp=1
+chosen.asahi,t6031-gpu=1
+# <<< aurora-sep: M3 Max boot loader variant
