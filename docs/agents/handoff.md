@@ -2,6 +2,12 @@
 
 Read this first when driving the M3 Max (J516C / T6031, hostname `omarchy`) from the M1 Air. Written 2026-10-12 by the session that ran Phases 0–1 on the M3 itself.
 
+## Who drives
+
+- **The Air's Claude session is the driver from 2026-10-12.** It decides and runs everything that changes the M3: builds, installs, `boot.bin` swaps, reboots, posts to GitHub.
+- **Sessions on the M3 stay passive.** That includes the original session (`51fea551-b6f8-41ca-b2e9-96890bf32600`, Remote Control on) and any session the reboot hook resumes. They answer questions and report the M3's state, but change nothing unless the user or the Air session asks them to. Two drivers would race each other on `boot.bin` and reboots.
+- The Air's SSH key (`m1-air`, ED25519 `SHA256:J7ckOYueWBTFQugC1N0/8Zz2YAfnfqzUc3ON8/dgpvo`) is in the M3's `~/.ssh/authorized_keys`.
+
 ## Where the context lives
 
 - Plan and results: [tracking issue](https://github.com/malik-na/linux-aurora/issues/1), [Phase 0](https://github.com/malik-na/linux-aurora/issues/4), [Phase 1](https://github.com/malik-na/linux-aurora/issues/5). Every result is recorded there; read the comments, not just the bodies.
