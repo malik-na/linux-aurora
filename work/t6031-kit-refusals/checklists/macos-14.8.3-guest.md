@@ -14,12 +14,12 @@ Source for the steps: the Asahi hypervisor guide (`docs/sw/m1n1-hypervisor.md`) 
    ```
    diskutil apfs addVolume disk3 APFS macOSTest
    ```
-   Replace `disk3` with the main container's disk (the one Macintosh HD is in, from `diskutil apfs list`). Not the Linux stub's container.
+   Replace `disk3` with the main container's disk, the one Macintosh HD is in (`diskutil apfs list`). On this Mac that is **disk4**; disk3 is the 2.5 GB Linux stub container. Done 2026-10-12: `macOSTest` on disk4, no role.
 4. Fetch the 14.8.3 installer:
    ```
    softwareupdate --fetch-full-installer --full-installer-version 14.8.3
    ```
-   It lands in /Applications as "Install macOS Sonoma". If 14.8.3 isn't offered, tell me the list it prints; the Asahi guide links the archived InstallAssistant for this build.
+   **Blocked 2026-10-12:** Apple no longer offers 14.8.3 (oldest Sonoma listed: 14.8.7, 23J520; build 23J220 is absent from Apple's catalog). Use the archived InstallAssistant.pkg the Asahi hypervisor guide lists for 14.8.3: https://archive.org/details/install-assistant_20250207 (`docs/sw/m1n1-hypervisor.md`, "Using archived InstallAssistant.pkg"). It is a third-party mirror of an Apple-signed package, so before running it: `pkgutil --check-signature InstallAssistant.pkg` must show Apple's signature chain, and after it extracts "Install macOS Sonoma.app" into /Applications, its `Contents/Info.plist` must say 14.8.3 / build 23J220 (`DTPlatformVersion` and the app's version keys). Refuse anything else.
 5. Run the installer and pick **macOSTest** as the target. Let it finish and set up a user (any name; it's a throwaway install). Skip iCloud and all services.
 6. First boot of macOSTest: in System Settings → General → Startup Disk, macOSTest is now the default. Leave it so for the next part.
 
