@@ -2,7 +2,7 @@
 
 Research for [malik-na/linux-aurora#23](https://github.com/malik-na/linux-aurora/issues/23) (parent #18). Date: 2026-10-12.
 
-Clean-room (ADR 0001): no Apple firmware, IPSW, installer or driver contents were extracted, decoded, disassembled or read. Sources are the Asahi and fork kernel source, m1n1 source, the fork's commit messages and the `agent-docs` boot logs. The only thing read on the M3 (`ssh m3`) was non-root `/proc/device-tree/chosen` text properties (the image UUIDs and OS-firmware label). No serials, MACs or credentials appear here.
+Clean-room (ADR 0001): no Apple firmware, IPSW, installer or driver contents were extracted, decoded or read. Sources are the Asahi and fork kernel source, m1n1 source, the fork's commit messages and the `agent-docs` boot logs. The only thing read on the M3 (`ssh m3`) was non-root `/proc/device-tree/chosen` text properties (the image UUIDs and OS-firmware label). No serials, MACs or credentials appear here.
 
 Labels: **[E]** a cited source says so. **[I]** my inference, not proven.
 
