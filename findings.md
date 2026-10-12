@@ -1,5 +1,7 @@
 # T6031 (M3 Max, G15C) beyond T6030 (M3 Pro, G15S): render path, per-SoC tables, and the GPU description sent to Mesa
 
+> **Correction, 2026-10-13:** the team's public Mesa for the M3 GPUs is https://github.com/aurora-silicon/mesa/tree/agx3b, which carries `AGX_CHIP_G15C` throughout `src/asahi` (chip table, cmdstream, IOTO, VDM). The "no public Mesa supports G15" conclusion below predates that pointer; the kernel-side findings stand.
+
 Research for malik-na/linux-aurora#14 (parent #18). Date: 2026-10-12.
 
 **Question.** Once the GPU firmware accepts the InitData, what does T6031 need beyond T6030 in the
