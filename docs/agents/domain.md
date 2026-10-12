@@ -10,6 +10,15 @@ How the engineering skills should consume this repo's domain documentation when 
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
 
+## Where they live in this repo
+
+The repo root is the kernel tree, so these files must never be created there as real files: they would end up in a kernel commit headed for omacom. They live on the `agent-docs` branch, in the worktree at `../linux-aurora-agent-docs`, and the kernel tree reaches them through symlinks listed in `.git/info/exclude`:
+
+- `CONTEXT.md` → `../linux-aurora-agent-docs/CONTEXT.md`
+- `docs/adr` → `../../linux-aurora-agent-docs/docs/adr`
+
+Writing through the symlinks is fine. Commit and push from the worktree, never from the kernel tree. If `git status` in the kernel tree ever shows `CONTEXT.md`, `CONTEXT-MAP.md` or anything under `docs/`, stop: a symlink is missing.
+
 ## File structure
 
 Single-context repo (most repos):

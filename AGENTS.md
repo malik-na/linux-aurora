@@ -14,8 +14,8 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 
 ### Domain docs
 
-Single-context: one root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.
+Single-context: one root `CONTEXT.md` + `docs/adr/`, both kept on `agent-docs` like the files below. See `docs/agents/domain.md`.
 
 ### Where these files live
 
-`AGENTS.md`, `CLAUDE.md` and `docs/agents/` are personal and must never reach a kernel commit or an omacom PR. In this tree they are symlinks into the `agent-docs` worktree at `../linux-aurora-agent-docs` (an orphan branch pushed to `origin` only). Commit and push changes to them from that worktree, never from this tree.
+`AGENTS.md`, `CLAUDE.md`, `CONTEXT.md`, `docs/adr/` and `docs/agents/` are personal and must never reach a kernel commit or an omacom PR. In this tree they are symlinks into the `agent-docs` worktree at `../linux-aurora-agent-docs` (an orphan branch pushed to `origin` only). Commit and push changes to them from that worktree, never from this tree.
