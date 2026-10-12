@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 (harness), 04 (verdict "matches").
 
-**Status:** ready-for-agent
+**Status:** moved to malik-na/linux-aurora#17 ("Display: let the T6031 display past the PMP check") on the wayfinder map #18
 
 - [ ] The KUnit suite `apple-display-gate-t6031`: its fixture carries `07FF4C5B…`, the other-image case shows the T6030 image is now refused on T6031, and an unknown image is still refused; every `apple-display-gate-t6030` (and T8122) case passes unchanged
 - [ ] On the armed boot, `apple-t6031-display:` adds the PMP (no "PMP not added" line), and the display path reaches PMP start, DCP start, or a named later refusal; record the lines verbatim

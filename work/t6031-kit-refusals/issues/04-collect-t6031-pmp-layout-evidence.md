@@ -6,7 +6,7 @@ Preferred method: add a read-only T6031 collector to m1n1, modelled on upstream'
 
 **Blocked by:** 02 (harness).
 
-**Status:** ready-for-agent
+**Status:** moved to malik-na/linux-aurora#16 ("Display: collect the PMP layout evidence") on the wayfinder map #18
 
 - [ ] The collector refuses to read when either power state isn't on, and logs why
 - [ ] On the chainloaded boot, the facts are published (`/chosen`) and logged, and the boot otherwise matches a normal one (16 CPUs, 0 failed units, ESP hash unchanged)
