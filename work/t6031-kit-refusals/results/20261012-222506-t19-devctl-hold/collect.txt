@@ -1,0 +1,121 @@
+uname: 7.1.12-aurora-dev  nproc: 16  boot_id: c9fe50ab-cda1-4663-992b-44f9ff00d310
+stage1: absent (stage 2 was chainloaded over the proxy)  stage2: v1.6.1-omarchy.aurora17.t6031.1
+t6031-gpu chosen: 1
+esp boot.bin: a16a1fcd1687b5a9863e7997417ffc8f06ede718db96e5c1dbc00edaf6097d82
+cmdline: root=UUID=<root-uuid> rw rootflags=subvol=@,x-systemd.device-timeout=0 zswap.enabled=0 rootfstype=btrfs quiet splash loglevel=0 systemd.show_status=false rd.udev.log_level=0 vt.global_cursor_default=0 plymouth.ignore-serial-consoles asahi.t6031_start=1 asahi.t6031_pstate_cap=1 asahi.t6031_devctl_hold=1 softlockup_panic=1 hung_task_panic=1 systemd.watchdog_sec=30 panic=10 air_test.boot=1012-222507
+failed units: 0
+m3-oneshot: this boot is armed boot 1012-222507: asahi.t6031_start=1 asahi.t6031_pstate_cap=1 asahi.t6031_devctl_hold=1 
+m3-oneshot: one-shot variable: not set
+m3-oneshot: /boot/efi/ubootefi.var: does not name air-test
+m3-oneshot: /boot/efi/limine.conf: has the air-test entry ()
+== verdict lines
+[    0.000000] Kernel command line: root=UUID=<root-uuid> rw rootflags=subvol=@,x-systemd.device-timeout=0 zswap.enabled=0 rootfstype=btrfs quiet splash loglevel=0 systemd.show_status=false rd.udev.log_level=0 vt.global_cursor_default=0 plymouth.ignore-serial-consoles asahi.t6031_start=1 asahi.t6031_pstate_cap=1 asahi.t6031_devctl_hold=1 softlockup_panic=1 hung_task_panic=1 systemd.watchdog_sec=30 panic=10 air_test.boot=1012-222507
+[    0.010933] apple-t6031-display: handoff: apple,t6031-handoff dcp 0x1 display 0x1 piodma 0x1; dcp firmware-compat 14.7.0 version 14.7.0 uuid F493F03E-CC40-3D89-9A08-5F259BA2B246; 8 memory regions, 1 OS log
+[    0.010943] apple-t6031-display: handoff: PMP values /chosen/asahi,t6031-pmp: board-id 0x46 dram-vendor-id 0x6 tunable-uuid 07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB, 72 tunables (image pinned: 2F4EB4C4-001B-3ACF-A9A0-68D8E42FC3A7)
+[    0.010957] apple-t6031-display: handoff: dcp-oslog [mem 0x10006080000-0x1000609ffff] no-map
+[    0.010964] apple-t6031-display: handoff: dcp-oslog [mem 0x10006060000-0x1000607ffff] no-map
+[    0.010969] apple-t6031-display: handoff: dcp-oslog [mem 0x10006040000-0x1000605ffff] no-map
+[    0.010973] apple-t6031-display: handoff: dcp-oslog [mem 0x10006020000-0x1000603ffff] no-map
+[    0.010977] apple-t6031-display: handoff: dcp-oslog [mem 0x10006000000-0x1000601ffff] no-map
+[    0.010978] apple-t6031-display: handoff: 5 dcp-oslog reservations
+[    0.010979] apple-t6031-display: handoff: firmware image gfx=F9BEA4A3-D65B-386D-B884-ECF2DF7B159E
+[    0.010980] apple-t6031-display: handoff: firmware image dcp=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010981] apple-t6031-display: handoff: firmware image dcpext0=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010981] apple-t6031-display: handoff: firmware image dcpext1=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010982] apple-t6031-display: handoff: firmware image dcpext2=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010982] apple-t6031-display: handoff: firmware image dcpext3=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010983] apple-t6031-display: handoff: firmware image pmp=07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB
+[    0.010984] apple-t6031-display: native display not requested (apple_t6031_display.enable=1 is not on the command line), display stays on the boot framebuffer
+[    0.074507] asahi 40a400000.gpu: Probing...
+[    0.074515] asahi 40a400000.gpu: M3: board compatible accepted
+[    0.074548] asahi 40a400000.gpu: M3: boot loader power configuration accepted (14 operating points)
+[    0.074560] asahi 40a400000.gpu: M3: "shared-l2" region: static node "/reserved-memory/uat-pagetables-l2"
+[    0.074564] asahi 40a400000.gpu: M3: memory region list accepted
+[    0.074565] asahi 40a400000.gpu: M3: register resources accepted
+[    0.074569] asahi 40a400000.gpu: M3: mailbox resource accepted
+[    0.074581] asahi 40a400000.gpu: M3: reserved resources [Region { base: 1151050940416, size: 16384 }, Region { base: 1151050678272, size: 262144 }, Region { base: 1151050645504, size: 16384 }, Region { base: 1151050661888, size: 16384 }, Region { base: 1099522408448, size: 409600 }, Region { base: 1099540889600, size: 1310720 }]
+[    0.074587] asahi 40a400000.gpu: M3: resource admission complete
+[    0.074595] asahi 40a400000.gpu: M3 G15C start: armed (asahi.t6031_start=1, one attempt this boot): initdata_version=0x0c08e21e83800490 io_mappings=12 fender=0x144000 pstate_cap=1 power_cap_mw=30000
+[    0.075815] asahi 40a400000.gpu: M3 G15C start: image identity header present text-sha256 prefix 0xc26ec89c1150eb65
+[    0.075818] asahi 40a400000.gpu: M3 G15C start: image UUID f9bea4a3d65b386db884ecf2df7b159e
+[    0.075821] asahi 40a400000.gpu: M3: firmware identity accepted
+[    0.075878] asahi 40a400000.gpu: M3: GPU power target capped at 30000 mW (the device tree's operating points reach 65800 mW)
+[    0.075896] asahi 40a400000.gpu: M3 G15C start: HwDataB unit masks +0x17c0 0x70000000f, +0x17c8 0x7
+[    0.075898] asahi 40a400000.gpu: M3: MTR sensor masks: fast-die 0x402a002b, alarm 0x0
+[    0.075906] asahi 40a400000.gpu: M3: device-tree InitData: 8 performance states in two voltage-sorted tables from 13 device-tree states, top 1380 MHz at 955 mV, SRAM floor 815 mV, maximum power 30000 mW
+[    0.075908] asahi 40a400000.gpu: M3: performance state 1: primary dt 1 338 MHz core 605 mV SRAM 815 mV; secondary dt 1 338 MHz; third 338 MHz core 605 mV SRAM 815 mV (columns differ)
+[    0.075909] asahi 40a400000.gpu: M3: performance state 2: primary dt 2 618 MHz core 680 mV SRAM 815 mV; secondary dt 2 618 MHz; third 618 MHz core 680 mV SRAM 815 mV (columns differ)
+[    0.075910] asahi 40a400000.gpu: M3: performance state 3: primary dt 3 796 MHz core 730 mV SRAM 815 mV; secondary dt 3 796 MHz; third 796 MHz core 730 mV SRAM 815 mV (columns differ)
+[    0.075911] asahi 40a400000.gpu: M3: performance state 4: primary dt 5 924 MHz core 770 mV SRAM 815 mV; secondary dt 4 832 MHz; third 832 MHz core 770 mV SRAM 815 mV (columns differ)
+[    0.075912] asahi 40a400000.gpu: M3: performance state 5: primary dt 7 1056 MHz core 800 mV SRAM 815 mV; secondary dt 6 952 MHz; third 952 MHz core 800 mV SRAM 815 mV (columns differ)
+[    0.075913] asahi 40a400000.gpu: M3: performance state 6: primary dt 9 1182 MHz core 855 mV SRAM 855 mV; secondary dt 8 1064 MHz; third 1064 MHz core 855 mV SRAM 855 mV (columns differ)
+[    0.075914] asahi 40a400000.gpu: M3: performance state 7: primary dt 11 1312 MHz core 915 mV SRAM 915 mV; secondary dt 10 1182 MHz; third 1182 MHz core 915 mV SRAM 915 mV (columns differ)
+[    0.075915] asahi 40a400000.gpu: M3: performance state 8: primary dt 13 1380 MHz core 940 mV SRAM 940 mV; secondary dt 12 1242 MHz; third 1242 MHz core 940 mV SRAM 940 mV (columns differ)
+[    0.075918] asahi 40a400000.gpu: M3 G15G start: performance cap 8 lowered to 1 (asahi.t8122_pstate_cap)
+[    0.075929] asahi 40a400000.gpu: M3: InitData contents: generated from the device tree (asahi.m3_initdata=auto); performance states 1..=8, cap 1 (338 MHz), boot request 1 (338 MHz); thermal limit on, firmware highest state 1 (338 MHz)
+[    0.075934] asahi 40a400000.gpu: M3: ASC aperture mapped
+[    0.075940] asahi 40a400000.gpu: M3: SGX aperture mapped
+[    0.075941] asahi 40a400000.gpu: M3: no apple,pmp link; GPU power is left to its power domain
+[    0.075959] asahi 40a400000.gpu: M3 G15C: power acknowledged, version=0x07041100 counts=0x0021040a core-mask=0xffffffffff, firmware=unknown
+[    0.075961] asahi 40a400000.gpu: M3 G15C start: SGX setup write: SGX+0xd14000 = 0x70001
+[    0.075991] asahi 40a400000.gpu: M3 G15C: GPU handoff lock checked.
+[    0.076050] asahi 40a400000.gpu: M3 G15C: DRM data initialized; backend absent, device unregistered
+[    0.076742] asahi 40a400000.gpu: RTKit: Initializing (protocol version 12)
+[    0.076815] asahi 40a400000.gpu: M3 G15S: mapped firmware crash storage PA=0x10001d08000 size=0x4000
+[    0.076850] asahi 40a400000.gpu: MMU: Initializing...
+[    0.076866] asahi 40a400000.gpu: MMU: Initializing kernel page table
+[    0.076870] asahi 40a400000.gpu: MMU: Creating kernel page tables
+[    0.076918] asahi 40a400000.gpu: MMU: Kernel page tables created
+[    0.076920] asahi 40a400000.gpu: MMU: Initializing TTBs
+[    0.076921] asahi 40a400000.gpu: MMU: initialized
+[    0.077762] asahi 40a400000.gpu: M3: firmware TA progress-check interval=100
+[    0.077766] asahi 40a400000.gpu: M3: firmware performance request: state 1 (338 MHz), base state 1, cap state 1 (338 MHz) of 1..=8
+[    0.077778] asahi 40a400000.gpu: M3: InitData self-check passed: version 0xc08e21e83800490, 7 record pointers, 12 IO mappings, GPU region 0x10bfffb8000
+[    0.077782] asahi 40a400000.gpu: M3: thermal limit on (asahi.m3_thermal=on): runtime cap 1..=1 (338..=338 MHz) from the hottest SoC die temperature of zones macsmc_soc_die and apple_pmp_hotspot: up while at or below 70.0 C, down at or above 80.0 C, cap 1 at or above 88.0 C or without a fresh reading
+[    0.077807] asahi 40a400000.gpu: M3: publishing owned initdata 0xfffffc204062ff40
+[    0.077808] asahi 40a400000.gpu: M3 G15C start: device-control doorbell held back (asahi.t6031_devctl_hold=1); waiting up to 5 s for the ready words
+[    0.077809] asahi 40a400000.gpu: M3 G15C start: 0 ms after the InitData publish, no doorbell sent, healthy=true
+[    0.077811] asahi 40a400000.gpu: M3 firmware readiness: magic=0x0 runtime=0 newA=0/0 newB=1
+[    0.077979] asahi 40a400000.gpu: RTKit: co-processor has crashed
+[    0.077989] asahi 40a400000.gpu: RTKit: Message (id=1): Host and FW Interface is mismatched, please ensure the versions are aligned.
+[    0.077990] asahi 40a400000.gpu: RTKit: Version: RTKit: RTKit-2419.140.12.release - Client: not set
+[    0.077992] asahi 40a400000.gpu: RTKit: Crash time: 640600326
+[    0.077993] asahi 40a400000.gpu: RTKit: Unknown crashlog section: 43637374
+[    0.077994] asahi 40a400000.gpu: RTKit: Unknown crashlog section: 43617343
+[    0.077994] asahi 40a400000.gpu: RTKit: Mailbox history (type = 0, index = 0)
+[    0.077995] asahi 40a400000.gpu: RTKit:  #000@262e5b4d: 0000000000000000 0060000000000220
+[    0.077996] asahi 40a400000.gpu: RTKit:  #001@262e5c0c: 0000000000000000 00100000000c000c
+[    0.077998] asahi 40a400000.gpu: RTKit:  #002@262e6155: 0000000000000000 00200000000c000c
+[    0.077998] asahi 40a400000.gpu: RTKit:  #003@262e6234: 0000000000000000 0080000000000003
+[    0.077999] asahi 40a400000.gpu: RTKit:  #004@262e6389: 0000000000000000 0080000000000001
+[    0.078000] asahi 40a400000.gpu: RTKit:  #005@262e63cc: 0000000000000000 0088000100000003
+[    0.078001] asahi 40a400000.gpu: RTKit:  #006@262e6549: 0000000000000000 0088000100000000
+[    0.078002] asahi 40a400000.gpu: RTKit:  #007@262e6571: 0000000000000000 0050000100000002
+[    0.078002] asahi 40a400000.gpu: RTKit:  #008@262e6624: 0000000000000001 0010410001d08000
+[    0.078003] asahi 40a400000.gpu: RTKit:  #009@262e6738: 0000000000000000 0070000000000020
+[    0.078004] asahi 40a400000.gpu: RTKit:  #010@262e68c5: 0000000000000000 00b0000000000020
+[    0.078005] asahi 40a400000.gpu: RTKit:  #011@262e6970: 0000000000000000 00b0000000000020
+[    0.078006] asahi 40a400000.gpu: RTKit:  #012@262e6b1d: 0000000000000000 0050002000000002
+[    0.078006] asahi 40a400000.gpu: RTKit:  #013@262e6b45: 0000000000000000 0050002100000002
+[    0.078007] asahi 40a400000.gpu: RTKit:  #014@262ec6d9: 0000000000000020 00810c204062ff40
+[    0.078008] asahi 40a400000.gpu: RTKit:  #015@00000000: 0000000000000000 4372746b00000000
+[    0.078009] asahi 40a400000.gpu: RTKit: Unknown crashlog section: 4372746b
+[    0.078010] asahi 40a400000.gpu: RTKit: Unknown crashlog section: 43636470
+[    0.078011] asahi 40a400000.gpu: RTKit: Unknown crashlog section: 43737461
+[    0.078012] asahi 40a400000.gpu: M3 G15S: firmware crashed, retained crashlog bytes=16384
+[    0.078013] asahi 40a400000.gpu: M3 G15C start: firmware crash log 16384 bytes (offering 16384)
+[    0.078026] asahi 40a400000.gpu: M3 G15C start: 16384-byte firmware crash log offered to devcoredump
+[    0.079065] asahi 40a400000.gpu: M3 G15C start: 1 ms after the InitData publish, no doorbell sent, healthy=false
+[    0.079067] asahi 40a400000.gpu: M3 firmware readiness: magic=0x0 runtime=0 newA=0/0 newB=1
+[    0.079068] asahi 40a400000.gpu: M3 firmware readiness: magic=0x0 runtime=0 newA=0/0 newB=1
+[    0.084425] asahi 40a400000.gpu: Asahi: sealed 587087-byte firmware fault snapshot offered to devcoredump (M3FWD001)
+[    0.084426] asahi 40a400000.gpu: M3 G15C verdict: initdata-rejected (EIO): the firmware crashed after the InitData (version 0xc08e21e83800490) was published; see the crash log
+[    0.087545] asahi 40a400000.gpu: probe with driver asahi failed with error -5
+[    0.117475] watchdog: NMI not fully supported
+[    0.117475] watchdog: Hard watchdog permanently disabled
+[    0.546421] [drm] Initialized simpledrm 1.0.0 for 10bd1485c00.framebuffer on minor 0
+[    0.566491] simple-framebuffer 10bd1485c00.framebuffer: [drm] fb0: simpledrmdrmfb frame buffer device
+[    1.070243] systemd[1]: Using hardware watchdog /dev/watchdog0: 'Apple SoC Watchdog', version 0.
+[    2.977301] systemd[1]: Using hardware watchdog /dev/watchdog0: 'Apple SoC Watchdog', version 0.
+== drm
+card0-Unknown-1 connected
