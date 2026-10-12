@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# air-cam-shot [DIR] [COUNT] [INTERVAL]
+#   Take COUNT stills (default 1) INTERVAL seconds apart (default 2) with the M1 Air's
+#   FaceTime camera (apple-isp, /dev/video1, NV12 1280x720) into DIR (default ~/m3-results/cam),
+#   named cam-<HHMMSS>.jpg. Point the Air at the M3's panel to watch a test boot. Stills only;
+#   nothing is pushed anywhere by this script.
+set -euo pipefail
+dir=${1:-$HOME/m3-results/cam}; count=${2:-1}; interval=${3:-2}
+dev=$(for d in /dev/video*; do v4l2-ctl -d "$d" --info 2>/dev/null | grep -q "apple-isp" && { echo "$d"; break; }; done)
+[[ -n ${dev:-} ]] || { echo "air-cam-shot: no apple-isp camera device" >&2; exit 1; }
+mkdir -p "$dir"
+for ((i = 0; i < count; i++)); do
+    f="$dir/cam-$(date +%H%M%S).jpg"
+    timeout 30 ffmpeg -hide_banner -loglevel error -y -f v4l2 -i "$dev" -ss 0.5 -frames:v 1 -update 1 "$f"
+    echo "$f"
+    (( i + 1 < count )) && sleep "$interval"
+done
