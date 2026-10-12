@@ -1,0 +1,143 @@
+== 03:29:53 m3-testboot t31-kmscube-sw image=none source=linux-aurora-dev params=apple_t6031_display.enable=1
+boot_id before: a2755dc4-33bd-495d-824b-61ca9b4a4bee
+m3-oneshot: arming //linux-aurora-dev, kernel 7.1.12-aurora-dev (this boot runs 7.1.12-2-20261011.911-sep-ARCH)
+m3-oneshot: armed one boot (1013-032953): the next boot only runs 7.1.12-aurora-dev with apple_t6031_display.enable=1. Limine clears the one-shot before that boot starts, so the boots after it should be the normal entry; this has been tested on an M3 Pro only, so on a first arming check it with --status in the armed boot. Don't update packages before the reboot. Reboot when ready, then run: sudo air-gpu-collect.sh
+== 03:29:53 rebooting the M3
+== 03:30:40 SSH back, boot_id 2b4bc529-f1b5-4045-a2c3-3d3b951cc8a0
+uname: 7.1.12-aurora-dev  nproc: 16  boot_id: 2b4bc529-f1b5-4045-a2c3-3d3b951cc8a0
+stage1: v1.6.1-dirty  stage2: v1.6.1-omarchy.aurora17.t6031.1
+t6031-gpu chosen: 0
+esp boot.bin: a16a1fcd1687b5a9863e7997417ffc8f06ede718db96e5c1dbc00edaf6097d82
+cmdline: root=UUID=<root-uuid> rw rootflags=subvol=@,x-systemd.device-timeout=0 zswap.enabled=0 rootfstype=btrfs quiet splash loglevel=0 systemd.show_status=false rd.udev.log_level=0 vt.global_cursor_default=0 plymouth.ignore-serial-consoles apple_t6031_display.enable=1 softlockup_panic=1 hung_task_panic=1 systemd.watchdog_sec=30 panic=10 air_test.boot=1013-032953
+failed units: 0
+m3-oneshot: this boot is armed boot 1013-032953: 
+m3-oneshot: one-shot variable: not set
+m3-oneshot: /boot/efi/ubootefi.var: does not name air-test
+m3-oneshot: /boot/efi/limine.conf: has the air-test entry ()
+== verdict lines
+[    0.000000] Kernel command line: root=UUID=<root-uuid> rw rootflags=subvol=@,x-systemd.device-timeout=0 zswap.enabled=0 rootfstype=btrfs quiet splash loglevel=0 systemd.show_status=false rd.udev.log_level=0 vt.global_cursor_default=0 plymouth.ignore-serial-consoles apple_t6031_display.enable=1 softlockup_panic=1 hung_task_panic=1 systemd.watchdog_sec=30 panic=10 air_test.boot=1013-032953
+[    0.010728] apple-t6031-display: handoff: apple,t6031-handoff dcp 0x1 display 0x1 piodma 0x1; dcp firmware-compat 14.7.0 version 14.7.0 uuid F493F03E-CC40-3D89-9A08-5F259BA2B246; 8 memory regions, 1 OS log
+[    0.010738] apple-t6031-display: handoff: PMP values /chosen/asahi,t6031-pmp: board-id 0x46 dram-vendor-id 0x6 tunable-uuid 07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB, 72 tunables (image pinned: 07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB)
+[    0.010749] apple-t6031-display: handoff: dcp-oslog [mem 0x10004288000-0x100042a7fff] no-map
+[    0.010755] apple-t6031-display: handoff: dcp-oslog [mem 0x10004268000-0x10004287fff] no-map
+[    0.010759] apple-t6031-display: handoff: dcp-oslog [mem 0x10004248000-0x10004267fff] no-map
+[    0.010763] apple-t6031-display: handoff: dcp-oslog [mem 0x10004228000-0x10004247fff] no-map
+[    0.010767] apple-t6031-display: handoff: dcp-oslog [mem 0x10004208000-0x10004227fff] no-map
+[    0.010769] apple-t6031-display: handoff: 5 dcp-oslog reservations
+[    0.010770] apple-t6031-display: handoff: firmware image gfx=F9BEA4A3-D65B-386D-B884-ECF2DF7B159E
+[    0.010771] apple-t6031-display: handoff: firmware image dcp=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010771] apple-t6031-display: handoff: firmware image dcpext0=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010772] apple-t6031-display: handoff: firmware image dcpext1=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010773] apple-t6031-display: handoff: firmware image dcpext2=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010773] apple-t6031-display: handoff: firmware image dcpext3=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010774] apple-t6031-display: handoff: firmware image pmp=07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB
+[    0.011149] apple-t6031-display: enabled /soc/iommu@38530c000, /soc/iommu@385304000, /soc/mailbox@386c08000, /soc/dcp@386c00000 and /soc/display-subsystem
+[    0.012385] apple-t6031-display: PMP: this Mac's 74 values from /chosen/asahi,t6031-pmp
+[    0.012387] apple-t6031-display: added the PMP and its display and storage report; minimum power state of disp_sys, disp_fe and disp_cpu raised to active; pmp and pms_sram kept on
+[    0.071792] apple-pmp-report 2903c0000.pmp-report: PMP halted, firmware 07ff4c5b-cb2e-3de6-95ff-3b107d19b7ab; PTD status 0x0 request 0x0 ack 0x0; requesting 0x200010000
+[    0.071911] apple-pmp-report 2903c0000.pmp-report: request 0x200010000 set; the PMP starts when a consumer asks for it
+[    0.105505] watchdog: NMI not fully supported
+[    0.105506] watchdog: Hard watchdog permanently disabled
+[    0.538453] [drm] Initialized simpledrm 1.0.0 for 10bd1485c00.framebuffer on minor 0
+[    0.558398] simple-framebuffer 10bd1485c00.framebuffer: [drm] fb0: simpledrmdrmfb frame buffer device
+[    1.057702] systemd[1]: Using hardware watchdog /dev/watchdog0: 'Apple SoC Watchdog', version 0.
+[    3.004593] systemd[1]: Using hardware watchdog /dev/watchdog0: 'Apple SoC Watchdog', version 0.
+[    3.451885] apple-pmp-report 2903c0000.pmp-report: starting the PMP with request 0x200010000
+[    3.454785] apple_pmp 290700000.pmp: RTKit: Initializing (protocol version 12)
+[    3.455860] apple_pmp 290700000.pmp: PMP firmware and endpoint ready
+[    3.529120] apple_pmp 290700000.pmp: unknown property "apple,tunable-fast-die-ctrl-ce-map"
+[    3.546573] apple_pmp 290700000.pmp: unknown property "apple,tunable-afi-bw-threshold"
+[    3.673300] apple_pmp 290700000.pmp: RTKit: syslog message: io.cpp:41: PMP started
+[    4.512003] apple-pmp-report 2903c0000.pmp-report: PMP ready: PTD status 0x1 request 0x200010000 ack 0x200010400
+[    4.512079] apple-dcp 386c00000.dcp: PMP running with the display request acknowledged
+[    4.512702] apple-dcp 386c00000.dcp: DCP CPU control 0x10 status 0x3000ac
+[    4.512995] apple-dcp 386c00000.dcp: RTKit: Initializing (protocol version 12)
+[    4.514452] apple-dcp 386c00000.dcp: RTKit: Unknown oslog message: 30100423ef093f4
+[    4.514455] apple-dcp 386c00000.dcp: RTKit: Unknown oslog message: 4000020893d40cc
+[    4.514456] apple-dcp 386c00000.dcp: RTKit: Unknown oslog message: 4000040255f089a
+[    4.514456] apple-dcp 386c00000.dcp: RTKit: Unknown oslog message: 400006046b2a29b
+[    4.514487] apple-dcp 386c00000.dcp: RTKit: syslog message: _logging_common.cpp:418: [AFK]binary_log_infrastructure_late_init coalescer initialized
+[    4.514500] apple-dcp 386c00000.dcp: DCP RTKit session running
+[    4.515028] apple-dcp 386c00000.dcp: RTKit: syslog message: ck_PCC2DBlm_v5.cpp:2730: IOMFB LACS_ERROR: DCP took too long to respond to LAS stats
+[    4.515106] apple-dcp 386c00000.dcp: RTKit: syslog message: ck_PCC2DBlm_v5.cpp:2772: IOMFB: BLM LTS data hasn't been read in more than 10 secs
+[    4.515184] apple-dcp 386c00000.dcp: RTKit: syslog message: ap_link.c:308: shared memory dva: 0x10ffff00000 0xffffffff004f0000
+[    4.515211] apple-dcp 386c00000.dcp: RTKit: syslog message: ap_link.c:285: ap_link: IOMFB: DCP heap size: 0x1030000 [iBoot:0x1030000] [LinkService:0x0]
+[    4.515247] apple-dcp 386c00000.dcp: DCPLink ready, RPC alignment 64
+[    4.516806] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:5404: IOMFB: Could not find Backlight service
+[    4.516852] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:5412: IOMFB: Could not find nvram service
+[    4.516857] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:2312: virtual bool UnifiedPipeline::start_ios_gated(): Created AP Services
+[    4.516866] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:2339: start_ios_gated: trigger pending HPD notification
+[    4.516901] apple-dcp 386c00000.dcp: RTKit: syslog message: FramebufferDCP.cpp:3441: virtual void IOMobileFramebuffer::hotPlug_notify(uint64_t)
+[    4.520697] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:2346: virtual bool UnifiedPipeline::start_ios_gated(): Flushed RTPs
+[    4.520781] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:1775: set_device_enabled_gated: current state: 1, requested state: 1
+[    4.521260] apple-dcp 386c00000.dcp: RTKit: syslog message: ableCompensator.cpp:903: IOMFB setup_table: Could not find table 'display-backlight-compensation-v1' in registry. Using default table.
+[    4.521516] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:13827: IOMFB updateFrequencies: minimum-frequency property not found, using getClockFrequency(0) instead.
+[    4.521558] apple-dcp 386c00000.dcp: display clock 0: 712000000 Hz
+[    4.521630] apple-dcp 386c00000.dcp: RTKit: syslog message: UPPipe.cpp:5607: IOMFB: vid-clock-to-disp-clock-factor read failed, using default
+[    4.521843] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:14223: bool IOMFB::UPPipeDCP_H13P::init_m3_timing_parameters(): Int entry for init_m3_timing tunable target is 4
+[    4.522894] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:13827: IOMFB updateFrequencies: minimum-frequency property not found, using getClockFrequency(0) instead.
+[    4.522942] apple-dcp 386c00000.dcp: display clock 0: 712000000 Hz
+[    4.523325] apple-dcp 386c00000.dcp: RTKit: syslog message: UPPipeDCP_H13P.cpp:1775: virtual bool IOMFB::UPPipeDCP_H13P::late_init_ios(bool): Realtime Bandwidth setup failed
+[    4.523345] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:13159: set_run_mode_safe: deferring: 2 -> 4
+[    4.523373] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:13064: virtual IOMFBStatus IOMFB::UPPipeDCP_H13P::ready_for_run_mode_change(AppleRegisterStream *): initiating deferred run mode chang
+[    4.525041] apple-dcp 386c00000.dcp: DCP buffer 1: 262144 bytes at 0x0000010fffec0000
+[    4.525425] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 1: 262144 bytes at 0x0000010fffec0000
+[    4.525547] apple-dcp 386c00000.dcp: DCP buffer 2: 262144 bytes at 0x0000010fffe80000
+[    4.525610] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 2: 262144 bytes at 0x0000010fffe80000
+[    4.525874] apple-dcp 386c00000.dcp: RTKit: syslog message: M3Hal_v1.cpp:246: IOMFB: load APT M3 IMem : size 0x8b20
+[    4.526001] apple-dcp 386c00000.dcp: RTKit: syslog message: M3Hal_v1.cpp:246: IOMFB: load APT M3 DMem : size 0x71f4
+[    4.526094] apple-dcp 386c00000.dcp: RTKit: syslog message: CAHandler.cpp:190: IOMFB load_ca_data: Unrecognized data version 0 (expected 1 or 2)
+[    4.526521] apple-dcp 386c00000.dcp: DCP buffer 3: 16384 bytes at 0x0000010fffe7c000
+[    4.526601] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 3: 16384 bytes at 0x0000010fffe7c000
+[    4.526686] apple-dcp 386c00000.dcp: DCP buffer 4: 16384 bytes at 0x0000010fffe78000
+[    4.526743] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 4: 16384 bytes at 0x0000010fffe78000
+[    4.527018] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:17797: IOMFB: initialize_SDP: DPTX Generic SDP base index is 0xa
+[    4.527020] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:17824: initialize_SDP: Base SDP Index = 10 : Number of SDPs available = 1
+[    4.527079] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:17419: IOMFB Int RTBandwidth: DISABLED
+[    4.527178] apple-dcp 386c00000.dcp: DCP buffer 5: 16384 bytes at 0x0000010fffe74000
+[    4.527251] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 5: 16384 bytes at 0x0000010fffe74000
+[    4.527313] apple-dcp 386c00000.dcp: DCP buffer 6: 16384 bytes at 0x0000010fffe70000
+[    4.527370] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 6: 16384 bytes at 0x0000010fffe70000
+[    4.527430] apple-dcp 386c00000.dcp: DCP buffer 7: 16384 bytes at 0x0000010fffe6c000
+[    4.527480] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 7: 16384 bytes at 0x0000010fffe6c000
+[    4.527540] apple-dcp 386c00000.dcp: DCP buffer 8: 16384 bytes at 0x0000010fffe68000
+[    4.527593] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 8: 16384 bytes at 0x0000010fffe68000
+[    4.527649] apple-dcp 386c00000.dcp: DCP buffer 9: 16384 bytes at 0x0000010fffe64000
+[    4.527703] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 9: 16384 bytes at 0x0000010fffe64000
+[    4.527757] apple-dcp 386c00000.dcp: DCP buffer 10: 16384 bytes at 0x0000010fffe60000
+[    4.527811] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 10: 16384 bytes at 0x0000010fffe60000
+[    4.527869] apple-dcp 386c00000.dcp: DCP buffer 11: 16384 bytes at 0x0000010fffe5c000
+[    4.527925] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 11: 16384 bytes at 0x0000010fffe5c000
+[    4.527982] apple-dcp 386c00000.dcp: DCP buffer 12: 16384 bytes at 0x0000010fffe58000
+[    4.528035] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 12: 16384 bytes at 0x0000010fffe58000
+[    4.528091] apple-dcp 386c00000.dcp: DCP buffer 13: 16384 bytes at 0x0000010fffe54000
+[    4.528146] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 13: 16384 bytes at 0x0000010fffe54000
+[    4.528204] apple-dcp 386c00000.dcp: DCP buffer 14: 16384 bytes at 0x0000010fffe50000
+[    4.528263] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 14: 16384 bytes at 0x0000010fffe50000
+[    4.528321] apple-dcp 386c00000.dcp: DCP buffer 15: 16384 bytes at 0x0000010fffe4c000
+[    4.528376] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 15: 16384 bytes at 0x0000010fffe4c000
+[    4.528433] apple-dcp 386c00000.dcp: DCP buffer 16: 16384 bytes at 0x0000010fffe48000
+[    4.528487] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 16: 16384 bytes at 0x0000010fffe48000
+[    4.528542] apple-dcp 386c00000.dcp: DCP buffer 17: 16384 bytes at 0x0000010fffe44000
+[    4.528589] apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 17: 16384 bytes at 0x0000010fffe44000
+[    4.528637] apple-dcp 386c00000.dcp: RTKit: syslog message: UPTSQManager.cpp:134: IOMFB: clearing M3 reset
+[    4.528660] apple-dcp 386c00000.dcp: RTKit: syslog message: UPTSQ_Hal_v1.cpp:343: IOMFB: timebase_offset = 4
+[    4.531709] apple-dcp 386c00000.dcp: RTKit: syslog message: UPTSQManager.cpp:106: IOMFB: switch to normal mode succeeded
+[    4.532166] apple-dcp 386c00000.dcp: RTKit: syslog message: FramebufferDCP.cpp:2488: IOMFB:create_default_fb_surface: Creating default FB surface failed - width = 3456, height = 2234
+[    4.535614] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:12911: IOMFB: panel charge parity violation [0xfbe3418]
+[    4.535759] apple-dcp 386c00000.dcp: timing 1/1: "3456x2234": 120 1042130 3456 3464 3496 3536 2234 2352 2360 2456 0x48 0x0 best
+[    4.535766] apple-dcp 386c00000.dcp: J516C display started: 3456x2234@120, 74 notch rows shown, 346x223 mm
+[    4.539401] apple-dcp 386c00000.dcp: RTKit: syslog message: ck_PCC2DBlm_v5.cpp:2730: IOMFB LACS_ERROR: DCP took too long to respond to LAS stats
+[    4.680050] apple-dcp 386c00000.dcp: copy_edid failed: -ENODEV
+[    4.814330] apple-dcp 386c00000.dcp: swap 1 complete: surface 1, imported 0, 9764 us
+[    4.814718] apple-dcp 386c00000.dcp: copy_edid failed: -ENODEV
+[    5.531050] apple-dcp 386c00000.dcp: swap 2 complete: surface 1, imported 0, 16968 us
+[    5.547680] apple-dcp 386c00000.dcp: swap 3 complete: surface 1, imported 0, 16614 us
+[    6.793128] apple-dcp 386c00000.dcp: copy_edid failed: -ENODEV
+[    6.793407] apple-dcp 386c00000.dcp: copy_edid failed: -ENODEV
+[    6.793475] apple-dcp 386c00000.dcp: copy_edid failed: -ENODEV
+== drm
+card1-eDP-1 connected
+m3-oneshot: disarmed: removed the air-gpu-oneshot entry from /boot/efi/limine.conf; 
+== ESP boot.bin unchanged
+== 03:31:21 done: /home/naeem/m3-results/20261013-032953-t31-kmscube-sw
