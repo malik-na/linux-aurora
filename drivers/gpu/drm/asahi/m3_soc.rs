@@ -451,8 +451,9 @@ pub(crate) static T6031: Soc = Soc {
     gpu_name: "G15C",
     chip_id: 0x6031,
     gpu_variant: hw::GpuVariant::C,
-    // /arm-io chip-revision 0x12; to be confirmed by the GPU's own identification register.
-    gpu_revision: hw::GpuRevision::B2,
+    // The GPU's own identification register on a J516C: version 0x07041100, revision byte
+    // 0x11 (B1). The SoC's /arm-io chip-revision is 0x12 and is not the GPU's revision.
+    gpu_revision: hw::GpuRevision::B1,
     gpu_revision_id: hw::GpuRevisionID::B1,
     board: "apple,t6031",
     gpu: "apple,agx-t6031",
