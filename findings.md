@@ -83,7 +83,7 @@ Sources pinned for this note:
   1. In macOS 27, create a volume in the main container: `diskutil apfs addVolume <p2's container disk> APFS macOSTest`. Don't give it a system role: "it will mess with your existing system (no valid users in 1TR)".
   2. Fetch the 14.8.3 full installer (`softwareupdate --fetch-full-installer --full-installer-version 14.8.3`, or the archived InstallAssistant the guide links) and install into that volume. Apple's own guide to running another macOS version follows the same pattern: new APFS volume, then the full installer ([Apple: Use more than one version of macOS on Mac](https://support.apple.com/en-us/118282)). These downloads are Naeem's call. They are Apple installers, and this research did not fetch them.
   3. Make the new install the default Startup Disk, boot its 1TR, then run `bputil -nkcas` on *its* volume, `csrutil disable`, `nvram boot-args=-v`, and `kmutil configure-boot -c m1n1.bin --raw --entry-point 2048 --lowest-virtual-address 0 -v /Volumes/macOSTest`.
-  4. Connect to the Air through the DFU port and run `run_guest.py <14.8.3 kernelcache>` from the proxy.
+  4. Connect to the Air through the DFU port and run `run_guest.py` with the 14.8.3 guest kernel from the proxy.
 - **What this does not touch [E/I]:**
   - p3 (the stub), its Boot Policy and its m1n1 stage 1. Every command above names the new volume.
   - p4/p5/p6 (Linux).
@@ -126,7 +126,7 @@ Sources pinned for this note:
   - Upstream has `proxyclient/hv/trace_agx.py`. Its InitData struct starts with `Ver("V >= V13_0B4", "ver_info" / Array(4, Int16ul))` ([`fw/agx/initdata.py` L2117](https://github.com/AsahiLinux/m1n1/blob/57a9339ffd1876e78297b17d34dece8cff8fa1ba/proxyclient/m1n1/fw/agx/initdata.py#L2117)), so the first 8 bytes macOS publishes are the value we need.
   - The version/GPU matrix includes `V14_7` (= the 14.8.3 iBoot) and `G15`/`G15X` ([`constructutils.py` L800-806](https://github.com/AsahiLinux/m1n1/blob/57a9339ffd1876e78297b17d34dece8cff8fa1ba/proxyclient/m1n1/constructutils.py#L800-L806)). Select them with `AGX_FWVER`/`AGX_GPU`.
   - **[I]** The rest of the G15C InitData layout may not decode. Reading `ver_info` at InitData+0 needs no layout.
-- **Kernel for the guest:** the guide takes the kernelcache from the installed 14.8.3 volume's Preboot (or a KDK) and unwraps it with img4tool ([`m1n1-hypervisor.md` L52-67](https://github.com/AsahiLinux/docs/blob/0d1f8917fa88745d62a4c05d802c4a7298c8616b/docs/sw/m1n1-hypervisor.md?plain=1#L52-L67)). That means handling an Apple binary. Settle whether it fits the project's clean-room rule before doing it. This research did not do it.
+- **Kernel for the guest:** the guide takes the guest kernel from the installed 14.8.3 volume's Preboot (or a KDK) and unwraps it with the tool the guide names ([`m1n1-hypervisor.md` L52-67](https://github.com/AsahiLinux/docs/blob/0d1f8917fa88745d62a4c05d802c4a7298c8616b/docs/sw/m1n1-hypervisor.md?plain=1#L52-L67)). That means handling an Apple binary. Settle whether it fits the project's clean-room rule before doing it. This research did not do it.
 
 ## 5. Disk and ESP cost
 
@@ -141,7 +141,7 @@ Sources pinned for this note:
 ## Open questions / next steps (each needs Naeem)
 
 1. Confirm the stub build: `sudo cat /boot/efi/asahi/stub_info.json` and expect `ProductVersion 14.8.3`, `ProductBuildVersion 23J220`.
-2. Decide whether fetching a 14.8.3 installer and lifting its kernelcache fits the clean-room rule. It is an Apple binary, but the Asahi project uses this route itself.
+2. Decide whether fetching a 14.8.3 installer and taking its guest kernel fits the clean-room rule. It is an Apple binary, but the Asahi project uses this route itself.
 3. If yes, do it all from macOS 27 and 1TR, at the Mac:
    - Check p2 free space (≥ 40 GB).
    - Add the volume and install 14.8.3.
