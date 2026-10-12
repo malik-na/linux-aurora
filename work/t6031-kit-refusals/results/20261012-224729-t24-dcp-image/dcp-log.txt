@@ -1,0 +1,87 @@
+apple-t6031-display: enabled /soc/iommu@38530c000, /soc/iommu@385304000, /soc/mailbox@386c08000, /soc/dcp@386c00000 and /soc/display-subsystem
+apple-t6031-display: added the PMP and its display and storage report; minimum power state of disp_sys, disp_fe and disp_cpu raised to active; pmp and pms_sram kept on
+apple-pmp-report 2903c0000.pmp-report: PMP halted, firmware 07ff4c5b-cb2e-3de6-95ff-3b107d19b7ab; PTD status 0x0 request 0x0 ack 0x0; requesting 0x200010000
+apple-pmp-report 2903c0000.pmp-report: request 0x200010000 set; the PMP starts when a consumer asks for it
+[drm] Initialized simpledrm 1.0.0 for 10bd1485c00.framebuffer on minor 0
+simple-framebuffer 10bd1485c00.framebuffer: [drm] fb0: simpledrmdrmfb frame buffer device
+apple-pmp-report 2903c0000.pmp-report: starting the PMP with request 0x200010000
+apple-pmp-report 2903c0000.pmp-report: PMP ready: PTD status 0x1 request 0x200010000 ack 0x200010400
+apple-dcp 386c00000.dcp: PMP running with the display request acknowledged
+apple-dcp 386c00000.dcp: DCP CPU control 0x10 status 0x3000ac
+apple-dcp 386c00000.dcp: RTKit: Initializing (protocol version 12)
+apple-dcp 386c00000.dcp: RTKit: Unknown oslog message: 30100423ef093f4
+apple-dcp 386c00000.dcp: RTKit: Unknown oslog message: 4000020893d40cc
+apple-dcp 386c00000.dcp: RTKit: Unknown oslog message: 4000040255f089a
+apple-dcp 386c00000.dcp: RTKit: Unknown oslog message: 400006046b2a29b
+apple-dcp 386c00000.dcp: RTKit: syslog message: _logging_common.cpp:418: [AFK]binary_log_infrastructure_late_init coalescer initialized
+apple-dcp 386c00000.dcp: DCP RTKit session running
+apple-dcp 386c00000.dcp: RTKit: syslog message: ck_PCC2DBlm_v5.cpp:2730: IOMFB LACS_ERROR: DCP took too long to respond to LAS stats
+apple-dcp 386c00000.dcp: RTKit: syslog message: ck_PCC2DBlm_v5.cpp:2772: IOMFB: BLM LTS data hasn't been read in more than 10 secs
+apple-dcp 386c00000.dcp: RTKit: syslog message: ap_link.c:308: shared memory dva: 0x10ffff00000 0xffffffff004f0000
+apple-dcp 386c00000.dcp: RTKit: syslog message: ap_link.c:285: ap_link: IOMFB: DCP heap size: 0x1030000 [iBoot:0x1030000] [LinkService:0x0]
+apple-dcp 386c00000.dcp: DCPLink ready, RPC alignment 64
+apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:5404: IOMFB: Could not find Backlight service
+apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:5412: IOMFB: Could not find nvram service
+apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:2312: virtual bool UnifiedPipeline::start_ios_gated(): Created AP Services
+apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:2339: start_ios_gated: trigger pending HPD notification
+apple-dcp 386c00000.dcp: RTKit: syslog message: FramebufferDCP.cpp:3441: virtual void IOMobileFramebuffer::hotPlug_notify(uint64_t)
+apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:2346: virtual bool UnifiedPipeline::start_ios_gated(): Flushed RTPs
+apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:1775: set_device_enabled_gated: current state: 1, requested state: 1
+apple-dcp 386c00000.dcp: RTKit: syslog message: ableCompensator.cpp:903: IOMFB setup_table: Could not find table 'display-backlight-compensation-v1' in registry. Using default table.
+apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:13827: IOMFB updateFrequencies: minimum-frequency property not found, using getClockFrequency(0) instead.
+apple-dcp 386c00000.dcp: display clock 0: 712000000 Hz
+apple-dcp 386c00000.dcp: RTKit: syslog message: UPPipe.cpp:5607: IOMFB: vid-clock-to-disp-clock-factor read failed, using default
+apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:14223: bool IOMFB::UPPipeDCP_H13P::init_m3_timing_parameters(): Int entry for init_m3_timing tunable target is 4
+apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:13827: IOMFB updateFrequencies: minimum-frequency property not found, using getClockFrequency(0) instead.
+apple-dcp 386c00000.dcp: display clock 0: 712000000 Hz
+apple-dcp 386c00000.dcp: RTKit: syslog message: UPPipeDCP_H13P.cpp:1775: virtual bool IOMFB::UPPipeDCP_H13P::late_init_ios(bool): Realtime Bandwidth setup failed
+apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:13159: set_run_mode_safe: deferring: 2 -> 4
+apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:13064: virtual IOMFBStatus IOMFB::UPPipeDCP_H13P::ready_for_run_mode_change(AppleRegisterStream *): initiating deferred run mode chang
+apple-dcp 386c00000.dcp: DCP buffer 1: 262144 bytes at 0x0000010fffec0000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 1: 262144 bytes at 0x0000010fffec0000
+apple-dcp 386c00000.dcp: DCP buffer 2: 262144 bytes at 0x0000010fffe80000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 2: 262144 bytes at 0x0000010fffe80000
+apple-dcp 386c00000.dcp: RTKit: syslog message: M3Hal_v1.cpp:246: IOMFB: load APT M3 IMem : size 0x8b20
+apple-dcp 386c00000.dcp: RTKit: syslog message: M3Hal_v1.cpp:246: IOMFB: load APT M3 DMem : size 0x71f4
+apple-dcp 386c00000.dcp: RTKit: syslog message: CAHandler.cpp:190: IOMFB load_ca_data: Unrecognized data version 0 (expected 1 or 2)
+apple-dcp 386c00000.dcp: DCP buffer 3: 16384 bytes at 0x0000010fffe7c000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 3: 16384 bytes at 0x0000010fffe7c000
+apple-dcp 386c00000.dcp: DCP buffer 4: 16384 bytes at 0x0000010fffe78000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 4: 16384 bytes at 0x0000010fffe78000
+apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:17797: IOMFB: initialize_SDP: DPTX Generic SDP base index is 0xa
+apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:17824: initialize_SDP: Base SDP Index = 10 : Number of SDPs available = 1
+apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:17419: IOMFB Int RTBandwidth: DISABLED
+apple-dcp 386c00000.dcp: DCP buffer 5: 16384 bytes at 0x0000010fffe74000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 5: 16384 bytes at 0x0000010fffe74000
+apple-dcp 386c00000.dcp: DCP buffer 6: 16384 bytes at 0x0000010fffe70000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 6: 16384 bytes at 0x0000010fffe70000
+apple-dcp 386c00000.dcp: DCP buffer 7: 16384 bytes at 0x0000010fffe6c000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 7: 16384 bytes at 0x0000010fffe6c000
+apple-dcp 386c00000.dcp: DCP buffer 8: 16384 bytes at 0x0000010fffe68000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 8: 16384 bytes at 0x0000010fffe68000
+apple-dcp 386c00000.dcp: DCP buffer 9: 16384 bytes at 0x0000010fffe64000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 9: 16384 bytes at 0x0000010fffe64000
+apple-dcp 386c00000.dcp: DCP buffer 10: 16384 bytes at 0x0000010fffe60000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 10: 16384 bytes at 0x0000010fffe60000
+apple-dcp 386c00000.dcp: DCP buffer 11: 16384 bytes at 0x0000010fffe5c000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 11: 16384 bytes at 0x0000010fffe5c000
+apple-dcp 386c00000.dcp: DCP buffer 12: 16384 bytes at 0x0000010fffe58000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 12: 16384 bytes at 0x0000010fffe58000
+apple-dcp 386c00000.dcp: DCP buffer 13: 16384 bytes at 0x0000010fffe54000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 13: 16384 bytes at 0x0000010fffe54000
+apple-dcp 386c00000.dcp: DCP buffer 14: 16384 bytes at 0x0000010fffe50000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 14: 16384 bytes at 0x0000010fffe50000
+apple-dcp 386c00000.dcp: DCP buffer 15: 16384 bytes at 0x0000010fffe4c000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 15: 16384 bytes at 0x0000010fffe4c000
+apple-dcp 386c00000.dcp: DCP buffer 16: 16384 bytes at 0x0000010fffe48000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 16: 16384 bytes at 0x0000010fffe48000
+apple-dcp 386c00000.dcp: DCP buffer 17: 16384 bytes at 0x0000010fffe44000
+apple-dcp 386c00000.dcp: PIODMA mapped DCP buffer 17: 16384 bytes at 0x0000010fffe44000
+apple-dcp 386c00000.dcp: RTKit: syslog message: UPTSQManager.cpp:134: IOMFB: clearing M3 reset
+== debugfs
+dcp-j516c
+== drm
+card1
+card1-eDP-1
+version
+connected

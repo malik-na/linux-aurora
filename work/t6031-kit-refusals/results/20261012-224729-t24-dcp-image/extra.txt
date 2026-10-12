@@ -1,0 +1,69 @@
+== dcp-j516c debugfs
+started 1
+failed 0
+swaps 162
+swap_max_us 18907
+active_fb 48
+imported 0
+panel 3456x2234
+boot_fb 3456x2160 stride 13824
+clock 712000000
+backlight factor 0x0 updates 0
+ctm valid 0 disabled 0 calls 0 setter 0x0 getter 0x0
+ctm_readback[0] 0x0
+ctm_readback[1] 0x0
+ctm_readback[2] 0x0
+ctm_readback[3] 0x0
+ctm_readback[4] 0x0
+ctm_readback[5] 0x0
+ctm_readback[6] 0x0
+ctm_readback[7] 0x0
+ctm_readback[8] 0x0
+buffers 17 bytes 770048
+properties 37 raw 12
+analytics 0
+== backlight
+total 0
+drwxr-xr-x  2 root root 0 Oct 12 22:53 .
+drwxr-xr-x 67 root root 0 Oct 12 22:48 ..
+4.452648 apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:5404: IOMFB: Could not find Backlight service
+4.457065 apple-dcp 386c00000.dcp: RTKit: syslog message: ableCompensator.cpp:903: IOMFB setup_table: Could not find table 'display-backlight-compensation-v1' in registry. Using default table.
+4.612595 apple-dcp 386c00000.dcp: copy_edid failed: -ENODEV
+4.704171 apple-dcp 386c00000.dcp: copy_edid failed: -ENODEV
+6.769807 apple-dcp 386c00000.dcp: copy_edid failed: -ENODEV
+6.769984 apple-dcp 386c00000.dcp: copy_edid failed: -ENODEV
+6.770029 apple-dcp 386c00000.dcp: copy_edid failed: -ENODEV
+== drm
+/sys/class/drm/card1-eDP-1/status: connected 
+/sys/class/drm/card1-eDP-1/enabled: enabled 
+/sys/class/drm/card1-eDP-1/dpms: On 
+/sys/class/drm/card1-eDP-1/modes: 3456x2234 
+== hyprland
+Monitor eDP-1 (ID 0):
+	3456x2234@120.00000 at 0x0
+	description: 
+	make: 
+	model: 
+	physical size (mm): 0x0
+	serial: 
+	active workspace: 1 (1)
+	special workspace: 0 ()
+	reserved: 0 98 0 0
+	scale: 2
+	transform: 0
+	focused: yes
+	dpmsStatus: 1
+	vrr: false
+	solitary: 0
+	solitaryBlockedBy: windowed mode,missing candidate,config error
+	activelyTearing: false
+	tearingBlockedBy: next frame is not torn,user settings,missing candidate
+	directScanoutTo: 0
+Oct 12 22:48:11 omarchy wireplumber[937]: default: Failed to get percentage from UPower: org.freedesktop.DBus.Error.NameHasNoOwner
+== hyprland config errors
+
+
+== dcp-j516c debugfs (final)
+failed 0
+swaps 952
+swap_max_us 19346
