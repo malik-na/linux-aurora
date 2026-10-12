@@ -36,7 +36,7 @@ as unported, and `t6031_knobs.rs:447` only falls back to the G15 14.8.3 constant
    (`Ccst`, `CasC`, `Crtk`, `Ccdp`, `Csta`). Today the log is "offered to devcoredump" at 0.079 s.
    On J613 that call failed with `class_find_device called for class 'devcoredump' before it was
    registered` (#35, IcedTea363). Those sections may hold the firmware's own view of the mismatch.
-   [I] This is the firmware's runtime output, not the image. Still, confirm with the maintainers
+   [I] This is the firmware's runtime output, not the image. Still, confirm with the team
    that reading it is clean-room-acceptable before decoding anything beyond printable strings.
 3. **Trace the value macOS sends (the definitive source).** Boot macOS under the m1n1 hypervisor
    with the AGX tracer (`m1n1 proxyclient/m1n1/trace/agx.py`, which parses the InitData macOS
@@ -184,7 +184,7 @@ Sources [E]:
     facts in-tree came from reading the firmware. That is outside this repo's clean-room rule;
     don't extend that route.
 - [I] The likely route for the T6030 version tuple is the one upstream used for G13/G14X: an m1n1
-  hypervisor trace of macOS publishing InitData. This is unconfirmed; ask the maintainers.
+  hypervisor trace of macOS publishing InitData. This is unconfirmed; ask the team.
 
 ## Q5. Evidence for what G15C expects instead
 
@@ -210,5 +210,5 @@ Sources [E]:
   interface version.
 - **Kit results** [E]: no variant reached the firmware (Q3), so no other tuple has been tested.
 - **Summary** [I]: there is no in-hand clean-room source for the G15C tuple. Only these can settle
-  it: a macOS hypervisor trace with the matching 14.8.3 G15C image (experiment 3), a maintainer who
+  it: a macOS hypervisor trace with the matching 14.8.3 G15C image (experiment 3), a teammate who
   already has one, or (a long shot) a tuple that happens to be shared (experiment 1).

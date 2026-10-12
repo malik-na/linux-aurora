@@ -11,7 +11,7 @@ Issues and specs for this repo live as GitHub issues on **`malik-na/linux-aurora
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
 
-**Always pass `-R malik-na/linux-aurora`** to every `gh issue` / `gh pr` command (and use `repos/malik-na/linux-aurora/...` for `gh api`). This clone has two remotes (`origin` = `malik-na/linux-aurora`, `upstream` = `omacom/linux-aurora`) and no `gh` default repo, so don't rely on inference. Never create, label or close issues on `omacom/linux-aurora`; that repo is the upstream PR target, not this tracker.
+**Always pass `-R malik-na/linux-aurora`** to every `gh issue` / `gh pr` command (and use `repos/malik-na/linux-aurora/...` for `gh api`). This clone has two remotes (`origin` = `malik-na/linux-aurora`, `upstream` = `omacom/linux-aurora`) and no `gh` default repo, so don't rely on inference. Never create, label or close issues on `omacom/linux-aurora` from here; that is the team's tree and thread, where Naeem posts himself (he approves each post). This fork holds his working tickets.
 
 ## Pull requests as a triage surface
 

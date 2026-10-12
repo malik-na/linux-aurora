@@ -11,12 +11,12 @@ Read this first when driving the M3 Max (J516C / T6031, hostname `omarchy`) from
 ## Where the context lives
 
 - Plan and results: [tracking issue](https://github.com/malik-na/linux-aurora/issues/1), [Phase 0](https://github.com/malik-na/linux-aurora/issues/4), [Phase 1](https://github.com/malik-na/linux-aurora/issues/5). Every result is recorded there; read the comments, not just the bodies.
-- Upstream thread: [omacom/linux-aurora#61](https://github.com/omacom/linux-aurora/issues/61). We claimed T6031 bring-up on top of upstream's `max/t6031-*` branches and posted the `.911` kit results.
+- Team thread: [omacom/linux-aurora#61](https://github.com/omacom/linux-aurora/issues/61). We claimed T6031 bring-up on top of the team's `max/t6031-*` branches and posted the `.911` kit results.
 - Recovery runbook (private claude.ai doc): [M3 Max bring-up: macOS recovery rehearsal](https://claude.ai/code/artifact/88eb765f-d634-452b-aa00-5f918f1b27f0).
 
 ## State of the M3 (2026-10-12)
 
-- Kernel `7.1.12-2-20261011.911-sep-ARCH` (upstream test release `.911`, source `93af871`, branch `max/t6031-kit-integration-20261011`). Kept on purpose: adds the SoC die temperature sensor; all T6031 GPU/display code is off by default.
+- Kernel `7.1.12-2-20261011.911-sep-ARCH` (the team's test release `.911`, source `93af871`, branch `max/t6031-kit-integration-20261011`). Kept on purpose: adds the SoC die temperature sensor; all T6031 GPU/display code is off by default.
 - Boot chain: m1n1 stage 2 `/boot/efi/m1n1/boot.bin` → u-boot → limine (`/boot/efi/limine.conf`) → UKI. `update-m1n1` is disabled (`M1N1_UPDATE_DISABLED=1`), so `boot.bin` only changes by hand.
 - `/etc/pacman.conf` has `IgnorePkg = *` (frozen image). Install packages with a copy of it minus that line; never run a full upgrade just to get one package.
 
@@ -41,7 +41,7 @@ Both good files are also in `~/aurora-backups` on the M3 with `.sha256` files. F
 ## Building on the M3
 
 - Everything builds in an Arch Linux ARM chroot, `~/Projects/build-root`, via `sudo systemd-nspawn -q -D build-root -u alarm --bind-ro=$HOME/Projects/linux-aurora:/build/src --bind=$HOME/Projects/build-out/kernel:/build/out …`. Toolchain: clang/LLD 23.1.1, rustc 1.93.1 (rustup, with `rust-src` and `aarch64-unknown-none-softfloat`), bindgen 0.73.2. The packaged kernels used clang 22.1.8, which is no longer available.
-- Kernel source: `~/Projects/linux-aurora`, local branch `t6031/base` = upstream `93af871`. Config = the running `/proc/config.gz` with `LOCALVERSION="-aurora-dev"`. Build: `make O=/build/out LLVM=1 LOCALVERSION= -j16 all`. Package: `… pacman-pkg PACMAN_PKGBASE=linux-aurora-dev PACMAN_EXTRAPACKAGES= KBUILD_IMAGE=arch/arm64/boot/Image`.
+- Kernel source: `~/Projects/linux-aurora`, local branch `t6031/base` = omacom `93af871`. Config = the running `/proc/config.gz` with `LOCALVERSION="-aurora-dev"`. Build: `make O=/build/out LLVM=1 LOCALVERSION= -j16 all`. Package: `… pacman-pkg PACMAN_PKGBASE=linux-aurora-dev PACMAN_EXTRAPACKAGES= KBUILD_IMAGE=arch/arm64/boot/Image`.
 - m1n1 source: `~/Projects/m1n1` (`omacom/m1n1`, at the old `d05ba17d` pin). Build: `make ARCH= RELEASE=1` in the chroot.
 - `boot.bin` = `m1n1.bin` + DTBs + gzipped `u-boot-nodtb.bin` + the `/etc/m1n1.conf` options (see `/usr/bin/update-m1n1`). Current options: `chosen.asahi,t6031-dcp=1`, `chosen.asahi,t6031-gpu=0`.
 - EFI partition is tight: about 100 MB free of 499 MB; each UKI is about 60 MB.
@@ -50,7 +50,7 @@ Both good files are also in `~/aurora-backups` on the M3 with `.sha256` files. F
 
 Phase 1's last done-when item: **boot a self-built m1n1.** Never done; every boot so far used a packaged m1n1. Plan:
 
-1. Build m1n1 from upstream's `aurora17.t6031` source (find the commit behind `m1n1-aurora 1.6.1.aurora17.t6031.1` on `omacom/m1n1`'s `max/t6031-*` branches), so it differs from the running one only in being self-built.
+1. Build m1n1 from the team's `aurora17.t6031` source (find the commit behind `m1n1-aurora 1.6.1.aurora17.t6031.1` on `omacom/m1n1`'s `max/t6031-*` branches), so it differs from the running one only in being self-built.
 2. Preferred: chainload it from the Air over USB-C in m1n1 proxy mode, so `boot.bin` is never touched. Set up the proxy first: `omacom/m1n1` `proxyclient` with Python 3, `pyserial` and `construct` on the Air; work out which M3 USB-C port is the proxy port and how to get the M3 into proxy mode (check the Asahi Linux docs; don't guess).
 3. Fallback: pack a test `boot.bin` with the same DTBs and options and swap it in with checksums, as in the Phase 1 drill. Recovery from macOS is proven.
 4. Record the result on the Phase 1 issue. Then Phase 1 is done.

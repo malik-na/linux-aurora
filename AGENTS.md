@@ -8,7 +8,7 @@ M3 Max (T6031) bring-up, driven from the M1 Air from 2026-10-12. Read `docs/agen
 
 ### Issue tracker
 
-Issues live in GitHub Issues on `malik-na/linux-aurora` (not the `omacom` upstream). See `docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues on `malik-na/linux-aurora` (Naeem's working tracker; `omacom/linux-aurora` is the team's tree and thread). See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

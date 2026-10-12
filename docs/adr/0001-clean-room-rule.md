@@ -6,4 +6,4 @@ The G15C firmware interface is unknown, and on 2026-10-12 we set how we may lear
 
 - Provenance of each firmware interface value is recorded in our fact records (this branch), not in public commit text; commit messages cite public sources, device-tree paths and Linux measurements only.
 - Before any omacom PR: trailers become `Assisted-by: LLM` then `Signed-off-by`; commit text, PR text and linked notes pass the team's keyword scan; static gates (`git diff --check`, checkpatch, W=1, dtbs_check, KUnit) and one clean boot per change.
-- Order of sources for the G15C firmware interface: the device-control test boot, the maintainers, the crash log's documented sections, then the macOS 14.8.3 trace (moved up by Naeem on 2026-10-12).
+- Order of sources for the G15C firmware interface: the device-control test boot, the team, the crash log's documented sections, then the macOS 14.8.3 trace (moved up by Naeem on 2026-10-12).

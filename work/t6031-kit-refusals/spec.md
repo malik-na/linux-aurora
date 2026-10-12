@@ -4,18 +4,18 @@ _Spec, kept on the fork's `agent-docs` branch under `work/` (pushed after every 
 
 ## Problem Statement
 
-On Naeem's MacBook Pro 16" M3 Max (J516C / T6031, OS firmware 14.7, system firmware 27.0, stage 1 `v1.6.1-dirty`), upstream's `.911` M3 Max test kit ran to the end, but both of its goals were refused before any firmware started:
+On Naeem's MacBook Pro 16" M3 Max (J516C / T6031, OS firmware 14.7, system firmware 27.0, stage 1 `v1.6.1-dirty`), the team's `.911` M3 Max test kit ran to the end, but both of its goals were refused before any firmware started:
 
 - **Native display:** the display gate declined the PMP at the start of boot: "this Mac's PMP firmware image is `07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB`, not `2F4EB4C4-001B-3ACF-A9A0-68D8E42FC3A7`". The desktop stays on simpledrm at 3456x2160, with no backlight device.
 - **GPU (G15C):** all four armed start variants (default, `initdata_version`, `clkgen=e1c`, `fender=adt`) stopped with "refused at the GPU coprocessor setup (RTKit/mailbox) (EPROBE_DEFER); the firmware was not started", although m1n1's GPU handoff worked (identity read, 40 cores, GPU node `okay`).
 
-Upstream's T6031 branches don't fix either, and Naeem has taken over T6031 bring-up from them. Until both refusals are past, nothing later in the plan can start: display Phase 5, the GPU runtime tables in Phases 3–4, or Mesa in Phase 6.
+The team's `max/t6031-*` branches don't fix either; Naeem drives T6031 bring-up. Until both refusals are past, nothing later in the plan can start: display Phase 5, the GPU runtime tables in Phases 3–4, or Mesa in Phase 6.
 
 ## Solution
 
 Two small, separately boot-tested kernel changes on Naeem's fork, each tied to evidence from this Mac:
 
-1. **GPU mailbox.** The kernel's Apple mailbox driver doesn't recognise the T6031 GPU's ASC mailbox (`apple,t6031-agx-asc-mailbox`). The device tree deliberately gives it no generic fallback, and m1n1 enables it with the GPU, but no driver binds it. So the GPU's mailbox request defers forever. Add the T6031 match beside the T6030 and T8122 ones, as upstream did for T8122 in `b405cf9`. Expected result: the armed G15C start gets past "RTKit/mailbox" and reaches its next gate, whose refusal or success it names.
+1. **GPU mailbox.** The kernel's Apple mailbox driver doesn't recognise the T6031 GPU's ASC mailbox (`apple,t6031-agx-asc-mailbox`). The device tree deliberately gives it no generic fallback, and m1n1 enables it with the GPU, but no driver binds it. So the GPU's mailbox request defers forever. Add the T6031 match beside the T6030 and T8122 ones, as the team did for T8122 in `b405cf9`. Expected result: the armed G15C start gets past "RTKit/mailbox" and reaches its next gate, whose refusal or success it names.
 2. **PMP image admission.** The T6031 entry of the display gate pins the T6030 PMP image, assuming "the PMP firmware is one t603x image". This Mac's ADT disproves that. Admit T6031's own PMP image, named from this Mac's evidence, and only once the PMP memory layout the report driver relies on has been confirmed for that image. Expected result: with `apple_t6031_display.enable=1`, the gate adds the PMP and the display path reaches its next step (PMP start, DCP start, or a named refusal).
 
 Each change is tested by one armed, one-shot boot that the Air drives remotely. The test `boot.bin` is chainloaded over the m1n1 USB proxy, so the ESP's `boot.bin` is never written. Panic and watchdog settings bring a hung boot back to the normal boot without anyone at the Mac.
@@ -48,10 +48,10 @@ Each change is tested by one armed, one-shot boot that the Air drives remotely. 
 24. As the M3 Max owner, I want every step of progress pushed to my fork (fix branches, and this spec, the tickets, tools and results on `agent-docs`), so that nothing is lost if a machine or a session is; nothing goes to omacom (issues, threads, PRs) unless I ask.
 25. As a future agent session, I want this spec and its evidence in one place on `agent-docs`, so that I can resume without this conversation.
 26. As the driver, I want builds to run on the M3 in its pinned chroot (clang/LLD 23.1.1, rustc 1.93.1), and source work to happen on the Air's clone, so that each machine does what it's good at.
-27. As the driver, I want the fixes on a branch off `t6031/base`, so that they can later be rebased onto a newer upstream without mixing in unrelated changes.
+27. As the driver, I want the fixes on a branch off `t6031/base`, so that they can later be rebased onto a newer `integration/aurora` without mixing in unrelated changes.
 28. As the driver, I want the mailbox fix tested before the PMP change, so that the GPU result isn't confounded by display or PMP changes.
 29. As the driver, I want to stop and report after any boot that doesn't come back to SSH within 5 minutes, so that a recovery problem is handled before more tests run.
-30. As the M3 Max owner, I want the M3's personal agent files kept out of every kernel commit, so that nothing personal reaches upstream.
+30. As the M3 Max owner, I want the M3's personal agent files kept out of every kernel commit, so that nothing personal reaches the Aurora tree.
 
 ## Implementation Decisions
 
@@ -61,7 +61,7 @@ Each change is tested by one armed, one-shot boot that the Air drives remotely. 
 - **Display gate (T6031 entry):** stop sharing the T6030 PMP image pin. Give T6031 its own pin, the image this Mac's ADT names (`07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB`), and correct the comment that says the PMP firmware is one t603x image. The T6030 and T8122 entries are unchanged.
 - **PMP report driver:** no admission without layout evidence. Before the pin change lands, confirm for image `07FF4C5B` the layout the T6030 report path assumes: the image UUID location in PMP SRAM, the boot-argument table bounds, the status/request/acknowledge word locations, and the temperature record format. If any differ, this spec stops at "collect and describe": the image stays refused, and the difference becomes its own spec.
 - **How the layout evidence is collected:** read-only, never starting the PMP, and only after checking that the PMP and PMS_SRAM power states are on.
-  - **Preferred:** a read-only m1n1 collection, as upstream did for T8122 ("PMP: T8122:" lines and `/chosen/asahi,t8122-pmp-facts`). T6031's facts node currently has only display clocks and MCC registers.
+  - **Preferred:** a read-only m1n1 collection, as the team did for T8122 ("PMP: T8122:" lines and `/chosen/asahi,t8122-pmp-facts`). T6031's facts node currently has only display clocks and MCC registers.
   - **Alternative:** the same reads interactively over the m1n1 proxy at stage 1. Faster, but m1n1 runs with its watchdog disabled, so a hang there needs a power cycle. Only do this while someone can reach the Mac.
 - **Test kernel:** built on the M3 in the existing chroot from a branch off `t6031/base` with exactly one fix. Config is the running `.911` `/proc/config.gz` with only `LOCALVERSION` changed. Package it with the existing `linux-aurora-dev` recipe, then install and remove it the same way as the Phase 1 kernel drill.
 - **GPU-handoff test image:** assembled with the package's `assemble-boot-bin` into a scratch directory on the M3, never onto the ESP. First prove the recipe by reproducing `a16a1fcd` from the installed parts, then change only `chosen.asahi,t6031-gpu=1`. Copy it to the Air and check its sha256 on both ends.
@@ -93,9 +93,9 @@ Each change is tested by one armed, one-shot boot that the Air drives remotely. 
 - Any change to m1n1's GPU or display handoff, except an optional read-only PMP layout collection.
 - Writing any `boot.bin` to the ESP, restoring `boot.bin.old`, or changing `update-m1n1` settings.
 - Closing Phase 1 (self-built m1n1 boot). That's a separate procedure, though it uses the same proxy delivery.
-- Posting to omacom (issues, threads, PRs) or opening issues on the fork. Revisit only when Naeem asks. (Pushing branches and these notes to the fork is in scope: every step of progress is pushed.)
+- Posting on the team thread or PRs: Naeem approves each text first. (Pushing branches and these notes to the fork is in scope: every step of progress is pushed.)
 - The macOS 26.6.2 firmware route, the J613 stage 1, and anything about M3 Air or M3 Pro.
-- Hypervisor tracing of macOS (Phase 4). Upstream's clean-room rules still need to be checked first.
+- Hypervisor tracing of macOS (Phase 4). The team's method (ADR 0001) applies.
 
 ## Further Notes
 
