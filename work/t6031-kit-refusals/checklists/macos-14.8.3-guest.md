@@ -6,6 +6,9 @@ Source for the steps: the Asahi hypervisor guide (`docs/sw/m1n1-hypervisor.md`) 
 
 **While the M3 runs macOS, Linux and the Air's SSH are gone.** Finish any Linux test boot first, and tell me before step 1.
 
+
+**Plan change, 2026-10-13 (Naeem at the Mac):** install **14.8.9** (23J631, still on Apple's CDN: `softwareupdate --fetch-full-installer --full-installer-version 14.8.9`) instead of hunting the archived 14.8.3. What matters is the GPU firmware *build*, not the macOS version; Apple rarely changes coprocessor firmware across point releases (the clean-room tree treats 14.7–14.8.x as one M3 Pro firmware build). Step 11's UUID check decides: `F9BEA4A3-…` means the trace applies; anything else means fall back to the archived 14.8.3. Install command: `sudo "/Applications/Install macOS Sonoma.app/Contents/Resources/startosinstall" --volume /Volumes/macOSTest --agreetolicense`.
+
 ## Part A: at the Mac, in macOS 27 (you)
 
 1. Boot macOS 27: power off, hold the power button for the boot picker, pick Macintosh HD.
