@@ -52,7 +52,7 @@ Source for the steps: the Asahi hypervisor guide (`docs/sw/m1n1-hypervisor.md`) 
 
 10. Build m1n1 from omacom `integration/aurora` with the hypervisor (the fork carries upstream's M3 14.8.3 hypervisor work), hand you `m1n1.bin` for step 9.
 11. After step 9: with macOSTest the default, each boot stops in m1n1 and waits for the Air over USB-C. First check: m1n1 prints `FDT: T6031: firmware image gfx=<UUID>`. **It must be `F9BEA4A3-D65B-386D-B884-ECF2DF7B159E`** or the trace would apply to other firmware; then we stop and rethink.
-12. Kernel for the guest: copy the kernelcache out of macOSTest's Preboot (the guide's steps, with img4tool), on the Air, kept private.
+12. Kernel for the guest: copy the guest kernel out of macOSTest's Preboot (the Asahi guide's steps), on the Air, kept private.
 13. Run the guest with the AGX tracer and read InitData+0. Record the value with its provenance ("observed in an m1n1 hypervisor trace of macOS 14.8.3 (23J220) on J516C") on the ticket; then the layout, as far as the tracer decodes it.
 
 ## Part D: back to Linux (you)

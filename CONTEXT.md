@@ -18,4 +18,4 @@ _Avoid_: firmware version, interface version
 
 **Clean-room rule**:
 What we may learn from Apple hardware, firmware and macOS by watching from outside, as opposed to reading their code (see ADR 0001).
-_Avoid_: clean-room clearance, reverse engineering
+_Avoid_: clean-room clearance

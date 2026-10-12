@@ -102,6 +102,8 @@ dmesg | grep -E 'M3 G15C|apple-t6031-display|apple-dcp|apple-pmp-report|apple_pm
 echo "== drm"; for c in /sys/class/drm/card*-*; do echo "\${c##*/} \$(cat \$c/status 2>/dev/null)"; done; ls /sys/class/backlight
 EOF
 cat "$out/collect.txt"
+# the full kernel log of this boot, kept with the filtered one
+"${SSH[@]}" "sudo -n dmesg" >"$out/dmesg.txt" 2>&1 || true
 
 # 7. disarm (the one-shot is already consumed by Limine; this removes the entry)
 disarm
