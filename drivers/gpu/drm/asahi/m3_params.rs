@@ -790,6 +790,16 @@ m3_param!("t6031_rev_id", T6031_REV_ID, parse_t6031_rev_id);
 /// `asahi.t6031_csafr=auto|on|off`.
 static T6031_CSAFR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_csafr", T6031_CSAFR, parse_t6031_tristate);
+/// `asahi.t6031_devctl_hold=1`: a test-only ordering experiment. After the InitData is
+/// published, no device-control doorbell is rung until the firmware has written its ready words
+/// (up to 5 s, with the readiness words logged every 500 ms). Both G15C boots so far crashed with
+/// "Host and FW Interface is mismatched" after the InitData publish *and* the first doorbell, so
+/// this tells which of the two the firmware rejects. Unset or any other value: the usual order.
+static T6031_DEVCTL_HOLD: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_devctl_hold", T6031_DEVCTL_HOLD, parse_t6031_number);
+pub(crate) fn t6031_devctl_hold() -> bool {
+    T6031_DEVCTL_HOLD.load(Ordering::Relaxed) == 1
+}
 /// `asahi.t6031_power_cap_mw`: the power target while the boot loader's model is a stand-in.
 static T6031_POWER_CAP_MW: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_power_cap_mw", T6031_POWER_CAP_MW, parse_t6031_number);

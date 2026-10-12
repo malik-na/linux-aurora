@@ -788,7 +788,8 @@ impl Runtime {
         let is_t8122 = crate::t8122_start::is_t8122(self.inner.device.soc());
         let is_t6031 = crate::t6031_start::is_t6031(self.inner.device.soc());
         self.inner.boot_step = crate::t8122_start::BootStep::Publish;
-        let result = self.boot_inner(pdev);
+        let hold = is_t6031 && crate::m3_params::t6031_devctl_hold();
+        let result = self.boot_inner(pdev, hold);
         if let Err(error) = result {
             // On T8122, log the firmware readiness words on every boot failure, so the verdict's
             // "see M3 firmware readiness" always has a line to point at. The ready-wait timeout in
@@ -813,12 +814,40 @@ impl Runtime {
         }
         result
     }
-    fn boot_inner(&mut self, pdev: &platform::Device<Core>) -> Result {
+    fn boot_inner(&mut self, pdev: &platform::Device<Core>, hold: bool) -> Result {
         use crate::t8122_start::BootStep;
         let root = self.inner.config.root();
         dev_info!(pdev.as_ref(), "M3: publishing owned initdata {:#x}\n", root);
         self.inner.boot_step = BootStep::Publish;
         Pin::new(&mut self.inner.transport).send_message(0x20, 0x0081000000000000 | (root & ((1u64<<44)-1)))?;
+        if hold {
+            // asahi.t6031_devctl_hold=1: ring no doorbell until the firmware is ready, as the
+            // legacy G15 path does after its "init done" word. A crash in here comes from the
+            // InitData alone (the verdict then says initdata-rejected); a ready firmware says
+            // the doorbell was the problem, and the usual controls follow.
+            dev_info!(pdev.as_ref(), "M3 G15C start: device-control doorbell held back (asahi.t6031_devctl_hold=1); waiting up to 5 s for the ready words\n");
+            self.inner.boot_step = BootStep::AwaitReady;
+            let start = Instant::<Monotonic>::now();
+            let mut next_log = Delta::from_millis(0);
+            loop {
+                let inner: &mut Inner = &mut *self.inner;
+                let ready = inner.config.ready()?;
+                let elapsed = start.elapsed();
+                if ready || !inner.state.healthy() || elapsed >= Delta::from_secs(5) || elapsed >= next_log {
+                    dev_info!(pdev.as_ref(), "M3 G15C start: {} ms after the InitData publish, no doorbell sent, healthy={}\n",
+                        elapsed.as_millis(), inner.state.healthy());
+                    let _ = inner.config.log_ready(&inner.drm);
+                    next_log = elapsed + Delta::from_millis(500);
+                }
+                if ready {
+                    dev_info!(pdev.as_ref(), "M3 G15C start: the firmware signalled ready {} ms after the InitData publish with no doorbell; sending the device controls now\n", elapsed.as_millis());
+                    break;
+                }
+                if !inner.state.healthy() { return Err(EIO); }
+                if elapsed >= Delta::from_secs(5) { return Err(ETIMEDOUT); }
+                fsleep(Delta::from_millis(1));
+            }
+        }
         self.inner.boot_step = BootStep::DeviceControl;
         self.send_control(0x13)?;
         self.send_control(9)?;
