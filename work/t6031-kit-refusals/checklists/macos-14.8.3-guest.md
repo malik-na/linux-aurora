@@ -20,6 +20,15 @@ Source for the steps: the Asahi hypervisor guide (`docs/sw/m1n1-hypervisor.md`) 
    softwareupdate --fetch-full-installer --full-installer-version 14.8.3
    ```
    **Blocked 2026-10-12:** Apple no longer offers 14.8.3 (oldest Sonoma listed: 14.8.7, 23J520; build 23J220 is absent from Apple's catalog). Use the archived InstallAssistant.pkg the Asahi hypervisor guide lists for 14.8.3: https://archive.org/details/install-assistant_20250207 (`docs/sw/m1n1-hypervisor.md`, "Using archived InstallAssistant.pkg"). It is a third-party mirror of an Apple-signed package, so before running it: `pkgutil --check-signature InstallAssistant.pkg` must show Apple's signature chain, and after it extracts "Install macOS Sonoma.app" into /Applications, its `Contents/Info.plist` must say 14.8.3 / build 23J220 (`DTPlatformVersion` and the app's version keys). Refuse anything else.
+
+   **Checked 2026-10-12:** Apple's CDN no longer serves the 23J220 package (the direct swcdn URLs listed by Mr. Macintosh answer 403; the 14.8.7 one still answers 200), so the archive is the only source. archive.org was returning 502 "overloaded" on and off; its metadata for the item lists `InstallAssistant.pkg`, 13,658,132,415 bytes, sha1 `ff2e887ecf85489f84b9293ee1038f9c050b904d`. Download with resume and retries, then check the hash before anything else:
+   ```
+   curl -L -C - --retry 30 --retry-all-errors --retry-delay 30 -o ~/Downloads/InstallAssistant.pkg \
+     https://archive.org/download/install-assistant_20250207/InstallAssistant.pkg
+   shasum -a 1 ~/Downloads/InstallAssistant.pkg   # expect ff2e887ecf85489f84b9293ee1038f9c050b904d
+   pkgutil --check-signature ~/Downloads/InstallAssistant.pkg
+   ```
+   The sha1 shows the download is the file archive.org holds; Apple's signature on the package shows it is Apple's; the app's Info.plist shows it is 23J220. All three.
 5. Run the installer and pick **macOSTest** as the target. Let it finish and set up a user (any name; it's a throwaway install). Skip iCloud and all services.
 6. First boot of macOSTest: in System Settings → General → Startup Disk, macOSTest is now the default. Leave it so for the next part.
 
