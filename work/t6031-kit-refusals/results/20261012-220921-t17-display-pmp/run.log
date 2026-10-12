@@ -1,0 +1,50 @@
+== 22:09:21 m3-testboot t17-display-pmp image=none source=linux-aurora-dev params=apple_t6031_display.enable=1
+boot_id before: 5511835d-6e0f-4796-89aa-ea7048963399
+m3-oneshot: arming //linux-aurora-dev, kernel 7.1.12-aurora-dev (this boot runs 7.1.12-2-20261011.911-sep-ARCH)
+m3-oneshot: armed one boot (1012-220922): the next boot only runs 7.1.12-aurora-dev with apple_t6031_display.enable=1. Limine clears the one-shot before that boot starts, so the boots after it should be the normal entry; this has been tested on an M3 Pro only, so on a first arming check it with --status in the armed boot. Don't update packages before the reboot. Reboot when ready, then run: sudo air-gpu-collect.sh
+== 22:09:22 rebooting the M3
+== 22:10:05 SSH back, boot_id d803e3e6-6d71-46e3-9774-f624a9cded60
+uname: 7.1.12-aurora-dev  nproc: 16  boot_id: d803e3e6-6d71-46e3-9774-f624a9cded60
+stage1: v1.6.1-dirty  stage2: v1.6.1-omarchy.aurora17.t6031.1
+t6031-gpu chosen: 0
+esp boot.bin: a16a1fcd1687b5a9863e7997417ffc8f06ede718db96e5c1dbc00edaf6097d82
+cmdline: root=UUID=<root-uuid> rw rootflags=subvol=@,x-systemd.device-timeout=0 zswap.enabled=0 rootfstype=btrfs quiet splash loglevel=0 systemd.show_status=false rd.udev.log_level=0 vt.global_cursor_default=0 plymouth.ignore-serial-consoles apple_t6031_display.enable=1 softlockup_panic=1 hung_task_panic=1 systemd.watchdog_sec=30 panic=10 air_test.boot=1012-220922
+failed units: 0
+m3-oneshot: this boot is armed boot 1012-220922: 
+m3-oneshot: one-shot variable: not set
+m3-oneshot: /boot/efi/ubootefi.var: does not name air-test
+m3-oneshot: /boot/efi/limine.conf: has the air-test entry ()
+== verdict lines
+[    0.000000] Kernel command line: root=UUID=<root-uuid> rw rootflags=subvol=@,x-systemd.device-timeout=0 zswap.enabled=0 rootfstype=btrfs quiet splash loglevel=0 systemd.show_status=false rd.udev.log_level=0 vt.global_cursor_default=0 plymouth.ignore-serial-consoles apple_t6031_display.enable=1 softlockup_panic=1 hung_task_panic=1 systemd.watchdog_sec=30 panic=10 air_test.boot=1012-220922
+[    0.010636] apple-t6031-display: handoff: apple,t6031-handoff dcp 0x1 display 0x1 piodma 0x1; dcp firmware-compat 14.7.0 version 14.7.0 uuid F493F03E-CC40-3D89-9A08-5F259BA2B246; 8 memory regions, 1 OS log
+[    0.010647] apple-t6031-display: handoff: PMP values /chosen/asahi,t6031-pmp: board-id 0x46 dram-vendor-id 0x6 tunable-uuid 07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB, 72 tunables (image pinned: 07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB)
+[    0.010659] apple-t6031-display: handoff: dcp-oslog [mem 0x10005638000-0x10005657fff] no-map
+[    0.010665] apple-t6031-display: handoff: dcp-oslog [mem 0x10005618000-0x10005637fff] no-map
+[    0.010670] apple-t6031-display: handoff: dcp-oslog [mem 0x100055f8000-0x10005617fff] no-map
+[    0.010674] apple-t6031-display: handoff: dcp-oslog [mem 0x100055d8000-0x100055f7fff] no-map
+[    0.010678] apple-t6031-display: handoff: dcp-oslog [mem 0x100055b8000-0x100055d7fff] no-map
+[    0.010679] apple-t6031-display: handoff: 5 dcp-oslog reservations
+[    0.010681] apple-t6031-display: handoff: firmware image gfx=F9BEA4A3-D65B-386D-B884-ECF2DF7B159E
+[    0.010681] apple-t6031-display: handoff: firmware image dcp=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010682] apple-t6031-display: handoff: firmware image dcpext0=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010683] apple-t6031-display: handoff: firmware image dcpext1=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010683] apple-t6031-display: handoff: firmware image dcpext2=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010684] apple-t6031-display: handoff: firmware image dcpext3=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.010685] apple-t6031-display: handoff: firmware image pmp=07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB
+[    0.011076] apple-t6031-display: enabled /soc/iommu@38530c000, /soc/iommu@385304000, /soc/mailbox@386c08000, /soc/dcp@386c00000 and /soc/display-subsystem
+[    0.012372] apple-t6031-display: PMP: this Mac's 74 values from /chosen/asahi,t6031-pmp
+[    0.012378] apple-t6031-display: added the PMP and its display and storage report; minimum power state of disp_sys, disp_fe and disp_cpu raised to active; pmp and pms_sram kept on
+[    0.070800] apple-pmp-report 2903c0000.pmp-report: PMP halted, firmware 07ff4c5b-cb2e-3de6-95ff-3b107d19b7ab; PTD status 0x0 request 0x0 ack 0x0; requesting 0x200010000
+[    0.070909] apple-pmp-report 2903c0000.pmp-report: request 0x200010000 set; the PMP starts when a consumer asks for it
+[    0.108393] watchdog: NMI not fully supported
+[    0.108394] watchdog: Hard watchdog permanently disabled
+[    0.538380] [drm] Initialized simpledrm 1.0.0 for 10bd1485c00.framebuffer on minor 0
+[    0.558415] simple-framebuffer 10bd1485c00.framebuffer: [drm] fb0: simpledrmdrmfb frame buffer device
+[    1.071749] systemd[1]: Using hardware watchdog /dev/watchdog0: 'Apple SoC Watchdog', version 0.
+[    3.038289] systemd[1]: Using hardware watchdog /dev/watchdog0: 'Apple SoC Watchdog', version 0.
+[    3.506089] apple-dcp 386c00000.dcp: error -ENODEV: J516C display not started: DCP firmware F493F03E-CC40-3D89-9A08-5F259BA2B246 is not supported
+== drm
+card0-Unknown-1 connected
+m3-oneshot: disarmed: removed the air-gpu-oneshot entry from /boot/efi/limine.conf; 
+== ESP boot.bin unchanged
+== 22:10:46 done: /home/naeem/m3-results/20261012-220921-t17-display-pmp
