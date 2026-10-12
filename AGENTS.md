@@ -1,3 +1,7 @@
+## Current work
+
+M3 Max (T6031) bring-up, driven from the M1 Air from 2026-10-12. Read `docs/agents/handoff.md` before doing anything.
+
 ## Agent skills
 
 ### Issue tracker
