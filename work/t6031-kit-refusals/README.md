@@ -2,6 +2,8 @@
 
 The M3 Max (J516C / T6031) bring-up work driven from the M1 Air, from 2026-10-12. The route is charted on the wayfinder map **malik-na/linux-aurora#18** (destination: kmscube on the built-in display through the G15C, merged into `integration/aurora`); its tickets are the map's sub-issues. Start with the map, then `spec.md` and `issues/` for the first six tickets (local, each with a Result).
 
+**Parked 2026-10-13.** Eryk's call: T6031 work continues on the team's clean-room tree (aurora-silicon/linux-cleanroom-installer). This fork, its branches, tickets and notes stay as they are at this point, to be picked up later.
+
 - `spec.md`: the spec for the kit's two refusals (GPU mailbox, PMP image admission).
 - `issues/NN-*.md`: the first six tickets, blockers first; Status and Result in each. 04 and 05 moved to the map (#16, #17).
 - `tools/`: `m3-testboot` (Air: one self-recovering test boot over the m1n1 proxy; keeps the full dmesg), `watch-chainload.py` (Air: catch stage 1's proxy window and chainload a boot.bin), `m3-oneshot` (M3: arm one boot through the kit's one-shot mechanism).
