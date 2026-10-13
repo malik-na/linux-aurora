@@ -1,0 +1,38 @@
+[52.390896] M3 compute USC page: window base 0x10000000000, zeroed GPU-RO page at 0x10000004000; pages [
+                   0x10000000000,
+                   0x10000004000,
+                   0x10000008000,
+                   0x1000000c000,
+               ] mapped before [true, false, true, true] after [true, true, true, true] (asahi.t6031_usc_page=1)
+[52.390902] M3 compute graph: context=1 queue=0xfffffc2d05c20000 command=0xfffffc2d05e77760 low=0x7300003760 cdm=0x86fde74400..0x86fde74434 pool=0xfffffc2d05c08000
+[   52.390902] M3 compute graph: context=1 queue=0xfffffc2d05c20000 command=0xfffffc2d05e77760 low=0x7300003760 cdm=0x86fde74400..0x86fde74434 pool=0xfffffc2d05c08000
+[   52.390904] M3 client CDM bytes=[00, 00, 08, 00, 00, 00, 00, 01, 00, 15, 00, 00, 40, 00, 00, 00, 00, 00, 01, 00, 01, 00, 00, 00, 01, 00, 00, 00, 40, 00, 00, 00, 01, 00, 00, 00, 01, 00, 00, 00, 60, 01, 00, 60, fe, 15, 02, 60]
+[   52.399528] M3 G15C verdict: job-faulted (EIO): crashed=0; see the lines around this one
+[   52.399573] M3 bank 0 fault=0x0 address_word=0x0 address=0x0
+[   52.399576] M3 bank 1 fault=0x0 address_word=0x0 address=0x0
+[   52.399577] M3 bank 256 fault=0x8069032211 address_word=0x400001206 address=0x10000048180
+[   52.399579] M3 fault mapping bank=256 address=0x10000048180 translation=Err(EFAULT)
+[   52.399581] M3 bank 262144 fault=0x0 address_word=0x0 address=0x0
+[   52.399582] M3 bank 262145 fault=0x0 address_word=0x0 address=0x0
+[   52.399583] M3 bank 524288 fault=0x0 address_word=0x0 address=0x0
+[   52.399585] M3 bank 786432 fault=0x0 address_word=0x0 address=0x0
+[   52.399590] M3_USC core=0 VDM=0x0/0x0 PDM=0x0/0x0 CDM=0x320/0x12610
+[   52.399595] M3_USC core=1 VDM=0x0/0x0 PDM=0x0/0x0 CDM=0x340/0x13160
+[   52.399599] M3_USC core=2 VDM=0x0/0x0 PDM=0x0/0x0 CDM=0x300/0x11ad0
+[   52.399603] M3_USC core=3 VDM=0x0/0x0 PDM=0x0/0x0 CDM=0x330/0x12af8
+[   52.399608] M3_USC core=4 VDM=0x0/0x0 PDM=0x0/0x0 CDM=0x300/0x11ae0
+[   52.399612] M3_USC core=5 VDM=0x0/0x0 PDM=0x0/0x0 CDM=0x300/0x11a40
+[   52.399616] M3_USC core=6 VDM=0x0/0x0 PDM=0x0/0x0 CDM=0x2e0/0x10c50
+[   52.399621] M3_USC core=7 VDM=0x0/0x0 PDM=0x0/0x0 CDM=0x2d0/0x10780
+[   52.399625] M3_USC core=8 VDM=0x0/0x0 PDM=0x0/0x0 CDM=0x2d0/0x106b8
+[   52.399629] M3_USC core=9 VDM=0x0/0x0 PDM=0x0/0x0 CDM=0x2f0/0x11150
+[   52.399796] M3 firmware recovery state: halt_count=1 halted=1 resume=0 info=0x27/0xc1000100 packet=[00, 00, 00, 00, 01, 00, 00, 00, 00, 00, 00, 00, 00, 00, c1, 00, 00, 00, 00, 00] completed_events=0 event_messages=1
+--- decoded (tools/decode_m3_fault.py)
+bank 0x0: clear
+bank 0x1: clear
+bank 0x100: unmapped read by UL1C(9) (unit 0x91) slot 1 level 0 at 0x10000048180
+bank 0x40000: clear
+bank 0x40001: clear
+bank 0x80000: clear
+bank 0xc0000: clear
+launch 0: program 0x10000054000

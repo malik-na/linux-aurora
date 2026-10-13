@@ -46,6 +46,15 @@ other cores), vanish with the job running, or vanish with the job still producin
 contents, as G17P's base page does in the Mesa tree). The real fix belongs with whoever lays out the USC window
 (Mesa, with the kernel's window rules), so the result is also the question for the team.
 
+## Finding 3 (boot t78): filling the guard page moves the fault to the next one
+
+With a zeroed page at base + 0x4000 (it was the window's only unmapped page among its first four), core 8's fault
+is gone and core 9 faults at base + 0x48180, 0x180 into another unmapped page; the cores do about twice the work
+before the halt. So the USC touches memory just past the client's USC objects, in the guard pages the client
+leaves unbound: either it reads past each object's end, or a per-core array sized for fewer than ten cores per
+cluster overruns for cores 8 and 9. Next: log the window's full page map at graph build and fill every guard page
+below the top object, in one build, to tell those apart and see whether the job then runs.
+
 ## Not needed yet
 
 The hypervisor comparison (SGX block polled at each firmware message during the macOS job) stays as the fallback
