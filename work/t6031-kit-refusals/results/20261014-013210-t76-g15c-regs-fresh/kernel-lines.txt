@@ -1,0 +1,16 @@
+[1.121747] M3 G15C verdict: firmware-running: the firmware accepted the InitData (version 0xc08e21e84820490) and the device controls; no job has run yet
+[52.409479] M3 compute context areas: one 0x7ac00-byte run, A=0x3c400 B=0x2000 (4 clusters x 10 cores), firmware addresses
+[52.426020] M3 compute graph: context=1 queue=0xfffffc2d05c20000 command=0xfffffc2d05e77760 low=0x7300003760 cdm=0x86fde74400..0x86fde74434 pool=0xfffffc2d05c08000
+[52.427990] M3 firmware event 4 bytes=[04, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 02, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 0
+[52.428101] M3 firmware recovery event answered by a resume (halt_count=1, resumes=1); the job stays live
+[52.431304] M3 G15C verdict: job-completed: the first compute job finished, 0 ns of GPU time
+[52.431406] M3 firmware event 4 bytes=[04, 00, 00, 00, 01, 00, 00, 00, 00, 00, 00, 00, 02, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 0
+[52.431509] M3 firmware recovery event answered by a resume (halt_count=2, resumes=2); the job stays live
+[52.436767] M3 firmware event 4 bytes=[04, 00, 00, 00, 02, 00, 00, 00, 00, 00, 00, 00, 02, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 0
+[52.436866] M3 firmware recovery event answered by a resume (halt_count=3, resumes=3); the job stays live
+[52.439652] M3 firmware event 4 bytes=[04, 00, 00, 00, 03, 00, 00, 00, 00, 00, 00, 00, 02, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 0
+[52.439772] M3 firmware recovery event answered by a resume (halt_count=4, resumes=4); the job stays live
+...
+compute-check: 65536 invocations x 256 steps, 5 s
+MISMATCH run 1: 65536 of 65536 words wrong; first at 0: got 0x00000000 want 0x6f05e89c
+FAIL: 2415 runs in 5.0 s, 2415 with wrong results
