@@ -25,6 +25,11 @@ fn pointer(out: &mut [u8], off: usize, value: u64) { out[off..off+8].copy_from_s
 pub(crate) enum RegisterSet {
     G15S,
     G15G,
+    /// G15C (T6031): the G15S list, with the values its own driver gives the four-cluster part
+    /// in the cluster-sized registers: the preemption tail pointers at +0x2980 (0xd80 + 0x700 per
+    /// cluster), UMA PTC 0xa599 = 0x6000400020, DUPM 0xd411 = 0x3c000000140, 0x1a0e9 = 0 (read
+    /// from 38 of the J516C driver's compute commands, 2026-10-13).
+    G15C,
 }
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct GpuVa(u64);
@@ -66,7 +71,14 @@ impl Command {
     pub(crate) fn encode(&self, out: &mut [u8]) -> Result<(), Error> {
         if out.len() < SIZE { return Err(Error::Size); }
         if self.context >= 64 || self.cdm_last.get() < self.cdm.get() { return Err(Error::Address); }
-        if self.preemption.size() < 0x14a0 || self.microsequence_size == 0 || self.microsequence_size > 4096 {
+        let g15c = self.register_set == RegisterSet::G15C;
+        // Tail pointers, UMA PTC, DUPM and 0x1a0e9: the qualified two-cluster values, or G15C's.
+        let (tail, ptc, dupm, r1a0e9): (u64, u64, u64, u64) = if g15c {
+            (0x2980, 0x6000400020, 0x3c000000140, 0)
+        } else {
+            (0x1480, 0x13200400020, 0x200000001, 8)
+        };
+        if self.preemption.size() < (tail + 0x20) as usize || self.microsequence_size == 0 || self.microsequence_size > 4096 {
             return Err(Error::Size);
         }
         self.gpu_alias.add((SIZE - 3) as u64)?; // inclusive final aligned dword
@@ -74,13 +86,13 @@ impl Command {
         let preemption = self.preemption.base();
         let values = [
             (0x1a510, preemption), (0x1a420, self.cdm.get()),
-            (0x1a4d0, preemption+0x1480), (0x1a4d8, preemption+0x1488),
-            (0x1a4e0, preemption+0x1490), (0x1a4e8, preemption+0x1498),
+            (0x1a4d0, preemption+tail), (0x1a4d8, preemption+tail+8),
+            (0x1a4e0, preemption+tail+0x10), (0x1a4e8, preemption+tail+0x18),
             (0x1a440, QUALIFIED_COMPUTE_CONTROL), (0x1a458, 0x10c08860),
             (0x12091, 0x1c), (0x101d9, 0x1c),
             (0x1a089, 0), (0x1a091, 0), (0x1a059, 0), (0x1a061, 0),
             (0x1a0b9, 0), (0x1a0c1, 0), (0x101d1, 0), (0xd479, 0),
-            (0x1a0e9, 8), (0x107a1, 0xff0000), (0xa599, 0x13200400020), (0xd411, 0x200000001),
+            (0x1a0e9, r1a0e9), (0x107a1, 0xff0000), (0xa599, ptc), (0xd411, dupm),
         ];
         let bytes = &mut out[..SIZE];bytes.fill(0);
         word(bytes, 0, 3); // compute opcode
@@ -88,7 +100,7 @@ impl Command {
         word(bytes, CONTEXT, self.context);
         pointer(bytes, 0x14, self.notifier.get());
         let count = match self.register_set {
-            RegisterSet::G15S => REGISTER_COUNT,
+            RegisterSet::G15S | RegisterSet::G15C => REGISTER_COUNT,
             RegisterSet::G15G => G15G_REGISTER_COUNT,
         };
         for (n, (register, value)) in values.into_iter().take(count).enumerate() {

@@ -497,7 +497,7 @@ pub(crate) static T6031: Soc = Soc {
     retire_mmio: 4,
     mtr_masks: None,
     hwdata_object: None,
-    registers: RegisterSet::G15S,
+    registers: RegisterSet::G15C,
     ut_engagement: 1,
     power_target_cap_mw: None,
     hwdata_words: &[],
