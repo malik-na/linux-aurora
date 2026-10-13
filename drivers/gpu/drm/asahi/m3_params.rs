@@ -890,6 +890,18 @@ pub(crate) fn t6031_pool_chunks() -> bool {
         v => v != 0,
     }
 }
+/// `asahi.t6031_pool_flag58=1`: set the T6031 compute pool manager's +0x58 word to 1 before the
+/// first job, as the J516C's own driver does (traced on this Mac); ours leaves it 0. Default 0.
+static T6031_POOL_FLAG58: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_pool_flag58", T6031_POOL_FLAG58, parse_t6031_number);
+
+/// Whether the pool manager's +0x58 word starts at 1 (`asahi.t6031_pool_flag58`).
+pub(crate) fn t6031_pool_flag58() -> bool {
+    match T6031_POOL_FLAG58.load(Ordering::Relaxed) {
+        T6031_UNSET => false,
+        v => v != 0,
+    }
+}
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.
 static T6031_MTR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_mtr", T6031_MTR, parse_t6031_mtr);

@@ -88,6 +88,12 @@ impl Compute {
             dev_info!(dev.as_ref(), "M3 compute pool: +0x44 = {} chunks (asahi.t6031_pool_chunks=1)\n", chunks);
             objects[storage::POOL].u32(0x44, chunks)?;
         }
+        // asahi.t6031_pool_flag58=1: the pool manager's +0x58 word set to 1 before the first job, as
+        // the J516C's own driver has it (ours leaves it 0; the firmware writes +0x50 next to it).
+        if registers == command::RegisterSet::G15C && crate::m3_params::t6031_pool_flag58() {
+            dev_info!(dev.as_ref(), "M3 compute pool: +0x58 = 1 (asahi.t6031_pool_flag58=1)\n");
+            objects[storage::POOL].u32(0x58, 1)?;
+        }
         // asahi.t6031_skip_pool=1: a pool id above 0xff makes the firmware skip the pool (the
         // J516S self-test's trick), to tell whether the pool is what the G15C dispatch waits on.
         if registers == command::RegisterSet::G15C && crate::m3_params::t6031_skip_pool() {
