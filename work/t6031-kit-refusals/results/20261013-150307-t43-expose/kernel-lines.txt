@@ -1,0 +1,9 @@
+asahi 40a400000.gpu: M3 G15C start: word overlay applied: 376 hardware, 7 globals, 2 power words
+asahi 40a400000.gpu: M3 firmware readiness: magic=0xabcdabcd runtime=1 newA=1/1 newB=0
+asahi 40a400000.gpu: M3: thermal: no reading yet; runtime cap at most 1 (338 MHz)
+asahi 40a400000.gpu: M3: thermal: no SoC die temperature (no reading yet), runtime cap 1 (338 MHz) of 1..=1, firmware peak state 0 since the last summary, raised 0 and lowered 0 times so far
+asahi 40a400000.gpu: M3: performance state after boot: firmware actual 1 current 1 frequency 0 MHz, sgx+0xe01000 0x1; cap state 1 (338 MHz)
+asahi 40a400000.gpu: M3 G15C verdict: firmware-running: the firmware accepted the InitData (version 0xc08e21e84820490) and the device controls; no job has run yet
+asahi 40a400000.gpu: M3: runtime switches: asahi.m3_unlocked_wait=1 asahi.m3_timeout_nohang=1 resume-after-fault=0
+[drm] Initialized asahi 0.2.0 for 40a400000.gpu on minor 0
+asahi 40a400000.gpu: M3: firmware ready; common DRM GEM/VM frontend registered
