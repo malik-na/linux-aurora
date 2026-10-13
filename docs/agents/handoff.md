@@ -97,3 +97,9 @@ values the USC cores start and read just past the client's USC objects, into the
 window (t50, t77, t78; `research/first-job-state.md`). The installed kernel is dev-76, with the
 `asahi.t6031_usc_page` knob; e7af3a72, the review fix, is pushed but not packaged. The frontier is #49: log the
 window's page map and fill every guard page (`=2`), one build and one boot.
+
+**Update 2026-10-14 03:20: the first G15C compute jobs run.** Boot t80 used dev-80 with these parameters:
+`asahi.t6031_compute_regs=0xf asahi.t6031_first_job_zero=1 asahi.t6031_usc_page=6` (+ `asahi.debug_flags=0x1000` for
+the logs). Every job completes (1.07 ms GPU time) and 15/16 of compute-check's output is right. The stall was the
+USC reading past the client's USC objects into unmapped pages (#47–#49). The knob is an experiment, not a fix.
+Frontier: #50 (the wrong 1/16), #51 (where the fix belongs, grilling, team post needs Naeem's text approval).
