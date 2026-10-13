@@ -126,7 +126,7 @@ impl Compute {
         }
         let usc_mode = crate::m3_params::t6031_usc_page();
         let usc_pages = if registers == command::RegisterSet::G15C && usc_mode != 0 {
-            Self::map_usc_pages(dev, vm, control.usc_base, usc_mode)?
+            Self::map_usc_pages(dev, vm, control, usc_mode)?
         } else { KVec::new() };
         dev_info!(dev.as_ref(),"M3 compute graph: context={} queue={:#x} command={:#x} low={:#x} cdm={:#x}..{:#x} pool={:#x}\n",
             binding.slot(),objects[storage::QUEUE].va(),objects[storage::COMMAND].va(),
@@ -143,12 +143,16 @@ impl Compute {
         unsafe {core::arch::asm!("isb",options(nostack,preserves_flags))};
         Ok(Self {_client_command:client_command.ok_or(EINVAL)?,objects,command_bytes,sequence_bytes,_binding:binding,stats,last_progress_ns:0,sequence:1,head:1,cached_views:KVec::new(),slot:0,batch_count:1,checkpoint:(0,0,0),registers,ctx,_usc_pages:usc_pages})
     }
-    /// `asahi.t6031_usc_page`: map zeroed 16 KiB pages, GPU read-only, into the client's USC
-    /// window where `m3_usc_window::fill_mask` says, and log the window's first 1 MiB as a page
-    /// mask before and after and as runs. A page that fails to map is logged and skipped, so the
-    /// job still shows what the hardware does.
-    fn map_usc_pages(dev: &driver::AsahiDevice, vm: &mmu::Vm, usc_base: u64, mode: u64) -> Result<KVec<mmu::KernelMapping>> {
-        use crate::m3_usc_window::{fill_mask, runs, PAGE, PAGES};
+    /// `asahi.t6031_usc_page`: map 16 KiB pages, GPU read-only, into the client's USC window
+    /// where `m3_usc_window::fill_mask` says, zeroed or tagged by `m3_usc_window::tagged`. Logs
+    /// the window's first 1 MiB as a page mask before and after and as runs (a run is "filled"
+    /// only if every page in it was mapped), the base page's bytes at +0x0 and +0x3400..+0x4000,
+    /// and the first launch's pipeline descriptor. A page that fails to map or to be kept is
+    /// logged and skipped, so the job still shows what the hardware does.
+    fn map_usc_pages(dev: &driver::AsahiDevice, vm: &mmu::Vm, control: crate::agx_compute::Control,
+        mode: u64) -> Result<KVec<mmu::KernelMapping>> {
+        use crate::m3_usc_window::{fill_mask, first_pipeline, runs, tagged, PAGE, PAGES};
+        let usc_base = control.usc_base;
         let address = |page: u32| usc_base.checked_add(u64::from(page) * PAGE);
         let probe = |vm: &mmu::Vm| (0..PAGES).fold(0u64, |mask, page| match address(page) {
             Some(a) if vm.covers_range(a, PAGE, true, false) => mask | 1 << page,
@@ -157,27 +161,68 @@ impl Compute {
         let before = probe(vm);
         let fill = fill_mask(before, mode);
         let mut pages = KVec::new();
+        let mut filled = 0u64;
         for page in (0..PAGES).filter(|page| fill >> page & 1 != 0) {
             let Some(at) = address(page) else { continue };
-            match Self::map_zero_page(dev, vm, at) {
-                Ok(mapping) => pages.push(mapping, GFP_KERNEL)?,
+            let pattern = tagged(mode).then(|| page * PAGE as u32);
+            match Self::map_fill_page(dev, vm, at, pattern) {
+                Ok(mapping) => match pages.push(mapping, GFP_KERNEL) {
+                    Ok(()) => filled |= 1 << page,
+                    Err(e) => dev_info!(dev.as_ref(), "M3 compute USC window: +{:#x} mapped but not kept ({:?})\n", u64::from(page) * PAGE, e),
+                },
                 Err(e) => dev_info!(dev.as_ref(), "M3 compute USC window: +{:#x} not filled ({:?})\n", u64::from(page) * PAGE, e),
             }
         }
-        dev_info!(dev.as_ref(), "M3 compute USC window: base {:#x}, mode {}, mapped before {:#018x}, filled {:#018x} ({} pages), mapped after {:#018x} (bit i = base + i * 0x4000; asahi.t6031_usc_page)\n",
-            usc_base, mode, before, fill, pages.len(), probe(vm));
+        dev_info!(dev.as_ref(), "M3 compute USC window: base {:#x}, mode {:#x}, mapped before {:#018x}, filled {:#018x} ({} pages, {}), mapped after {:#018x} (bit i = base + i * 0x4000; asahi.t6031_usc_page)\n",
+            usc_base, mode, before, filled, pages.len(), if tagged(mode) { "tagged" } else { "zeroed" }, probe(vm));
         for (first, end, mapped) in runs(before) {
             let run = (!0u64 >> (PAGES - (end - first))) << first;
-            let what = if mapped { "mapped" } else if fill & run == run { "unmapped, filled" } else { "unmapped" };
+            let what = if mapped { "mapped" } else if filled & run == run { "unmapped, filled" } else { "unmapped" };
             dev_info!(dev.as_ref(), "M3 compute USC window: +{:#x}..+{:#x} {}\n", u64::from(first) * PAGE, u64::from(end) * PAGE, what);
+        }
+        Self::log_client_bytes(dev, vm, "base page", usc_base, 0x40);
+        if let Some(at) = usc_base.checked_add(0x3400) {
+            Self::log_client_bytes(dev, vm, "base page", at, 0xc00);
+        }
+        let mut stream = [0u8; 48];
+        match crate::m3_client::read_through_cache(vm, control.base, &mut stream).ok().and_then(|()| first_pipeline(&stream)) {
+            Some(pipeline) => Self::log_client_bytes(dev, vm, "pipeline descriptor", pipeline, 0x80),
+            None => dev_info!(dev.as_ref(), "M3 compute USC window: no launch found at the stream's start\n"),
         }
         Ok(pages)
     }
-    /// One zeroed 16 KiB kernel object, mapped GPU read-only at `address` in `vm`.
-    fn map_zero_page(dev: &driver::AsahiDevice, vm: &mmu::Vm, address: u64) -> Result<mmu::KernelMapping> {
-        let mut object = crate::gem::new_kernel_object(dev, mmu::UAT_PGSZ)?;
-        object.vmap()?.memset(0);
+    /// One 16 KiB kernel object, zeroed or filled with `m3_usc_window::fill_pattern` for the
+    /// window offset `pattern`, mapped GPU read-only at `address` in `vm`. Write-combined, so
+    /// the pattern is in memory before the GPU reads it.
+    fn map_fill_page(dev: &driver::AsahiDevice, vm: &mmu::Vm, address: u64, pattern: Option<u32>) -> Result<mmu::KernelMapping> {
+        let mut object = crate::gem::new_kernel_object_wc(dev, mmu::UAT_PGSZ)?;
+        {
+            let mut map = object.vmap()?;
+            match pattern {
+                None => map.memset(0),
+                Some(offset) => {
+                    let mut bytes = KVec::from_elem(0u8, mmu::UAT_PGSZ, GFP_KERNEL)?;
+                    crate::m3_usc_window::fill_pattern(offset, &mut bytes);
+                    map.write(&bytes, 0)?;
+                }
+            }
+        }
         object.map_at(vm, address, mmu::PROT_GPU_SHARED_RO, false)
+    }
+    /// Log `len` bytes of the client's memory at `iova`, 64 to a line, or why they cannot be read.
+    fn log_client_bytes(dev: &driver::AsahiDevice, vm: &mmu::Vm, what: &str, iova: u64, len: usize) {
+        let mut bytes = [0u8; 64];
+        for offset in (0..len).step_by(64) {
+            let n = (len - offset).min(64);
+            let at = iova + offset as u64;
+            match crate::m3_client::read_through_cache(vm, at, &mut bytes[..n]) {
+                Ok(()) => dev_info!(dev.as_ref(), "M3 compute USC window: {} {:#x}: {:02x?}\n", what, at, &bytes[..n]),
+                Err(e) => {
+                    dev_info!(dev.as_ref(), "M3 compute USC window: {} {:#x} unreadable ({:?})\n", what, at, e);
+                    return;
+                }
+            }
+        }
     }
     fn encode_command(objects: &mut [Buffer], bytes: &mut [u8], context: u32,
         control: crate::agx_compute::Control, sequence: u64, slot: usize,

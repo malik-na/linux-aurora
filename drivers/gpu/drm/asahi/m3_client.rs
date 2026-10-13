@@ -199,7 +199,7 @@ pub(crate) fn check_compute_launches<A: GpuAddressSpace>(
 ///
 /// `Vm::read_mapped_bytes` holds the VM execution lock from translation until the copy, so the
 /// pages cannot be unmapped and freed while they are cleaned and read.
-fn read_through_cache(vm: &mmu::Vm, iova: u64, out: &mut [u8]) -> Result {
+pub(crate) fn read_through_cache(vm: &mmu::Vm, iova: u64, out: &mut [u8]) -> Result {
     vm.read_mapped_bytes(iova, out, |src, len| clean_invalidate(src as usize, len))
 }
 

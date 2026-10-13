@@ -1046,20 +1046,22 @@ pub(crate) fn t6031_params() -> crate::t6031_knobs::Raw {
         power_cap_mw: get(&T6031_POWER_CAP_MW),
     }
 }
-/// `asahi.t6031_usc_page=1|2`: when a T6031 compute queue builds its graph, map zeroed 16 KiB
-/// pages, GPU read-only, into the client's USC window where the client left pages unbound: 1 the
-/// page at base + 0x4000 (the guard after its first USC object, where the G15C's USC cores 8 and
-/// 9 read with the J516C's compute register values, boots t50/t77), 2 every unbound page below
-/// the highest bound one in the window's first 1 MiB and the page after it (t78: the reads move
-/// to the next such page). Logs the window's page map either way. Experiment knob; default 0.
+/// `asahi.t6031_usc_page=MODE`: when a T6031 compute queue builds its graph, map 16 KiB pages,
+/// GPU read-only, into the client's USC window where the client left pages unbound. Bits 1:0:
+/// 1 the page at base + 0x4000 (where the G15C's USC faults with the J516C's compute register
+/// values, boots t50/t77), 2 every unbound page below the highest bound one in the window's
+/// first 1 MiB and the page after it. Bit 2: fill with a pattern naming each word's window
+/// offset instead of zeros. Any other value: nothing (`m3_usc_window`). Either way the graph
+/// logs the window's page map, the base page's bytes and the launch's pipeline descriptor.
+/// Experiment knob; default 0.
 static T6031_USC_PAGE: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_usc_page", T6031_USC_PAGE, parse_t6031_number);
 
-/// Which USC window pages a T6031 compute graph fills (`asahi.t6031_usc_page`): 0 none,
-/// 1 the page at base + 0x4000, 2 every gap below the top object.
+/// The USC window mode of a T6031 compute graph (`asahi.t6031_usc_page`), as given; 0 when
+/// unset. `m3_usc_window` decides what each value fills.
 pub(crate) fn t6031_usc_page() -> u64 {
     match T6031_USC_PAGE.load(Ordering::Relaxed) {
         T6031_UNSET => 0,
-        v => v.min(2),
+        v => v,
     }
 }
