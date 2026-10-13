@@ -1,0 +1,9 @@
+[   52.501064] M3 compute graph: context=1 queue=… pool=…
+[   53.002982] M3 firmware event 4 bytes=[04, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 02, 00, 00, 00, …]
+[   53.002995] M3 firmware recovery event answered by a resume (halt_count=1, resumes=1); the job stays live
+[   53.004292] M3 firmware event 1 bytes=[01, 00, 00, 00, 04, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, …]
+[   53.005574] M3 G15C verdict: cap-violated (ERANGE): after a job the firmware reported a performance state above the cap
+[   53.016579] Asahi: sealed 597963-byte firmware fault snapshot offered to devcoredump (M3FWD001)
+[   53.016582] M3 G15C verdict: job-faulted (ERANGE): crashed=0; see the lines around this one
+[   53.016647] M3 compute: stamps=0xc1000100/0xc1000100 done=1 read=1
+[   53.016692] M3 firmware recovery state: halt_count=1 halted=0 resume=0 info=0x27/0xc1000100 
