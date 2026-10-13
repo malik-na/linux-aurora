@@ -7,6 +7,7 @@ use storage::{REGION_A,RUNTIME_POINTERS,HARDWARE_DATA,UNKNOWN_PAIR,FWLOG_PAYLOAD
     UNKNOWN_C0,UNKNOWN_C1,UNKNOWN_C3,GLOBALS,GLOBALS_POWER,CONTROL_REGION,RUNTIME_FLAGS,
     FW_CONTROL_STATE,FW_CONTROL_RING};
 use crate::{driver,agx_memory::{self},m3_memory::Buffer,mmu,pgtable::prot};
+use kernel::time::{Instant, Monotonic, Delta, delay::fsleep};
 kernel::static_assert!(core::mem::size_of::<crate::fw::channels::RawFwLogMsg>() == init::fwlog::ENTRY_SIZE);
 kernel::static_assert!(core::mem::size_of::<crate::fw::channels::RawFwLogPayloadMsg>() == init::fwlog::PAYLOAD_SIZE);
 kernel::static_assert!(<crate::fw::channels::FwLogChannelState as crate::fw::channels::RxChannelState>::SUB_CHANNELS == init::fwlog::CHANNELS);
@@ -55,6 +56,8 @@ pub(crate) struct Config {
     fault_reserve: Option<crate::agx_fault::Dump>,
     _iomaps: KVec<mmu::KernelMapping>,
     pub(crate) completed_events: u64,
+    /// Recovery events answered by a resume (`asahi.t6031_resume_halt=1`).
+    pub(crate) resumed_halts: u64,
     pstates: crate::m3_adt_config::PstateWatch,
     thermal: crate::m3_thermal::Governor,
 }
@@ -253,7 +256,7 @@ impl Config {
                 None
             }
         };
-        Ok(Self { objects, _iomaps: iomaps, completed_events: 0,
+        Ok(Self { objects, _iomaps: iomaps, completed_events: 0, resumed_halts: 0,
             #[cfg(CONFIG_DEV_COREDUMP)] fault_reserve,
             pstates: crate::m3_adt_config::PstateWatch::new(contents.pstates), thermal })
     }
@@ -409,9 +412,34 @@ impl Config {
                     }
                     if state == storage::EVENT*2 {
                         let kind = self.objects[ring].read_u32(r*size)?;
+                        let resume = crate::m3_params::t6031_resume_halt();
+                        if resume {
+                            let mut raw=[0u8;0x38];self.objects[ring].read(r*size,&mut raw)?;
+                            dev_info!(dev.as_ref(), "M3 firmware event {} bytes={:02x?}\n", kind, raw);
+                        }
                         if kind == 1 {
                             let flags=self.objects[ring].read_u64(r*size+4)?;
                             self.completed_events+=u64::from((flags&7).count_ones());
+                        }
+                        // An armed T6031 may answer a recovery event by resuming the halted firmware
+                        // and letting the job retire on its own merits (asahi.t6031_resume_halt=1).
+                        if kind == 4 && resume {
+                            let start=Instant::<Monotonic>::now();
+                            let mut halt=self.halt_state()?;
+                            while halt.1==0 && start.elapsed()<Delta::from_millis(100) {
+                                fsleep(Delta::from_millis(1));
+                                halt=self.halt_state()?;
+                            }
+                            if halt.1!=0 {
+                                self.resume_halted()?;
+                                self.resumed_halts+=1;
+                                dev_warn!(dev.as_ref(), "M3 firmware recovery event answered by a resume (halt_count={}, resumes={}); the job stays live\n", halt.0, self.resumed_halts);
+                            } else {
+                                dev_err!(dev.as_ref(), "M3 firmware recovery event but no halt within 100 ms (halt_count={} resume={})\n", halt.0, halt.2);
+                                return Err(EIO);
+                            }
+                            r = (r+1) % count;
+                            continue;
                         }
                         if kind == 0 || kind == 4 {
                             let mut raw=[0u8;0x38];self.objects[ring].read(r*size,&mut raw)?;

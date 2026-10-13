@@ -836,6 +836,21 @@ pub(crate) fn t6031_cl_progress_ms() -> Option<u32> {
         v => u32::try_from(v).ok(),
     }
 }
+/// `asahi.t6031_resume_halt=1`: on an armed T6031, answer a firmware recovery event (event ring
+/// type 4) by waiting for the halt, clearing it and setting resume, and let the job retire on its
+/// own stamps and events instead of failing it; every event-ring entry is logged. Boot t56 showed
+/// the halted first compute job retired 2.5 ms after a resume; this tells whether its results are
+/// right (the kit's compute-check checks them) or the firmware ended it. Default 0.
+static T6031_RESUME_HALT: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_resume_halt", T6031_RESUME_HALT, parse_t6031_number);
+
+/// Whether recovery events are answered by a resume (`asahi.t6031_resume_halt`).
+pub(crate) fn t6031_resume_halt() -> bool {
+    match T6031_RESUME_HALT.load(Ordering::Relaxed) {
+        T6031_UNSET => false,
+        v => v != 0,
+    }
+}
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.
 static T6031_MTR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_mtr", T6031_MTR, parse_t6031_mtr);
