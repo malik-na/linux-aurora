@@ -37,14 +37,27 @@ def decode_fault(info, address_word):
     }
 
 
+LAUNCH_BYTES = {0: 40, 1: 36, 2: 24}   # m3_client.rs: by bits 28:27 of the launch's first word
+
+
 def launch_programs(stream):
-    """Program addresses of the launch records at the start of a CDM stream (40-byte direct
-    launches; the walk stops at the first record that is not a launch)."""
+    """Program addresses of the launch records at the start of a CDM stream, walked as the
+    kernel's check walks it: launches (40 bytes direct, 36 or 24 indirect) and 4-byte barriers;
+    the walk stops at any other record or at the end of the bytes."""
     word = lambda o: int.from_bytes(stream[o:o + 4], "little")
     programs, offset = [], 0
-    while offset + 12 <= len(stream) and word(offset) >> 29 == 0:
+    while offset + 4 <= len(stream):
+        head = word(offset)
+        if head >> 29 == 3:
+            offset += 4
+            continue
+        if head >> 29 != 0 or offset + 12 > len(stream):
+            break
         programs.append(((word(offset + 4) >> 22) << 38) | (word(offset + 8) << 6))
-        offset += 40
+        size = LAUNCH_BYTES.get((head >> 27) & 3)
+        if size is None:
+            break
+        offset += size
     return programs
 
 

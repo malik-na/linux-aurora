@@ -29,6 +29,37 @@ def test_launch_program_uses_word1_high_bits_and_word2_times_64():
     assert launch_programs(stream) == [va]
 
 
+def stream_of(*words):
+    return b"".join(w.to_bytes(4, "little") for w in words)
+
+
+def test_indirect_launch_is_36_bytes_and_the_next_launch_is_read_after_it():
+    first = (0x4 << 38) | (0x10 << 6)
+    second = (0x4 << 38) | (0x20 << 6)
+    indirect = [1 << 27, 0x4 << 22, 0x10] + [0] * 6        # bits 28:27 = 1: 36 bytes
+    direct = [0, 0x4 << 22, 0x20] + [0] * 7                 # 40 bytes
+    assert launch_programs(stream_of(*indirect, *direct)) == [first, second]
+
+
+def test_barriers_are_stepped_over_as_four_bytes():
+    va = (0x4 << 38) | (0x1500 << 6)
+    barrier = 3 << 29
+    assert launch_programs(stream_of(barrier, 0, 0x4 << 22, 0x1500, *[0] * 7)) == [va]
+
+
+def test_walk_stops_at_a_record_that_is_neither_launch_nor_barrier():
+    link = 1 << 29
+    assert launch_programs(stream_of(link, 0, 0x4 << 22, 0x1500, *[0] * 7)) == []
+
+
+def test_t77_stream_names_the_program_at_window_base_plus_0x54000():
+    t77 = bytes([0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x15, 0x00, 0x00,
+                 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00,
+                 0x01, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+                 0x01, 0x00, 0x00, 0x00, 0x60, 0x01, 0x00, 0x60, 0xfe, 0x15, 0x02, 0x60])
+    assert launch_programs(t77) == [0x10000054000]
+
+
 def test_parse_log_pulls_banks_and_cdm_bytes():
     log = """
 [ 52.1] asahi 40a400000.gpu: M3 bank 0 fault=0x8069030211 address_word=0x400000100 address=0x10000004000
