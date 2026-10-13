@@ -145,16 +145,16 @@ impl Compute {
         let value = microsequence::Sequence {
             command: region(storage::COMMAND)?, stats, notifier: region(NOTIFIER)?,
             queue: fw(storage::QUEUE)?, context, generation: 1, pool: fw(storage::POOL)?,
-            scratch: match ctx {
+            scratch: fw(MICROSEQUENCE_SCRATCH[0])?,
+            areas: match ctx {
                 // The G15C's layout: the four areas are one run at spacings A, A, B.
                 Some((a, b, _, low)) => {
                     let run = &objects[storage::CONTEXT_AREAS];
                     let base = (if low { run.gpu_va()? } else { run.va() })+offset(storage::CONTEXT_AREAS)? as u64;
-                    let at = |o: u64| queue::FirmwareVa::new(base+o).map_err(|_| EINVAL);
-                    [fw(MICROSEQUENCE_SCRATCH[0])?, at(0)?, at(a)?, at(2*a)?, at(2*a+b)?]
+                    [base, base+a, base+2*a, base+2*a+b]
                 }
-                None => [fw(MICROSEQUENCE_SCRATCH[0])?, fw(MICROSEQUENCE_SCRATCH[1])?,
-                    fw(MICROSEQUENCE_SCRATCH[2])?, fw(MICROSEQUENCE_SCRATCH[3])?, fw(MICROSEQUENCE_SCRATCH[4])?],
+                None => [fw(MICROSEQUENCE_SCRATCH[1])?.get(), fw(MICROSEQUENCE_SCRATCH[2])?.get(),
+                    fw(MICROSEQUENCE_SCRATCH[3])?.get(), fw(MICROSEQUENCE_SCRATCH[4])?.get()],
             },
             fw_stamp: fw(storage::FW_STAMP)?, stamp_value,
         };

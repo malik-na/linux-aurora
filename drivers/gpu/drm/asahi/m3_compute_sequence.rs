@@ -29,8 +29,11 @@ pub(crate) struct Sequence {
     pub(crate) context: u32,
     pub(crate) generation: u32,
     pub(crate) pool: FirmwareVa,
-    /// Five distinct firmware-owned scratch buffers. They are not low client GPU pointers.
-    pub(crate) scratch: [FirmwareVa; 5],
+    /// The firmware-owned block-manager buffer (+0x174). Not a low client GPU pointer.
+    pub(crate) scratch: FirmwareVa,
+    /// The four page-manager buffers (+0x184..+0x19c): firmware addresses in the qualified
+    /// graph, or the low client GPU addresses the G15C's own driver gives (`asahi.t6031_ctx_areas=2`).
+    pub(crate) areas: [u64; 4],
     pub(crate) fw_stamp: FirmwareVa,
     pub(crate) stamp_value: u32,
 }
@@ -54,9 +57,9 @@ impl Sequence {
         let bytes = &mut out[..STORAGE];bytes.fill(0);
         word(bytes, START, 0x0b);
         for (offset, value) in [(0x14,registers),(0x1c,stats),(0x24,self.queue.get()),
-            (0x44,compute_info),(0x15c,self.pool.get()),(0x174,self.scratch[0].get()),
-            (0x184,self.scratch[1].get()),(0x18c,self.scratch[2].get()),
-            (0x194,self.scratch[3].get()),(0x19c,self.scratch[4].get()),
+            (0x44,compute_info),(0x15c,self.pool.get()),(0x174,self.scratch.get()),
+            (0x184,self.areas[0]),(0x18c,self.areas[1]),
+            (0x194,self.areas[2]),(0x19c,self.areas[3]),
             (0x1a4,flag),(0x1b4,notifier_slots)] { pointer(bytes, START+offset, value); }
         word(bytes, START+0x2c, self.context);
         word(bytes, START+0x30, 1); // retained unk_28
