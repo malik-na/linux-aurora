@@ -27,3 +27,9 @@ How were the T6030 InitData values obtained (the version tuple and the `hwdata_b
 
 The display side is further along: the gate now admits this Mac's PMP image (`07FF4C5B-…`), the PMP report driver's pre-start checks all pass on J516C, and the next refusal is the J516C DCP record admitting only the T6030 DCP image (`DDF38191-…`) while this Mac carries `F493F03E-…`. PRs follow once each piece has one clean boot behind it.
 
+
+---
+
+## Posted 2026-10-13 15:3x (Naeem: "keep the questions and post the update"): https://github.com/omacom/linux-aurora/issues/61#issuecomment-6142927889
+
+Status update: the G15C firmware runs under the M3 runtime (traced version, 17-slot IO table, G14X-shaped HwDataA, overlay for the per-board words); render node registered; mesa-m3 being built for G15C; two questions (mesa-m3 for G15C / variant C admission; device control 9).
