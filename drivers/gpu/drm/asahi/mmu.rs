@@ -2447,6 +2447,18 @@ impl Uat {
         &self.kernel_vm
     }
 
+    /// Run `send` (queue a firmware-control entry and wait for its consumption) inside the
+    /// handoff flush protocol for the kernel slot: the slot's flush record carries the range
+    /// (state 1) while the firmware works, and is cleared afterwards. Without the record the
+    /// firmware stops with "UAT bad flush" (boots t68/t69 on the T6031).
+    pub(crate) fn m3_kernel_flush(&self, addr: u64, size: u64, send: impl FnOnce() -> Result) -> Result {
+        let flush = self.inner.lock_flush(UAT_NUM_CTX as u32);
+        flush.begin_flush_legacy(addr, size);
+        let result = send();
+        flush.end_flush_legacy();
+        result
+    }
+
     /// Returns a reference to the local kernel (lower half) `Vm`
     pub(crate) fn kernel_lower_vm(&self) -> &Vm {
         &self.kernel_lower_vm

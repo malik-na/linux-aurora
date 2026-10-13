@@ -177,19 +177,22 @@ impl Inner {
     /// Queue a firmware-control flush for `pages` pages at `addr`, ring the 0x84 doorbell and
     /// wait (up to 2 s) for the firmware to consume it.
     fn send_fwctl(&mut self, addr: u64, pages: u16) -> Result {
-        let next=self.config.fwctl_flush(addr,pages)?;
-        dev_info!(self.drm.as_ref(),"M3 G15C: firmware-control flush of {} page(s) at {:#x} queued (asahi.t6031_pool_flush=1)\n",pages,addr);
-        Pin::new(&mut self.transport).send_message(0x21,0x0084000000000000)?;
-        let start=Instant::<Monotonic>::now();
-        loop {
-            self.config.drain(&self.drm)?;
-            if self.config.fwctl_done(next)? { return Ok(()); }
-            if start.elapsed()>=Delta::from_secs(2) {
-                dev_err!(self.drm.as_ref(),"M3 G15C: firmware-control flush not consumed within 2 s\n");
-                return Err(ETIMEDOUT);
+        let Inner { uat, config, transport, drm, .. } = self;
+        uat.m3_kernel_flush(addr, u64::from(pages) * 0x4000, || {
+            let next=config.fwctl_flush(addr,pages)?;
+            dev_info!(drm.as_ref(),"M3 G15C: firmware-control flush of {} page(s) at {:#x} queued, kernel-slot flush record set\n",pages,addr);
+            Pin::new(&mut *transport).send_message(0x21,0x0084000000000000)?;
+            let start=Instant::<Monotonic>::now();
+            loop {
+                config.drain(drm)?;
+                if config.fwctl_done(next)? { return Ok(()); }
+                if start.elapsed()>=Delta::from_secs(2) {
+                    dev_err!(drm.as_ref(),"M3 G15C: firmware-control flush not consumed within 2 s\n");
+                    return Err(ETIMEDOUT);
+                }
+                fsleep(Delta::from_millis(1));
             }
-            fsleep(Delta::from_millis(1));
-        }
+        })
     }
     /// Fail every packet that was never published. Their fences signal with the error.
     fn fail_pending(&mut self, error: Error) {
