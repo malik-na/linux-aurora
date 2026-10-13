@@ -133,6 +133,10 @@ pub(crate) fn parse_ane(text: &str) -> u64 {
     parse(text, &[("none", 0), ("t6030", ANE_T6030), ("t8122", ANE_T8122)])
 }
 
+pub(crate) fn parse_io_table(text: &str) -> u64 {
+    parse(text, &[("knobs", 0), ("j516c", 1)])
+}
+
 pub(crate) fn parse_mtr(text: &str) -> u64 {
     parse(text, &[("t6030", 0), ("t8122", 1), ("adt", 2), ("none", 3)])
 }
@@ -207,6 +211,7 @@ pub(crate) struct Raw {
     pub(crate) slot28: u64,
     pub(crate) ane: u64,
     pub(crate) io_drop: u64,
+    pub(crate) io_table: u64,
     pub(crate) mtr: u64,
     pub(crate) mtr_fast_die: u64,
     pub(crate) mtr_alarm: u64,
@@ -245,6 +250,7 @@ impl Raw {
         slot28: UNSET,
         ane: UNSET,
         io_drop: UNSET,
+        io_table: UNSET,
         mtr: UNSET,
         mtr_fast_die: UNSET,
         mtr_alarm: UNSET,
@@ -282,6 +288,7 @@ impl Raw {
                 self.slot28,
                 self.ane,
                 self.io_drop,
+                self.io_table,
                 self.mtr,
                 self.mtr_fast_die,
                 self.mtr_alarm,
@@ -348,6 +355,16 @@ pub(crate) enum AicSwInt {
     Register,
 }
 
+/// Where the firmware IO-mapping table of a boot comes from.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum IoTable {
+    /// Assembled from the slot parameters above (the default; the T8122 shape when none is given).
+    Knobs,
+    /// The 17-slot table a J516C's own 14.8.9 firmware is given ([`J516C_TRACED`]); the slot
+    /// parameters are ignored.
+    J516c,
+}
+
 /// The MTR sensor masks: from a choice, or as given.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Mtr {
@@ -377,6 +394,7 @@ pub(crate) struct Values {
     pub(crate) slot28: Option<u64>,
     pub(crate) ane: Option<u64>,
     pub(crate) io_drop: u32,
+    pub(crate) io_table: IoTable,
     pub(crate) mtr: Mtr,
     pub(crate) unit_mask_a: u64,
     pub(crate) unit_mask_b: u32,
@@ -499,6 +517,11 @@ pub(crate) fn resolve(raw: &Raw) -> Result<Values, Refusal> {
         .filter(|v| *v & !u64::from(IO_DROP_ALLOWED) == 0)
         .ok_or(refuse("t6031_io_drop", "a mask of slots 1, 2, 9, 12, 18, 19, 20, 23 and 26"))?
         as u32;
+    let io_table = match given(raw.io_table, 0) {
+        Some(0) => IoTable::Knobs,
+        Some(1) => IoTable::J516c,
+        _ => return Err(refuse("t6031_io_table", "knobs or j516c")),
+    };
     let mtr_choice = match given(raw.mtr, 0) {
         Some(0) => Mtr::Masks(MTR_T6030.0, MTR_T6030.1),
         Some(1) => Mtr::Masks(MTR_T8122.0, MTR_T8122.1),
@@ -579,6 +602,7 @@ pub(crate) fn resolve(raw: &Raw) -> Result<Values, Refusal> {
         slot28,
         ane,
         io_drop,
+        io_table,
         mtr,
         unit_mask_a,
         unit_mask_b,
@@ -672,9 +696,40 @@ pub(crate) const SUPERSET: [Mapping; SLOTS] = [
 /// generator (29), which the T8122 start also maps read-only.
 pub(crate) const READ_ONLY_SLOTS: u32 = (1 << 7) | (1 << 21) | (1 << 24) | (1 << 28) | (1 << 29);
 
+/// The IO-mapping table a J516C's own macOS 14.8.9 firmware (RTKit-2419.140.12) is given,
+/// read from its InitData before the firmware ran (2026-10-13; `t6031_io_table=j516c`): HwDataB
+/// slot, physical address, total size, element size, writable. Compared with the T8122 shape
+/// the knobs assemble by default, slots 7, 12, 20, 21, 24 and 28 are present, 10 and 23 are not,
+/// the Fender window is 0x144000, the memory cache has eight 0xd8000 instances, and slots 21
+/// and 24 are writable. Every address lies in a block the ADT names (sgx, aic, pmgr, mcc, ane0,
+/// aon-ptd, the AIC timer page).
+pub(crate) const J516C_TRACED: [Mapping; 17] = [
+    (0, FENDER, FENDER_RULE, FENDER_RULE, true),
+    (1, 0x2_0e10_0000, 0x4000, 0x4000, false),
+    (2, AIC + 0x1_4000, 0x4000, 0x4000, true),
+    (3, SGX, 0x2_0000, 0x2_0000, true),
+    (7, 0x2_9044_4000, 0x4000, 0x4000, false),
+    (9, SGX + 0xe0_8000, 0x8000, 0x8000, true),
+    (11, MCACHE_BASE, 8 * 0xd_8000, 0xd_8000, true),
+    (12, AIC + 0x4_c000, 0x4000, 0x4000, false),
+    (18, 0x2_903d_0000, 0x4000, 0x4000, true),
+    (19, 0x2_903c_0000, 0x4000, 0x4000, false),
+    (20, 0x2_903d_8000, 0x4000, 0x4000, true),
+    (21, SGX + 0xeb_4000, 0x4000, 0x4000, true),
+    (24, SGX + 0x100_0000, 0x8000, 0x8000, true),
+    (25, 0x3_c945_c000, 0x4000, 0x4000, true),
+    (26, 0x2_9040_0000, 0x8000, 0x8000, false),
+    (28, 0x2_a4dc_0000, 0x2_4000, 0x2_4000, false),
+    (29, SGX + CLOCK_GEN_E1C, 0x4000, 0x4000, false),
+];
+
 /// The IO mappings of one boot, in slot order, and how many there are.
 pub(crate) fn mappings(v: &Values) -> ([Mapping; SLOTS], usize) {
     let mut out = [(0, 0, 0, 0, false); SLOTS];
+    if v.io_table == IoTable::J516c {
+        out[..J516C_TRACED.len()].copy_from_slice(&J516C_TRACED);
+        return (out, J516C_TRACED.len());
+    }
     let mut n = 0;
     let mut push = |m: Mapping| {
         out[n] = m;
@@ -985,6 +1040,38 @@ mod tests {
         assert_eq!(m[4], (9, 0x4_08e0_8000, 0x8000, 0x8000, true));
         assert_eq!(m[9], (23, 0x4_0b00_0000, 0x40_0000, 0x40_0000, true));
         assert_eq!(m[11], (29, 0x4_08e5_c000, 0x4000, 0x4000, false));
+    }
+
+    #[test]
+    fn j516c_table_is_the_observed_seventeen_slots() {
+        assert_eq!(resolve(&with(|_| {})).unwrap().io_table, IoTable::Knobs);
+        assert_eq!(resolve(&with(|r| r.io_table = parse_io_table("knobs"))).unwrap().io_table, IoTable::Knobs);
+        assert_eq!(resolve(&with(|r| r.io_table = 2)).unwrap_err().name, "t6031_io_table");
+        let v = resolve(&with(|r| r.io_table = parse_io_table("j516c"))).unwrap();
+        assert_eq!(v.io_table, IoTable::J516c);
+        let (m, n) = mappings(&v);
+        assert_eq!(n, 17);
+        let slots: Vec<usize> = m[..n].iter().map(|e| e.0).collect();
+        assert_eq!(slots, [0, 1, 2, 3, 7, 9, 11, 12, 18, 19, 20, 21, 24, 25, 26, 28, 29]);
+        assert_eq!(m[0], (0, 0x4_08d0_0000, 0x14_4000, 0x14_4000, true));
+        assert_eq!(m[6], (11, 0x2_2000_0000, 0x6c_0000, 0xd_8000, true));
+        assert_eq!(m[11], (21, 0x4_08eb_4000, 0x4000, 0x4000, true));
+        assert_eq!(m[12], (24, 0x4_0900_0000, 0x8000, 0x8000, true));
+        assert_eq!(m[15], (28, 0x2_a4dc_0000, 0x2_4000, 0x2_4000, false));
+        assert_eq!(m[16], (29, 0x4_08e1_c000, 0x4000, 0x4000, false));
+        for e in &m[..n] {
+            // Whole 16 KiB pages, whole elements; the slot has a superset entry.
+            assert!(e.1 % 0x4000 == 0 && e.3 != 0 && e.2 % e.3 == 0, "slot {}", e.0);
+            assert!(SUPERSET.iter().any(|s| s.0 == e.0), "slot {}", e.0);
+        }
+        // The slot parameters do not reach the table.
+        let (m2, n2) = mappings(&resolve(&with(|r| {
+            r.io_table = parse_io_table("j516c");
+            r.slot21 = 0x4_0b10_0000;
+            r.io_drop = u64::from(IO_DROP_ALLOWED);
+        }))
+        .unwrap());
+        assert_eq!((n2, &m2[..n2]), (n, &m[..n]));
     }
 
     #[test]

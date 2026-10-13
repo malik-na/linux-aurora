@@ -25,7 +25,7 @@ use crate::{
     m3_firmware::{self, image_info},
     m3_init_storage as storage,
     m3_soc::{HwDataObject, IoMapping, Soc, T6030_HWDATA_B, T8122_HWDATA_ADDRESS},
-    t6031_knobs::{self as knobs, Mapping, Start, Values, GPU_CORE, READ_ONLY_SLOTS, SLOTS},
+    t6031_knobs::{self as knobs, IoTable, Mapping, Start, Values, GPU_CORE, READ_ONLY_SLOTS, SLOTS},
 };
 
 /// `asahi-t6031/status` phase.
@@ -180,10 +180,24 @@ impl Experiment {
             .unwrap_or(base)
     }
 
+    /// Whether the IO mapping of `slot` is writable in this attempt's table, when it has one.
+    pub(crate) fn io_writable(&self, slot: usize) -> Option<bool> {
+        self.io_mappings().iter().find(|mapping| mapping.0 == slot).map(|mapping| mapping.4)
+    }
+
+    /// Whether the firmware maps `mapping` read-only: the table's own flag for the J516C table,
+    /// the candidate-slot rule ([`READ_ONLY_SLOTS`]) for the knobs' table.
+    fn read_only(&self, mapping: &knobs::Mapping) -> bool {
+        match self.0.values.io_table {
+            IoTable::J516c => !mapping.4,
+            IoTable::Knobs => READ_ONLY_SLOTS & (1u32 << mapping.0) != 0,
+        }
+    }
+
     /// The HwDataB slots the firmware maps read-only, as a bit mask.
     pub(crate) fn read_only_slots(&self) -> u32 {
         self.io_mappings().iter().fold(0u32, |mask, mapping| {
-            if mapping.0 < 32 && READ_ONLY_SLOTS & (1u32 << mapping.0) != 0 {
+            if mapping.0 < 32 && self.read_only(mapping) {
                 mask | (1u32 << mapping.0)
             } else {
                 mask

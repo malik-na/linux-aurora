@@ -573,7 +573,13 @@ fn fill_io_mappings(
                 (None, Some(e)) => e.io_block(slot, m.base as u64),
                 (None, None) => m.base as u64,
             };
-            base & !0x3fff == phys & !0x3fff && m.writable == writable
+            // The T6031 start's table carries its own writability (its J516C table differs
+            // from the superset's candidate-slot rule for slots 21 and 24).
+            let table_writable = match (experiment, t6031) {
+                (None, Some(e)) => e.io_writable(slot).unwrap_or(m.writable),
+                _ => m.writable,
+            };
+            base & !0x3fff == phys & !0x3fff && table_writable == writable
         });
         let covered = iomaps.iter().any(|io| {
             io.slot == slot

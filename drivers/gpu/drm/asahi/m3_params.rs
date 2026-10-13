@@ -668,6 +668,10 @@ fn parse_t6031_ane(text: &str) -> Option<u64> {
     Some(crate::t6031_knobs::parse_ane(text))
 }
 
+fn parse_t6031_io_table(text: &str) -> Option<u64> {
+    Some(crate::t6031_knobs::parse_io_table(text))
+}
+
 fn parse_t6031_mtr(text: &str) -> Option<u64> {
     Some(crate::t6031_knobs::parse_mtr(text))
 }
@@ -748,6 +752,9 @@ m3_param!("t6031_ane", T6031_ANE, parse_t6031_ane);
 /// `asahi.t6031_io_drop`: a mask of default slots to leave out.
 static T6031_IO_DROP: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_io_drop", T6031_IO_DROP, parse_t6031_number);
+/// `asahi.t6031_io_table=knobs|j516c`: the slot parameters' table, or the J516C's own.
+static T6031_IO_TABLE: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_io_table", T6031_IO_TABLE, parse_t6031_io_table);
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.
 static T6031_MTR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_mtr", T6031_MTR, parse_t6031_mtr);
@@ -816,6 +823,7 @@ pub(crate) fn t6031_params() -> crate::t6031_knobs::Raw {
         slot28: get(&T6031_SLOT28),
         ane: get(&T6031_ANE),
         io_drop: get(&T6031_IO_DROP),
+        io_table: get(&T6031_IO_TABLE),
         mtr: get(&T6031_MTR),
         mtr_fast_die: get(&T6031_MTR_FAST_DIE),
         mtr_alarm: get(&T6031_MTR_ALARM),
