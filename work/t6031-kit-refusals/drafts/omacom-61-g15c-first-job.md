@@ -1,6 +1,6 @@
 # Draft: question for omacom/linux-aurora#61 (map ticket #46)
 
-Status: draft, 2026-10-14, after boot t76. Not posted; Naeem approves the exact text first.
+Status: posted 2026-10-14 with Naeem's approval (the last line's ticket link made cross-repo): https://github.com/omacom/linux-aurora/issues/61#issuecomment-6154212550
 
 ---
 
@@ -17,4 +17,4 @@ Answering the halt with a resume lets the firmware retire the job, so nothing is
 
 **Question:** on the M3 Pro and M3 Air runtimes, is there anything a multi-cluster part needs before or with a compute kick that a one- or two-cluster part doesn't, such as a per-cluster enable, a cluster mask in the command or the queue, or a firmware setting? If you've seen the firmware give up on a dispatch within a couple of milliseconds, I'd like to know what it was.
 
-Records: `agent-docs` `work/t6031-kit-refusals/results/` on malik-na/linux-aurora (t47–t76); map malik-na/linux-aurora#18, ticket #46.
+Records: `agent-docs` `work/t6031-kit-refusals/results/` on malik-na/linux-aurora (t47–t76); map malik-na/linux-aurora#18, ticket malik-na/linux-aurora#46.
