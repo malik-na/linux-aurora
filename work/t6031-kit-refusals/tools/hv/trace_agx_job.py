@@ -32,6 +32,8 @@ class Shared:
     kicks = 0
     pongs = 0
     dumps = 0
+    fwctl = None       # (read_index_va, write_index_va, ring_va)
+    fwctl_last = 0
 
 S = Shared()
 
@@ -57,6 +59,17 @@ def drain(ep, index, dump_cmds):
         last = (last + 1) % count; n += 1
     S.last_write[index] = w
     return n
+
+def drain_fwctl(ep):
+    rva, wva, ring = S.fwctl
+    r, w = u32(rd(rva, 4), 0), u32(rd(wva, 4), 0)
+    last, n = S.fwctl_last, 0
+    while last != w and n < 64:
+        e = rd(ring + last*0x14, 0x18)
+        ep.log(f"T6031 {now()} FWCtl[{last}] addr={u64(e,0):#x} unk8={u32(e,8):#x} slot={u32(e,0xc)} pages={int.from_bytes(e[0x10:0x12],'little')} unk12={int.from_bytes(e[0x12:0x14],'little')} raw={e.hex()}")
+        last = (last + 1) % 256; n += 1
+    S.fwctl_last = w
+    ep.log(f"T6031 {now()} kick 0x10 FWCtl ({n} new entries, read={r} write={w})")
 
 def dump_pipe_entry(ep, index, e):
     queue, kind, head, event, new = u64(e, 8), u32(e, 0x10), u32(e, 0x14) & 0xffff, e[0x16], e[0x17]
@@ -152,7 +165,7 @@ class PongEpJob(EP):
             os.makedirs(DUMP_DIR, exist_ok=True)
             S.uat = UAT(self.tracer.hv.iface, self.tracer.hv.u, self.tracer.hv)
             S.uat.invalidate_cache()
-            root = rd(addr, 0x40)
+            root = rd(addr, 0xc0)
             runtime = u64(root, 0x18)
             rt = rd(runtime, 0x400)
             # Host channel entry: {read-index word, second word, write-index word, ring}; the
@@ -165,6 +178,17 @@ class PongEpJob(EP):
                 o = 0x1b8 + i*0x10
                 st = u64(rt, o)
                 S.channels[13+i] = (st, st+0x20, u64(rt, o+8))
+            # The firmware-control ("MemDesc") ring: state and ring pointers at control region
+            # +0x4568/+0x4570 (root +0xb0 names the control region); write index at state +0x10.
+            control = u64(root, 0xb0)
+            cb = rd(control + 0x4560, 0x20)
+            fst, fring = u64(cb, 8), u64(cb, 0x10)
+            S.fwctl = (fst, fst + 0x10, fring)
+            try:
+                S.fwctl_last = u32(rd(fst + 0x10, 4), 0)
+                self.log(f"T6031 channel FWCtl   read@{fst:#x}={u32(rd(fst,4),0)} write@{fst+0x10:#x}={S.fwctl_last} ring={fring:#x} (state words {rd(fst,0x30).hex()})")
+            except Exception as e:
+                self.log(f"T6031 FWCtl indices unreadable: {e!r}")
             for i, (rva, wva, ring) in S.channels.items():
                 try:
                     r, w = u32(rd(rva, 4), 0), u32(rd(wva, 4), 0)
@@ -190,7 +214,11 @@ class KickEpJob(EP):
         try:
             S.uat.invalidate_cache()
             if index is None:
-                self.log(f"T6031 {now()} kick {k:#x} (no channel mapping)"); return True
+                if k == 0x10 and S.fwctl:
+                    drain_fwctl(self)
+                else:
+                    self.log(f"T6031 {now()} kick {k:#x} (no channel mapping)")
+                return True
             n = drain(self, index, True)
             self.log(f"T6031 {now()} kick #{S.kicks} {NAMES[index]} ({n} new entries)")
         except Exception:
@@ -200,6 +228,11 @@ class KickEpJob(EP):
     @msg(0x84, DIR.TX, KickMsg)
     def fwkick(self, m):
         self.log(f"T6031 {now()} fwkick {m.KICK:#x}")
+        if S.fwctl:
+            try:
+                S.uat.invalidate_cache(); drain_fwctl(self)
+            except Exception:
+                self.log("T6031 fwctl drain failed:\n" + traceback.format_exc())
         return True
 
 class AGXJobTracer(ASCTracer):

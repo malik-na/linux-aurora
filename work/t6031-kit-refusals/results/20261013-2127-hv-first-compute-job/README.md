@@ -50,3 +50,12 @@ record are the next one-boot tests: +0x44 as the chunk count (`asahi.t6031_pool_
 
 Private data for this record: `~/m3-results/hv-t22-20261013-21*/` on the Air (run logs, dumps). Nothing from
 the guest is in this repository.
+
+## Fourth run (21:52): the firmware-control ring before the first job
+The three "firmware kicks" are doorbell 0x84 on the firmware-control ("MemDesc") ring (control region
++0x4568/+0x4570; write index at state +0x10; 0x18-byte entries). Each carries one entry of the shape our own
+`FwCtlMsg` has: `{addr, 0, slot 0x40, pages 1, type 2}` with `addr` = a pool manager record: the two 0x1b-registered
+pool managers right after their registration, and the compute job's own pool manager 5 ms before its first kick.
+So the driver asks the firmware to flush its view of each pool manager page before that pool's first use; our
+runtime never writes this ring. Build #39 (`asahi.t6031_pool_flush=1`) sends the same entry for our compute pool
+before the first job → boot t68.
