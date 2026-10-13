@@ -55,6 +55,30 @@ leaves unbound: either it reads past each object's end, or a per-core array size
 cluster overruns for cores 8 and 9. Next: log the window's full page map at graph build and fill every guard page
 below the top object, in one build, to tell those apart and see whether the job then runs.
 
+## Corrections after an adversarial review (2026-10-14)
+
+- **"The program is at base + 0x54000, so not a fetch past the shader" is withdrawn.** The launch word's address
+  is the *pipeline descriptor* (Mesa's command-buffer XML names the field "Pipeline"), not the shader code. Where
+  the code sits, and whether +0x4000 / +0x48000 lie just past it, is unknown; reading (a) is open again.
+- **"With the T6030 values nothing is fetched" is withdrawn.** t51's per-core CDM counters are non-zero on cores
+  0–9 with the T6030 values too. What holds: no fault was latched in the seven fault selectors the snapshot reads.
+  The selectors for clusters 1–3 at bank 0x100 (0x40100, 0x80100, 0xc0100) were never read, and bank 0x100 is
+  outside the selector encoding we derived, so "per cluster" is unproven for it.
+- **"Only cores 8 and 9 fault although all ten ran" is not observable.** Each selector shows one latched record;
+  faults by other cores could be hidden. UL1C(n) = core n is plausible, not shown.
+- **t78's "twice the work" is withdrawn.** One counter (0xa0a8) rose about 2x and the other (0xa0b0) fell about
+  20x; neither is understood, and the halt came sooner. Both candidate readings also predict a core 8 fault at
+  + 0x48000, and bank 0 was clear; neither explains that.
+- **"+0x48000 is a guard after an object" was never observed;** t78 logged only the first four pages.
+- **Zero fill confounds:** if the USC reads a pointer or offset from the filled page, zeros send it somewhere
+  uncontrolled; the 0x44000 jump may be content-driven.
+- **"The register values are right for this part" is too strong:** they change what the hardware does; the halt
+  info (0x27) is the same with and without a fault, so fault → halt is a correlation.
+
+Next (#49, revised with Naeem): t78's single page, now filled with a pattern naming each word's offset, plus logs
+of the window's page map, the base page's bytes and the pipeline descriptor (which should give the code's address).
+Mode 2 (fill every gap) comes after. Mode 2 caveat: client binds onto a filled page fail with EBUSY.
+
 ## Not needed yet
 
 The hypervisor comparison (SGX block polled at each firmware message during the macOS job) stays as the fallback

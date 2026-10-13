@@ -21,3 +21,7 @@ G15C's USC with the J516C values touches memory just past the client's USC objec
 unbound. The window's page map at graph build (which pages are objects, which are guards) tells the two apart.
 
 Files: `kernel-lines.txt` (the page map line, job lines, banks, per-core counters, decoded summary).
+
+**Correction (2026-10-14, review):** "the cores got further" rests on one counter of unknown meaning (the other
+fell), and is withdrawn. "+0x48000 is another guard page" was not observed (only four pages were logged). With a
+zero fill the move may be content-driven. See `research/first-job-state.md`.

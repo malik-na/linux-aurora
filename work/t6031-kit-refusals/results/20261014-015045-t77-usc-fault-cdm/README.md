@@ -19,3 +19,6 @@ at base + 0x3400 would put cores 0–7 at base + 0x3400..0x3e80, inside the firs
 ran) but is an inference from two points; the next test maps the page and watches where the reads go.
 
 Files: `kernel-lines.txt` (job lines, banks, the per-core counters, the stream bytes and the decoded summary).
+
+**Correction (2026-10-14, review):** the launch's address at base + 0x54000 is the pipeline descriptor, not the
+shader code, so "not a fetch past the shader's end" does not follow; see `research/first-job-state.md`.
