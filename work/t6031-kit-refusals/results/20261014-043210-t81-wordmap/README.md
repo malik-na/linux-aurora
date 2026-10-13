@@ -69,3 +69,11 @@ Step count (N=8192; steps 1, 16, 4096, 65536): the same 64 groups lost every tim
 
 Next: H4, the register bisect (single-bit flips of `t6031_compute_regs`, may fault), and the per-cluster enables
 (InitData unit masks: `asahi.t6031_unit_mask_a/b`, `hwb_b20`; boot-time only).
+
+## H4 bisect, predictions written before the runs (Naeem's go-ahead, 2026-10-14)
+
+Runtime writes of `t6031_compute_regs` in this boot, the probe at N=1024 and N=8192 after each, stopping at the first fault:
+1. `0xe` (tail back to the T6030 value): `first_job_zero` zeroes the tail anyway, so the command is identical. Prediction: **no change**.
+2. `0x7` (0x1a0e9 from 0 to 8): under H4, a change in the lost chunks, or a fault.
+3. `0xd` (UMA PTC back to the T6030 value): under H4, a change or a fault.
+4. `0xb` (DUPM back to the T6030 value; the J516C value is the selftest's per-USC formula at 10): under H4, a change or a fault.
