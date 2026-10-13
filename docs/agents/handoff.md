@@ -61,3 +61,27 @@ Phase 1's last done-when item: **boot a self-built m1n1.** Never done; every boo
 - Every value from evidence (ADT, register read, trace, fault log), never copied from G15S/G15G.
 - Never restore `boot.bin.old`. Check sha256 before moving any `boot.bin` into place.
 - These personal docs (`AGENTS.md`, `CLAUDE.md`, `docs/agents/`) live only on the fork's `agent-docs` branch and must never reach an omacom PR.
+
+## State at 2026-10-14 01:10 (handoff from the Air session that ran 12–14 Oct)
+
+Read with the wayfinder map [malik-na/linux-aurora#18](https://github.com/malik-na/linux-aurora/issues/18) and
+`work/t6031-kit-refusals/README.md`; every boot has a record under `work/t6031-kit-refusals/results/`.
+
+- **Done:** display on the native panel (3456x2234@120, software kmscube seen); G15C firmware running with the J516C's
+  InitData version, IO-mapping table, hardware record and a word overlay; render node; the kit's Mesa admitted; the
+  firmware halt/resume protocol works; the runtime cap is effective again. Four team PRs open on omacom/linux-aurora:
+  #106 mailbox, #107 UAT geometry, #108 PMP image, #109 DCP image.
+- **Open:** the first compute job is accepted by the firmware and never executed by the hardware (no timestamps,
+  all-zero output, progress-check halt). Every host-side difference is excluded (boots t47–t75, four hypervisor
+  trace runs of the J516C driver's own first job). The map's frontier is one grilling ticket, #46: ask the team,
+  trace the kick by another method, or park the GPU for the display (EDID, #34) and the PR series (#37, #38, #40).
+- **Kernel:** branch `t6031/overlay` on malik-na/linux-aurora (one knob per experiment; to be squashed into a short
+  series once the job runs). Installed test package on the M3: dev-74 (its head). Build in the nspawn chroot
+  `/home/naeem/Projects/build-root` (run from `~`, not the source tree); the pacman-pkg step needs
+  `KBUILD_IMAGE=arch/arm64/boot/Image`. Harness: `~/m3-images/t22/run-first-job.sh NAME [params]` on the Air.
+- **Hypervisor tracing:** `tools/hv/trace_agx_job.py` with `run-trace.sh` (`HV_EXTRA="-C 4"`); back to Linux with
+  `watch-chainload.py ~/m3-images/t01/boot.bin.repro 240`. If the M3 sits at the proxy with no `/dev/ttyACM0` on the
+  Air, re-seat the cable (M3 right-hand port) and run that watcher.
+- **Rules unchanged:** one change per boot; every value from evidence; never write the ESP `boot.bin`; ESP under 85 %;
+  push every step to the fork; nothing to omacom without Naeem's exact-text approval; PR trailers
+  `Assisted-by: <Agent>:<model>` then `Signed-off-by` (ADR 0001).
