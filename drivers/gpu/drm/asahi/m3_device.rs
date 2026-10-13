@@ -155,6 +155,14 @@ impl Device {
             },
         };
         if let Some((setup_offset, setup_value)) = setup {
+            // What the register holds before the write (an armed T6031 start logs it: the
+            // write's value comes from the T6030, and whether this part already holds it
+            // decides whether the write does anything here).
+            if t6031.is_some() {
+                let before = registers.try_read32(setup_offset)?;
+                dev_info!(pdev.as_ref(), "M3 G15C start: SGX+{:#x} reads {:#x} before the setup write of {:#x}\n",
+                    setup_offset, before, setup_value);
+            }
             registers.try_write32(setup_value, setup_offset)?;
         }
         device.core_mask = core_mask;
