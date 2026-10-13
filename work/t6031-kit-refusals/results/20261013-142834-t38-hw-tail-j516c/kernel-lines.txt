@@ -1,0 +1,7 @@
+asahi 40a400000.gpu: M3 G15C start: armed (asahi.t6031_start=1, one attempt this boot): initdata_version=0x0c08e21e84820490 io_mappings=17 fender=0x144000 pstate_cap=1 power_cap_mw=30000
+asahi 40a400000.gpu: M3: MTR sensor masks: fast-die 0x402a002b, alarm 0x0
+asahi 40a400000.gpu: M3: InitData self-check passed: version 0xc08e21e84820490, 7 record pointers, 17 IO mappings, GPU region 0x10bfffb8000
+asahi 40a400000.gpu: RTKit: co-processor has crashed
+asahi 40a400000.gpu: RTKit: Message (id=1): agfMTRAlarmHandler: !!! Fatal Error: Received MTR Alarm interrupt from GPU but no match found in MTR hardware!
+asahi 40a400000.gpu: M3 firmware readiness: magic=0x0 runtime=1 newA=1/1 newB=0
+asahi 40a400000.gpu: M3 G15C verdict: device-control-failed (EIO): a device-control message failed after the InitData (version 0xc08e21e84820490) was published
