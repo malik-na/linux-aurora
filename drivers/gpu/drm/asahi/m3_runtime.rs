@@ -456,17 +456,19 @@ impl Inner {
         self.state.health.set_gpu_pending(true);
         self.gpu_pending = true;
         let late=|e:Error|(e,true);
+        // The run-queue entry's first eight bytes: 0 (qualified) or the system counter (asahi.t6031_run_timestamp=1).
+        let stamp_now=if crate::t6031_start::is_t6031(self.device.soc()) && crate::m3_params::t6031_run_timestamp() {physical_counter()} else {0};
         let expected_events=match &self.jobs[index] {
             NativeJob::Compute(j)=>{
-                self.config.submit_queue(2,j.queue(),j.head(),2,j.first()).map_err(late)?;
+                self.config.submit_queue(2,j.queue(),j.head(),2,j.first(),stamp_now).map_err(late)?;
                 Pin::new(&mut self.transport).send_message(0x21,0x0083000000000002).map_err(late)?;1
             },
             NativeJob::Render(j)=>{
                 if j.first() {self.config.render_pb().map_err(late)?;}
                 let queues=j.queues();
-                self.config.submit_queue(1,queues[1],j.heads()[1],1,j.first()).map_err(late)?;
+                self.config.submit_queue(1,queues[1],j.heads()[1],1,j.first(),stamp_now).map_err(late)?;
                 Pin::new(&mut self.transport).send_message(0x21,0x0083000000000001).map_err(late)?;
-                self.config.submit_queue(0,queues[0],j.heads()[0],0,j.first()).map_err(late)?;
+                self.config.submit_queue(0,queues[0],j.heads()[0],0,j.first(),stamp_now).map_err(late)?;
                 Pin::new(&mut self.transport).send_message(0x21,0x0083000000000000).map_err(late)?;2
             },
         };

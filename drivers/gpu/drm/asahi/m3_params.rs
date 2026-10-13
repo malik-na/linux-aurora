@@ -931,6 +931,19 @@ pub(crate) fn t6031_pool_flush() -> u64 {
         v => v.min(2),
     }
 }
+/// `asahi.t6031_run_timestamp=1`: put the 24 MHz system counter in the first eight bytes of each
+/// run-queue entry on an armed T6031, as the J516C's own driver does (traced on this Mac); the
+/// qualified graph sends 0. Default 0.
+static T6031_RUN_TIMESTAMP: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_run_timestamp", T6031_RUN_TIMESTAMP, parse_t6031_number);
+
+/// Whether run-queue entries carry the system counter (`asahi.t6031_run_timestamp`).
+pub(crate) fn t6031_run_timestamp() -> bool {
+    match T6031_RUN_TIMESTAMP.load(Ordering::Relaxed) {
+        T6031_UNSET => false,
+        v => v != 0,
+    }
+}
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.
 static T6031_MTR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_mtr", T6031_MTR, parse_t6031_mtr);

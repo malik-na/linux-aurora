@@ -297,12 +297,15 @@ impl Config {
     pub(crate) fn render_pb(&mut self) -> Result {
         self.objects[UNKNOWN_C1].write(0,&storage::parameter_buffer(crate::m3_render::PB_PAGES).map_err(|_|EINVAL)?)
     }
-    pub(crate) fn submit_queue(&mut self, kind:usize, queue:u64, head:u16,event:u8,new:bool)->Result {
+    /// `timestamp`: the first eight bytes of the entry; the qualified graph sends 0, the J516C's
+    /// own driver the 24 MHz system counter at submission (`asahi.t6031_run_timestamp`).
+    pub(crate) fn submit_queue(&mut self, kind:usize, queue:u64, head:u16,event:u8,new:bool,timestamp:u64)->Result {
         if kind>2 {return Err(EINVAL);}
         let state=kind*2;let ring=state+1;
         let w=self.objects[state].read_u32(0x20)?;
         if w>=256 || self.objects[state].read_u32(0)?!=w { return Err(EBUSY); }
         let mut message=[0u8;0x18];
+        message[0..8].copy_from_slice(&timestamp.to_le_bytes());
         message[8..16].copy_from_slice(&queue.to_le_bytes());
         message[16..20].copy_from_slice(&(kind as u32).to_le_bytes());
         message[20..22].copy_from_slice(&head.to_le_bytes());
