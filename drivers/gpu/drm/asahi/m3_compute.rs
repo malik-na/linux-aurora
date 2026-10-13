@@ -131,7 +131,14 @@ impl Compute {
             stamp: fw(storage::STAMP)?, fw_stamp: fw(storage::FW_STAMP)?,
             stamp_value: timeline::stamp(0xc1000000,sequence),
             timestamps: [fw(TIMESTAMPS[0])?, fw(TIMESTAMPS[1])?],
-            pool: fw(storage::POOL)?, tail_scratch: fw(TAIL_SCRATCH)?, flush_stamps: false,
+            pool: fw(storage::POOL)?,
+            // The J516C's driver points the tail's block-manager word at the StartCL block-manager
+            // buffer (+0x174) in every compute command; our render path does the same, the qualified
+            // compute path gives the tail its own buffer (asahi.t6031_tail_blockmgr).
+            tail_scratch: if register_set == command::RegisterSet::G15C && crate::m3_params::t6031_tail_blockmgr() {
+                fw(MICROSEQUENCE_SCRATCH[0])?
+            } else { fw(TAIL_SCRATCH)? },
+            flush_stamps: false,
             register_set,
         };
         value.encode(bytes).map_err(|_| EINVAL)?;

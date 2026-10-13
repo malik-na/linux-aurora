@@ -851,6 +851,19 @@ pub(crate) fn t6031_resume_halt() -> bool {
         v => v != 0,
     }
 }
+/// `asahi.t6031_tail_blockmgr=0|1`: whether the T6031 compute command's tail block-manager word
+/// (tail +0x47) points at the StartCL block-manager buffer (+0x174), as the J516C's own driver and
+/// our render path do, instead of the qualified compute path's separate tail scratch. Default 1.
+static T6031_TAIL_BLOCKMGR: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_tail_blockmgr", T6031_TAIL_BLOCKMGR, parse_t6031_number);
+
+/// Whether the compute tail shares the StartCL block-manager buffer (`asahi.t6031_tail_blockmgr`).
+pub(crate) fn t6031_tail_blockmgr() -> bool {
+    match T6031_TAIL_BLOCKMGR.load(Ordering::Relaxed) {
+        T6031_UNSET => true,
+        v => v != 0,
+    }
+}
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.
 static T6031_MTR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_mtr", T6031_MTR, parse_t6031_mtr);
