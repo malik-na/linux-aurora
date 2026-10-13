@@ -85,3 +85,9 @@ Read with the wayfinder map [malik-na/linux-aurora#18](https://github.com/malik-
 - **Rules unchanged:** one change per boot; every value from evidence; never write the ESP `boot.bin`; ESP under 85 %;
   push every step to the fork; nothing to omacom without Naeem's exact-text approval; PR trailers
   `Assisted-by: <Agent>:<model>` then `Signed-off-by` (ADR 0001).
+
+**Update 2026-10-14 01:50:** #46 resolved: Naeem chose to ask the team and keep tracing. Boot t76 (the J516C's
+cluster-scaled register values on a fresh queue) still fails: the firmware halts every job 2 ms after the kick.
+The question is posted on omacom #61 (comment 6154212550); watch it for replies. The frontier is research
+ticket #47, which compares the hardware's and firmware's state (SGX status registers read from the main CPU, the
+firmware's private records) between macOS mid-job and ours at the halt. Display #34 waits behind the GPU line.
