@@ -29,15 +29,26 @@ pub(crate) const RESET:core::ops::Range<usize>=37..COUNT;
 /// microsequence and scratch. Only retired batches may reuse these slots.
 pub(crate) const SLOTS:usize=16;
 pub(crate) fn slot_offset(index:usize,slot:usize)->Result<usize,InvalidOwner> {
-    let a=allocation(index)?;
+    slot_offset_ctx(index,slot,None)
+}
+/// `slot_offset` with the StartCL context areas sized by `ctx` (`allocation_ctx`).
+pub(crate) fn slot_offset_ctx(index:usize,slot:usize,ctx:Option<usize>)->Result<usize,InvalidOwner> {
+    let a=allocation_ctx(index,ctx)?;
     if slot>=SLOTS {return Err(InvalidOwner);}
     Ok(if RESET.contains(&index) {((a.size+0x3fff)&!0x3fff)*slot} else {0})
 }
 pub(crate) fn batch_allocation(index:usize)->Result<Allocation,InvalidOwner> {
-    let mut a=allocation(index)?;
-    a.size+=slot_offset(index,SLOTS-1)?;
+    batch_allocation_ctx(index,None)
+}
+/// `batch_allocation` with the StartCL context areas sized by `ctx` (`allocation_ctx`).
+pub(crate) fn batch_allocation_ctx(index:usize,ctx:Option<usize>)->Result<Allocation,InvalidOwner> {
+    let mut a=allocation_ctx(index,ctx)?;
+    a.size+=slot_offset_ctx(index,SLOTS-1,ctx)?;
     Ok(a)
 }
+/// The owner that holds the four StartCL context areas as one run (`CONTEXT_AREAS` with `ctx`):
+/// the microsequence points at it with the spacings A, A, B of `g15_selftest::ctx_sizes`.
+pub(crate) const CONTEXT_AREAS:usize=46;
 const CLIENT_BASE:u64=0x71_0000_0000;
 const POOL_STRIDE:u64=0x404000; // Four MiB plus a 16-KiB guard.
 const POOL_TABLE_VA:u64=CLIENT_BASE+23*POOL_STRIDE+0x3000;
@@ -54,8 +65,14 @@ pub(crate) struct Allocation {pub(crate) size:usize,pub(crate) mapping:Mapping}
 #[derive(Debug,PartialEq,Eq)]
 pub(crate) struct InvalidOwner;
 pub(crate) fn allocation(index:usize)->Result<Allocation,InvalidOwner> {
+    allocation_ctx(index,None)
+}
+/// `allocation`, with `CONTEXT_AREAS` sized `ctx` (the one-run StartCL context areas) when given;
+/// the qualified T6030 graph keeps four separate 64-KiB areas (`ctx` is `None`).
+pub(crate) fn allocation_ctx(index:usize,ctx:Option<usize>)->Result<Allocation,InvalidOwner> {
     use Mapping::*;
     let (size,mapping)=match index {
+        CONTEXT_AREAS if ctx.is_some()=>(ctx.unwrap_or(65536),FirmwareGpuShared),
         LEGACY_PAGE=>(0x4000,FirmwareGpuShared),
         1..=POOL_PAGES=>(0x400000,Client(CLIENT_BASE+(index-1) as u64*POOL_STRIDE)),
         POOL_TABLE=>(0x1000,Client(POOL_TABLE_VA)),

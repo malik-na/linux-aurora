@@ -794,6 +794,19 @@ pub(crate) fn t6031_compute_regs() -> u64 {
         v => v & 0xf,
     }
 }
+/// `asahi.t6031_ctx_areas=0|1`: whether the T6031 compute microsequence gets the G15C's own
+/// StartCL context areas (one run at the spacings `g15_selftest::ctx_sizes` gives the part) instead
+/// of the qualified T6030 graph's four separate 64-KiB areas. Default 1.
+static T6031_CTX_AREAS: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_ctx_areas", T6031_CTX_AREAS, parse_t6031_number);
+
+/// Whether the G15C compute graph sizes its StartCL context areas (`asahi.t6031_ctx_areas`).
+pub(crate) fn t6031_ctx_areas() -> bool {
+    match T6031_CTX_AREAS.load(Ordering::Relaxed) {
+        T6031_UNSET => true,
+        v => v != 0,
+    }
+}
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.
 static T6031_MTR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_mtr", T6031_MTR, parse_t6031_mtr);

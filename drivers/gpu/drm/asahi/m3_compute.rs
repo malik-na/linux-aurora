@@ -38,11 +38,23 @@ pub(crate) struct Compute {
     checkpoint: (u64,u16,usize),
     /// The register lists of the SoC's GPU (`m3_soc::Soc::registers`).
     registers: command::RegisterSet,
+    /// The StartCL context areas as one run (A, B, run size) when the G15C's own layout is in
+    /// use (`asahi.t6031_ctx_areas`); `None` keeps the qualified four separate areas.
+    ctx: Option<(u64,u64,usize)>,
 }
 impl Compute {
     pub(crate) fn new(dev: &driver::AsahiDevice, uat: &mmu::Uat, vm: &mmu::Vm,
         stats: Region, control: crate::agx_compute::Control,
-        registers: command::RegisterSet) -> Result<Self> {
+        registers: command::RegisterSet, (clusters, cores_per_cluster): (u32, u32)) -> Result<Self> {
+        let ctx = if registers == command::RegisterSet::G15C && crate::m3_params::t6031_ctx_areas() {
+            let (a, b, size) = crate::g15_selftest::ctx_sizes(
+                u64::from(clusters) * u64::from(cores_per_cluster), u64::from(clusters));
+            let size = usize::try_from(size).map_err(|_| EINVAL)?;
+            dev_info!(dev.as_ref(), "M3 compute context areas: one {:#x}-byte run, A={:#x} B={:#x} ({} clusters x {} cores)\n",
+                size, a, b, clusters, cores_per_cluster);
+            Some((a, b, size))
+        } else { None };
+        let ctx_size = ctx.map(|c| c.2);
         let binding=uat.bind(vm)?;
         let mut objects=KVec::new();
         let mut client_command=None;
@@ -53,7 +65,7 @@ impl Compute {
         // A private compute aperture, disjoint from the retained render graph.
         // Address-bearing graph fields are constructed from their live owners.
         for index in 0..storage::COUNT {
-            let a=storage::batch_allocation(index).map_err(|_|EINVAL)?;
+            let a=storage::batch_allocation_ctx(index,ctx_size).map_err(|_|EINVAL)?;
             let mut b=match a.mapping {
                 Mapping::CommandAlias(va)=>Buffer::at(dev,uat.kernel_vm(),Some((uat.kernel_lower_vm(),va)),None,a.size,true)?,
                 Mapping::Client(va)=>Buffer::at(dev,uat.kernel_vm(),Some((vm,va)),None,a.size,true)?,
@@ -64,7 +76,7 @@ impl Compute {
             objects.push(b,GFP_KERNEL)?;
         }
         Self::encode_command(&mut objects, &mut command_bytes, binding.slot(), control, 1, 0, registers)?;
-        Self::encode_sequence(&mut objects, &mut sequence_bytes, stats, binding.slot(), timeline::stamp(0xc1000000,1), 0)?;
+        Self::encode_sequence(&mut objects, &mut sequence_bytes, stats, binding.slot(), timeline::stamp(0xc1000000,1), 0, ctx)?;
         UMA_POOL.initialize(&mut objects)?;
         Self::initialize_state(&mut objects, binding.slot())?;
         // Queue references are firmware VAs from live allocations. In contrast
@@ -99,7 +111,7 @@ impl Compute {
         // the invalidation.
         crate::mem::sync();crate::mem::tlbi_all();crate::mem::sync();
         unsafe {core::arch::asm!("isb",options(nostack,preserves_flags))};
-        Ok(Self {_client_command:client_command.ok_or(EINVAL)?,objects,command_bytes,sequence_bytes,_binding:binding,stats,last_progress_ns:0,sequence:1,head:1,cached_views:KVec::new(),slot:0,batch_count:1,checkpoint:(0,0,0),registers})
+        Ok(Self {_client_command:client_command.ok_or(EINVAL)?,objects,command_bytes,sequence_bytes,_binding:binding,stats,last_progress_ns:0,sequence:1,head:1,cached_views:KVec::new(),slot:0,batch_count:1,checkpoint:(0,0,0),registers,ctx})
     }
     fn encode_command(objects: &mut [Buffer], bytes: &mut [u8], context: u32,
         control: crate::agx_compute::Control, sequence: u64, slot: usize,
@@ -124,15 +136,23 @@ impl Compute {
         objects[storage::COMMAND].write(offset(storage::COMMAND)?, bytes)
     }
     fn encode_sequence(objects: &mut [Buffer], bytes: &mut [u8], stats: Region,
-        context: u32, stamp_value: u32, slot: usize) -> Result {
-        let offset = |owner:usize| storage::slot_offset(owner,slot).map_err(|_|EINVAL);
+        context: u32, stamp_value: u32, slot: usize, ctx: Option<(u64,u64,usize)>) -> Result {
+        let offset = |owner:usize| storage::slot_offset_ctx(owner,slot,ctx.map(|c| c.2)).map_err(|_|EINVAL);
         let fw = |owner: usize| queue::FirmwareVa::new(objects[owner].va()+offset(owner)? as u64).map_err(|_| EINVAL);
         let region = |owner: usize| Region::new(objects[owner].va()+offset(owner)? as u64, storage::allocation(owner).map_err(|_|EINVAL)?.size).map_err(|_| EINVAL);
         let value = microsequence::Sequence {
             command: region(storage::COMMAND)?, stats, notifier: region(NOTIFIER)?,
             queue: fw(storage::QUEUE)?, context, generation: 1, pool: fw(storage::POOL)?,
-            scratch: [fw(MICROSEQUENCE_SCRATCH[0])?, fw(MICROSEQUENCE_SCRATCH[1])?,
-                fw(MICROSEQUENCE_SCRATCH[2])?, fw(MICROSEQUENCE_SCRATCH[3])?, fw(MICROSEQUENCE_SCRATCH[4])?],
+            scratch: match ctx {
+                // The G15C's layout: the four areas are one run at spacings A, A, B.
+                Some((a, b, _)) => {
+                    let base = objects[storage::CONTEXT_AREAS].va()+offset(storage::CONTEXT_AREAS)? as u64;
+                    let at = |o: u64| queue::FirmwareVa::new(base+o).map_err(|_| EINVAL);
+                    [fw(MICROSEQUENCE_SCRATCH[0])?, at(0)?, at(a)?, at(2*a)?, at(2*a+b)?]
+                }
+                None => [fw(MICROSEQUENCE_SCRATCH[0])?, fw(MICROSEQUENCE_SCRATCH[1])?,
+                    fw(MICROSEQUENCE_SCRATCH[2])?, fw(MICROSEQUENCE_SCRATCH[3])?, fw(MICROSEQUENCE_SCRATCH[4])?],
+            },
             fw_stamp: fw(storage::FW_STAMP)?, stamp_value,
         };
         value.encode(bytes).map_err(|_| EINVAL)?;
@@ -213,15 +233,16 @@ impl Compute {
         if self.batch_count>=storage::SLOTS {return Err(E2BIG);}
         self.slot=self.batch_count;
         for i in storage::RESET {
-            let offset=storage::slot_offset(i,self.slot).map_err(|_|EINVAL)?;
-            let size=storage::allocation(i).map_err(|_|EINVAL)?.size;
+            let ctx=self.ctx.map(|c| c.2);
+            let offset=storage::slot_offset_ctx(i,self.slot,ctx).map_err(|_|EINVAL)?;
+            let size=storage::allocation_ctx(i,ctx).map_err(|_|EINVAL)?.size;
             self.objects[i].fill_range(offset,size,if i==PREEMPTION {0xcc} else {0})?;
         }
         self.objects[NOTIFIER].u32(state::NOTIFIER_CONTEXT,self._binding.slot())?;
         self.sequence=self.sequence.checked_add(1).ok_or(EOVERFLOW)?;
         Self::encode_command(&mut self.objects,&mut self.command_bytes,self._binding.slot(),control,self.sequence,self.slot,self.registers)?;
         let stamp=self.stamp();
-        Self::encode_sequence(&mut self.objects,&mut self.sequence_bytes,self.stats,self._binding.slot(),stamp,self.slot)?;
+        Self::encode_sequence(&mut self.objects,&mut self.sequence_bytes,self.stats,self._binding.slot(),stamp,self.slot,self.ctx)?;
         self.objects[storage::EVENT].u32(0,self.sequence as u32)?;
         self.objects[storage::COUNTER].u32(0,self.sequence as u32)?;
         let address=self.objects[storage::COMMAND].va()+storage::slot_offset(storage::COMMAND,self.slot).map_err(|_|EINVAL)? as u64;

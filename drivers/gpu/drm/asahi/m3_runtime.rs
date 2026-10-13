@@ -360,7 +360,7 @@ impl Inner {
         let index=found.unwrap_or(self.jobs.len());
         if found.is_none() {
             let job=match control {
-                crate::m3_submit::Command::Compute(c)=>NativeJob::Compute(crate::m3_compute::Compute::new(&self.drm,&self.uat,&packet.vm,self.config.stats_region().map_err(early)?,c,self.device.soc().registers).map_err(early)?),
+                crate::m3_submit::Command::Compute(c)=>NativeJob::Compute(crate::m3_compute::Compute::new(&self.drm,&self.uat,&packet.vm,self.config.stats_region().map_err(early)?,c,self.device.soc().registers,(self.device.soc().clusters,self.device.soc().cores_per_cluster)).map_err(early)?),
                 crate::m3_submit::Command::Render{..}=>NativeJob::Render(crate::m3_render::Render::new(&self.drm,&self.uat,&packet.vm,self.config.stats_region().map_err(early)?,self.device.soc().clusters,self.device.soc().registers).map_err(early)?),
             };
             self.jobs.push(job,GFP_KERNEL).map_err(|_|early(ENOMEM))?;
