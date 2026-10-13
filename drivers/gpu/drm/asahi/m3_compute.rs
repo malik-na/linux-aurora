@@ -24,6 +24,10 @@ struct CachedViews {
 }
 pub(crate) struct Compute {
     _client_command: mmu::KernelMapping,
+    /// The zeroed page at the client's USC window base + 0x4000 (`asahi.t6031_usc_page`), kept
+    /// mapped for the graph's lifetime. Declared before `_binding`: fields drop in order, and
+    /// the mapping must go before its ASID lease, as in `CachedViews`.
+    _usc_page: Option<mmu::KernelMapping>,
     objects: KVec<Buffer>,
     command_bytes: KVec<u8>,
     sequence_bytes: KVec<u8>,
@@ -41,9 +45,6 @@ pub(crate) struct Compute {
     /// The StartCL context areas as one run (A, B, run size, low client GPU addresses) when the
     /// G15C's own layout is in use (`asahi.t6031_ctx_areas`); `None` keeps the qualified areas.
     ctx: Option<(u64,u64,usize,bool)>,
-    /// The zeroed page at the client's USC window base + 0x4000 (`asahi.t6031_usc_page`), kept
-    /// mapped for the graph's lifetime.
-    _usc_page: Option<mmu::KernelMapping>,
 }
 /// Offset of the page `asahi.t6031_usc_page` maps in the client's USC window: the page after
 /// the first 16 KiB, where the G15C's USC cores 8 and 9 read (boots t50, t77).
