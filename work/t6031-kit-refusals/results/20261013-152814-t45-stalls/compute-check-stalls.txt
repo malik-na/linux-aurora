@@ -1,0 +1,5 @@
+asahi: G15C admitted (ASAHI_M3_G15C=1): chip 0x6031, 4 clusters x 10 slots, 40 cores (masks 0x3ff 0x3ff 0x3ff 0x3ff), revision 0x12, features 0xa, max 338000 kHz; scheduling stalls ON (ASAHI_G15C_SCHEDULING_STALLS=1); VA layout m3-runtime-6c982dda3eba
+Device: Apple M3 Max (G15C B2) (deviceID 0x6031)
+compute-check: 65536 invocations x 256 steps, 5 s
+compute-check: run 0 did not complete: -4
+FAIL: 0 runs in 0.5 s, 0 with wrong results
