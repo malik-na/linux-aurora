@@ -38,23 +38,25 @@ pub(crate) struct Compute {
     checkpoint: (u64,u16,usize),
     /// The register lists of the SoC's GPU (`m3_soc::Soc::registers`).
     registers: command::RegisterSet,
-    /// The StartCL context areas as one run (A, B, run size) when the G15C's own layout is in
-    /// use (`asahi.t6031_ctx_areas`); `None` keeps the qualified four separate areas.
-    ctx: Option<(u64,u64,usize)>,
+    /// The StartCL context areas as one run (A, B, run size, low client GPU addresses) when the
+    /// G15C's own layout is in use (`asahi.t6031_ctx_areas`); `None` keeps the qualified areas.
+    ctx: Option<(u64,u64,usize,bool)>,
 }
 impl Compute {
     pub(crate) fn new(dev: &driver::AsahiDevice, uat: &mmu::Uat, vm: &mmu::Vm,
         stats: Region, control: crate::agx_compute::Control,
         registers: command::RegisterSet, (clusters, cores_per_cluster): (u32, u32)) -> Result<Self> {
-        let ctx = if registers == command::RegisterSet::G15C && crate::m3_params::t6031_ctx_areas() {
+        let mode = crate::m3_params::t6031_ctx_areas();
+        let ctx = if registers == command::RegisterSet::G15C && mode != 0 {
             let (a, b, size) = crate::g15_selftest::ctx_sizes(
                 u64::from(clusters) * u64::from(cores_per_cluster), u64::from(clusters));
             let size = usize::try_from(size).map_err(|_| EINVAL)?;
-            dev_info!(dev.as_ref(), "M3 compute context areas: one {:#x}-byte run, A={:#x} B={:#x} ({} clusters x {} cores)\n",
-                size, a, b, clusters, cores_per_cluster);
-            Some((a, b, size))
+            let low = mode == 2;
+            dev_info!(dev.as_ref(), "M3 compute context areas: one {:#x}-byte run, A={:#x} B={:#x} ({} clusters x {} cores), {} addresses\n",
+                size, a, b, clusters, cores_per_cluster, if low { "low client GPU" } else { "firmware" });
+            Some((a, b, size, low))
         } else { None };
-        let ctx_size = ctx.map(|c| c.2);
+        let ctx_size = ctx.map(|c| (c.2, c.3));
         let binding=uat.bind(vm)?;
         let mut objects=KVec::new();
         let mut client_command=None;
@@ -136,8 +138,8 @@ impl Compute {
         objects[storage::COMMAND].write(offset(storage::COMMAND)?, bytes)
     }
     fn encode_sequence(objects: &mut [Buffer], bytes: &mut [u8], stats: Region,
-        context: u32, stamp_value: u32, slot: usize, ctx: Option<(u64,u64,usize)>) -> Result {
-        let offset = |owner:usize| storage::slot_offset_ctx(owner,slot,ctx.map(|c| c.2)).map_err(|_|EINVAL);
+        context: u32, stamp_value: u32, slot: usize, ctx: Option<(u64,u64,usize,bool)>) -> Result {
+        let offset = |owner:usize| storage::slot_offset_ctx(owner,slot,ctx.map(|c| (c.2, c.3))).map_err(|_|EINVAL);
         let fw = |owner: usize| queue::FirmwareVa::new(objects[owner].va()+offset(owner)? as u64).map_err(|_| EINVAL);
         let region = |owner: usize| Region::new(objects[owner].va()+offset(owner)? as u64, storage::allocation(owner).map_err(|_|EINVAL)?.size).map_err(|_| EINVAL);
         let value = microsequence::Sequence {
@@ -145,8 +147,9 @@ impl Compute {
             queue: fw(storage::QUEUE)?, context, generation: 1, pool: fw(storage::POOL)?,
             scratch: match ctx {
                 // The G15C's layout: the four areas are one run at spacings A, A, B.
-                Some((a, b, _)) => {
-                    let base = objects[storage::CONTEXT_AREAS].va()+offset(storage::CONTEXT_AREAS)? as u64;
+                Some((a, b, _, low)) => {
+                    let run = &objects[storage::CONTEXT_AREAS];
+                    let base = (if low { run.gpu_va()? } else { run.va() })+offset(storage::CONTEXT_AREAS)? as u64;
                     let at = |o: u64| queue::FirmwareVa::new(base+o).map_err(|_| EINVAL);
                     [fw(MICROSEQUENCE_SCRATCH[0])?, at(0)?, at(a)?, at(2*a)?, at(2*a+b)?]
                 }
@@ -233,7 +236,7 @@ impl Compute {
         if self.batch_count>=storage::SLOTS {return Err(E2BIG);}
         self.slot=self.batch_count;
         for i in storage::RESET {
-            let ctx=self.ctx.map(|c| c.2);
+            let ctx=self.ctx.map(|c| (c.2, c.3));
             let offset=storage::slot_offset_ctx(i,self.slot,ctx).map_err(|_|EINVAL)?;
             let size=storage::allocation_ctx(i,ctx).map_err(|_|EINVAL)?.size;
             self.objects[i].fill_range(offset,size,if i==PREEMPTION {0xcc} else {0})?;

@@ -32,7 +32,7 @@ pub(crate) fn slot_offset(index:usize,slot:usize)->Result<usize,InvalidOwner> {
     slot_offset_ctx(index,slot,None)
 }
 /// `slot_offset` with the StartCL context areas sized by `ctx` (`allocation_ctx`).
-pub(crate) fn slot_offset_ctx(index:usize,slot:usize,ctx:Option<usize>)->Result<usize,InvalidOwner> {
+pub(crate) fn slot_offset_ctx(index:usize,slot:usize,ctx:Option<(usize,bool)>)->Result<usize,InvalidOwner> {
     let a=allocation_ctx(index,ctx)?;
     if slot>=SLOTS {return Err(InvalidOwner);}
     Ok(if RESET.contains(&index) {((a.size+0x3fff)&!0x3fff)*slot} else {0})
@@ -41,7 +41,7 @@ pub(crate) fn batch_allocation(index:usize)->Result<Allocation,InvalidOwner> {
     batch_allocation_ctx(index,None)
 }
 /// `batch_allocation` with the StartCL context areas sized by `ctx` (`allocation_ctx`).
-pub(crate) fn batch_allocation_ctx(index:usize,ctx:Option<usize>)->Result<Allocation,InvalidOwner> {
+pub(crate) fn batch_allocation_ctx(index:usize,ctx:Option<(usize,bool)>)->Result<Allocation,InvalidOwner> {
     let mut a=allocation_ctx(index,ctx)?;
     a.size+=slot_offset_ctx(index,SLOTS-1,ctx)?;
     Ok(a)
@@ -53,6 +53,9 @@ const CLIENT_BASE:u64=0x71_0000_0000;
 const POOL_STRIDE:u64=0x404000; // Four MiB plus a 16-KiB guard.
 const POOL_TABLE_VA:u64=CLIENT_BASE+23*POOL_STRIDE+0x3000;
 const PREEMPTION_VA:u64=CLIENT_BASE+23*POOL_STRIDE+0x8000;
+/// The one-run StartCL context areas in the client VM (`allocation_ctx`), above the preemption
+/// buffer's 64 KiB and the slot stride of the run (16 slots of at most 0x80000).
+const CONTEXT_AREAS_VA:u64=CLIENT_BASE+23*POOL_STRIDE+0x20000;
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub(crate) enum Mapping {
     FirmwareOnly,
@@ -68,11 +71,17 @@ pub(crate) fn allocation(index:usize)->Result<Allocation,InvalidOwner> {
     allocation_ctx(index,None)
 }
 /// `allocation`, with `CONTEXT_AREAS` sized `ctx` (the one-run StartCL context areas) when given;
-/// the qualified T6030 graph keeps four separate 64-KiB areas (`ctx` is `None`).
-pub(crate) fn allocation_ctx(index:usize,ctx:Option<usize>)->Result<Allocation,InvalidOwner> {
+/// the qualified T6030 graph keeps four separate 64-KiB areas (`ctx` is `None`). The run is a
+/// firmware-shared buffer, or (`ctx.1`) a client-VM buffer at `CONTEXT_AREAS_VA` with the
+/// microsequence carrying its low GPU addresses, as the J516C's own driver does.
+pub(crate) fn allocation_ctx(index:usize,ctx:Option<(usize,bool)>)->Result<Allocation,InvalidOwner> {
     use Mapping::*;
     let (size,mapping)=match index {
-        CONTEXT_AREAS if ctx.is_some()=>(ctx.unwrap_or(65536),FirmwareGpuShared),
+        CONTEXT_AREAS if ctx.is_some()=>match ctx {
+            Some((size,true))=>(size,Client(CONTEXT_AREAS_VA)),
+            Some((size,false))=>(size,FirmwareGpuShared),
+            None=>(65536,FirmwareGpuShared),
+        },
         LEGACY_PAGE=>(0x4000,FirmwareGpuShared),
         1..=POOL_PAGES=>(0x400000,Client(CLIENT_BASE+(index-1) as u64*POOL_STRIDE)),
         POOL_TABLE=>(0x1000,Client(POOL_TABLE_VA)),

@@ -794,17 +794,20 @@ pub(crate) fn t6031_compute_regs() -> u64 {
         v => v & 0xf,
     }
 }
-/// `asahi.t6031_ctx_areas=0|1`: whether the T6031 compute microsequence gets the G15C's own
+/// `asahi.t6031_ctx_areas=0|1|2`: whether the T6031 compute microsequence gets the G15C's own
 /// StartCL context areas (one run at the spacings `g15_selftest::ctx_sizes` gives the part) instead
-/// of the qualified T6030 graph's four separate 64-KiB areas. Default 1.
+/// of the qualified T6030 graph's four separate 64-KiB areas: 1 as a firmware-shared buffer with
+/// firmware addresses, 2 as a client-VM buffer with its low GPU addresses (the J516C's own driver
+/// gives the firmware low GPU addresses for these four). Default 1.
 static T6031_CTX_AREAS: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_ctx_areas", T6031_CTX_AREAS, parse_t6031_number);
 
-/// Whether the G15C compute graph sizes its StartCL context areas (`asahi.t6031_ctx_areas`).
-pub(crate) fn t6031_ctx_areas() -> bool {
+/// How the G15C compute graph lays out its StartCL context areas (`asahi.t6031_ctx_areas`):
+/// 0 the qualified areas, 1 one run with firmware addresses, 2 one run with low GPU addresses.
+pub(crate) fn t6031_ctx_areas() -> u64 {
     match T6031_CTX_AREAS.load(Ordering::Relaxed) {
-        T6031_UNSET => true,
-        v => v != 0,
+        T6031_UNSET => 1,
+        v => v.min(2),
     }
 }
 /// `asahi.t6031_idle_ts=1`: send the idle-timestamp update (device control 0x1c, no payload) after
