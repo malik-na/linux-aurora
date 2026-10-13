@@ -1,0 +1,12 @@
+== t61-tail-blockmgr
+[   52.431046] M3 compute graph: context=1 queue=… pool=…
+[   52.933083] M3 firmware recovery event answered by a resume (halt_count=1, resumes=1); the job stays live
+[   52.934298] M3 G15C verdict: job-completed: the first compute job finished, 0 ns of GPU time
+[   53.435057] M3 firmware recovery event answered by a resume (halt_count=2, resumes=2); the job stays live
+FAIL: 10 runs in 5.0 s, 10 with wrong results
+== t62-skip-pool
+[   52.704544] M3 compute pool: id set to 0xffffffff, the firmware skips the pool (asahi.t6031_skip_pool=1)
+[   52.704636] M3 compute graph: context=1 queue=… pool=…
+[   53.206768] M3 firmware recovery event answered by a resume (halt_count=1, resumes=1); the job stays live
+[   53.207984] M3 G15C verdict: job-completed: the first compute job finished, 0 ns of GPU time
+FAIL: 10 runs in 5.0 s, 10 with wrong results
