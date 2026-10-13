@@ -53,9 +53,10 @@ const CLIENT_BASE:u64=0x71_0000_0000;
 const POOL_STRIDE:u64=0x404000; // Four MiB plus a 16-KiB guard.
 const POOL_TABLE_VA:u64=CLIENT_BASE+23*POOL_STRIDE+0x3000;
 const PREEMPTION_VA:u64=CLIENT_BASE+23*POOL_STRIDE+0x8000;
-/// The one-run StartCL context areas in the client VM (`allocation_ctx`), above the preemption
-/// buffer's 64 KiB and the slot stride of the run (16 slots of at most 0x80000).
-const CONTEXT_AREAS_VA:u64=CLIENT_BASE+23*POOL_STRIDE+0x20000;
+/// The one-run StartCL context areas in the client VM (`allocation_ctx`): above the preemption
+/// buffer's sixteen 64-KiB slots (`PREEMPTION_VA` + 1 MiB), with room for the run's own sixteen
+/// slots of at most 0x80000 each.
+const CONTEXT_AREAS_VA:u64=PREEMPTION_VA+(SLOTS as u64)*0x10000;
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub(crate) enum Mapping {
     FirmwareOnly,
