@@ -1,0 +1,2 @@
+asahi 40a400000.gpu: M3 firmware readiness: magic=0xabcdabcd runtime=1 newA=1/1 newB=0
+asahi 40a400000.gpu: M3 G15C verdict: firmware-running: the firmware accepted the InitData (version 0xc08e21e84820490) and the device controls; no job has run yet
