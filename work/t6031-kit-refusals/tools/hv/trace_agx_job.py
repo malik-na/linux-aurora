@@ -75,7 +75,10 @@ def dump_pipe_entry(ep, index, e):
             with open(os.path.join(DUMP_DIR, f"job-{tag}-cmd.bin"), "wb") as f: f.write(body)
             useq = u64(body, 0x760)
             if useq >> 40 == 0xfffffc:
-                with open(os.path.join(DUMP_DIR, f"job-{tag}-useq.bin"), "wb") as f: f.write(rd(useq, 0x400))
+                ub = rd(useq, 0x400)
+                with open(os.path.join(DUMP_DIR, f"job-{tag}-useq.bin"), "wb") as f: f.write(ub)
+                if kind == 2:
+                    dump_startcl_objects(ep, ub, tag, "")
             S.dumps += 1
             ep.log(f"T6031 {now()} {NAMES[index]} command {cmd:#x} microsequence {useq:#x} dumped as job-{tag}")
             if kind == 2 and len(S.live_compute) < 8:
@@ -83,12 +86,43 @@ def dump_pipe_entry(ep, index, e):
     except Exception:
         ep.log("T6031 pipe dump failed:\n" + traceback.format_exc())
 
+def dump_startcl_objects(ep, ub, tag, suffix):
+    # The compute StartCL's +0x15c record (0x100 bytes), the two buffers it points to (+0x08 0x200
+    # bytes, +0x10 0x80 bytes), the block-manager buffer (+0x174, first 0x100 and 0x2800..0x2900)
+    # and the first 0x100 of each page-manager buffer (+0x184..+0x19c).
+    try:
+        rec = u64(ub, 0x15c)
+        if rec >> 40 == 0xfffffc:
+            r = rd(rec, 0x100)
+            with open(os.path.join(DUMP_DIR, f"job-{tag}-rec15c{suffix}.bin"), "wb") as f: f.write(r)
+            ep.log(f"T6031 {now()} +0x15c record {rec:#x}{suffix}: {r[:0x60].hex()}")
+            # The pool manager's +0x48 pointer (our "counter"): dump 0x1000 bytes of its target.
+            for o, size, name in ((0x48, 0x1000, "pool-counter"),):
+                p = u64(r, o)
+                if p >> 40 == 0xfffffc:
+                    with open(os.path.join(DUMP_DIR, f"job-{tag}-{name}{suffix}.bin"), "wb") as f: f.write(rd(p, size))
+        bm = u64(ub, 0x174)
+        if bm >> 40 == 0xfffffc:
+            with open(os.path.join(DUMP_DIR, f"job-{tag}-blockmgr{suffix}.bin"), "wb") as f:
+                f.write(rd(bm, 0x100)); f.write(rd(bm + 0x2800, 0x100))
+        for i, o in enumerate((0x184, 0x18c, 0x194, 0x19c)):
+            pm = u64(ub, o)
+            if pm and pm < (1 << 44):
+                try:
+                    with open(os.path.join(DUMP_DIR, f"job-{tag}-pmgr{i+1}{suffix}.bin"), "wb") as f: f.write(rd(pm, 0x100))
+                except Exception as e:
+                    ep.log(f"T6031 pmgr{i+1} {pm:#x} unreadable through context 0: {e!r}")
+    except Exception:
+        ep.log("T6031 StartCL object dump failed:\n" + traceback.format_exc())
+
 def redump(ep):
     try:
         for cmd, useq, tag in S.live_compute:
             with open(os.path.join(DUMP_DIR, f"job-{tag}-cmd-after.bin"), "wb") as f: f.write(rd(cmd, 0x900))
             if useq >> 40 == 0xfffffc:
-                with open(os.path.join(DUMP_DIR, f"job-{tag}-useq-after.bin"), "wb") as f: f.write(rd(useq, 0x400))
+                ub = rd(useq, 0x400)
+                with open(os.path.join(DUMP_DIR, f"job-{tag}-useq-after.bin"), "wb") as f: f.write(ub)
+                dump_startcl_objects(ep, ub, tag, "-after")
             ep.log(f"T6031 {now()} compute command {cmd:#x} re-dumped after a flag event as job-{tag}-*-after")
     except Exception:
         ep.log("T6031 re-dump failed:\n" + traceback.format_exc())
