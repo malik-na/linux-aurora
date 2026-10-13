@@ -923,11 +923,12 @@ pub(crate) fn t6031_first_job_zero() -> bool {
 static T6031_POOL_FLUSH: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_pool_flush", T6031_POOL_FLUSH, parse_t6031_number);
 
-/// Whether the pool manager record is flushed through the firmware-control ring (`asahi.t6031_pool_flush`).
-pub(crate) fn t6031_pool_flush() -> bool {
+/// The firmware-control flush mode before a new compute graph's first job (`asahi.t6031_pool_flush`):
+/// 0 none, 1 the pool manager's page, 2 a page of the hardware record (address-window probe).
+pub(crate) fn t6031_pool_flush() -> u64 {
     match T6031_POOL_FLUSH.load(Ordering::Relaxed) {
-        T6031_UNSET => false,
-        v => v != 0,
+        T6031_UNSET => 0,
+        v => v.min(2),
     }
 }
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.

@@ -385,9 +385,14 @@ impl Inner {
             // flush its view of the pool manager record, as the J516C's own driver does for each
             // pool manager before that pool's first job (firmware-control ring, doorbell 0x84).
             if let NativeJob::Compute(j)=&self.jobs[index] {
-                if crate::t6031_start::is_t6031(self.device.soc()) && crate::m3_params::t6031_pool_flush() {
-                    let pool=j.pool_va();
-                    self.send_fwctl(pool,1).map_err(early)?;
+                let mode=crate::m3_params::t6031_pool_flush();
+                if crate::t6031_start::is_t6031(self.device.soc()) && mode!=0 {
+                    // 1: the pool manager's page; 2: a page of the hardware record instead, which
+                    // sits in the low kernel window the J516C driver's own flushes name (boot t68:
+                    // the flush of our pool page, 52 GiB higher, crashed the firmware with
+                    // "UAT bad flush: 64 0").
+                    let target=if mode==2 { self.config.stats_region().map_err(early)?.base() & !0x3fff } else { j.pool_va() };
+                    self.send_fwctl(target,1).map_err(early)?;
                 }
             }
         } else {
