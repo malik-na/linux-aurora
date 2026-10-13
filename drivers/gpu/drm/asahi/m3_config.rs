@@ -228,6 +228,9 @@ impl Config {
         }
         let (hwdata, globals) = objects.split_at_mut(GLOBALS);
         crate::m3_adt_config::publish_pstates(dev.as_ref(), &mut hwdata[HARDWARE_DATA], &mut globals[0], &contents.pstates)?;
+        // The J516C word overlay, last, so the firmware sees the J516C driver's words where it
+        // covers the generator's (asahi.t6031_overlay=j516c).
+        if contents.overlay {crate::m3_adt_config::apply_overlay(dev.as_ref(),&mut objects)?;}
         // Firmware ktrace is for explicit detailed diagnostics. Normal games
         // still drain error/events, but need not generate trace records for
         // every firmware operation on the command-processing core.

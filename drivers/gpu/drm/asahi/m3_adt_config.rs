@@ -265,6 +265,8 @@ pub(crate) struct Contents {
     /// The fourth hardware view's offset into that record (`init::HARDWARE_VIEW_4`, or the
     /// J516C record's).
     pub(crate) hardware_view_4: u64,
+    /// Apply the builtin word overlay to the uploaded objects (`asahi.t6031_overlay=j516c`).
+    pub(crate) overlay: bool,
 }
 
 fn read_u32(bytes: &[u8], offset: usize) -> Result<u32> {
@@ -390,6 +392,7 @@ impl Contents {
             hwdata_object,
             hardware_size,
             hardware_view_4,
+            overlay: t6031.is_some_and(|e| e.overlay()),
         })
     }
 
@@ -1068,9 +1071,6 @@ fn build_images(
         dyncfg.pwr.max_power_mw
     );
     log_tables(dev, &c.hwdata_b, c.tables.len);
-    if t6031.is_some_and(|e| e.overlay()) {
-        apply_overlay(dev, &mut images)?;
-    }
     Ok(images)
 }
 
@@ -1079,8 +1079,10 @@ fn build_images(
 /// magic "T6031OVL", u32 version 1, u32 count, then count records of (u32 image, u32 offset,
 /// u32 value) with image 0 the hardware record, 1 globals, 2 the power block. The words are
 /// read from a J516C's own InitData before its firmware ran; pointer fields are excluded when
-/// the overlay is generated, so nothing the runtime owns is overwritten.
-fn apply_overlay(dev: &device::Device, images: &mut [Option<KVVec<u8>>]) -> Result {
+/// the overlay is generated. Applied to the uploaded objects after the generator's own checks
+/// and writes (`Config::new`), so the overlay has the last word: where it covers a word the
+/// state publisher wrote, the firmware sees the J516C driver's value, not the policy's.
+pub(crate) fn apply_overlay(dev: &device::Device, objects: &mut [Buffer]) -> Result {
     let fw = kernel::firmware::Firmware::request(c_str!("asahi/t6031-hwdata-overlay.bin"), dev)?;
     let data = fw.data();
     if data.len() < 16 || &data[..8] != b"T6031OVL" || read_u32(data, 8)? != 1 {
@@ -1102,8 +1104,7 @@ fn apply_overlay(dev: &device::Device, images: &mut [Option<KVVec<u8>>]) -> Resu
             2 => GLOBALS_POWER,
             _ => return Err(EINVAL),
         };
-        let bytes = images.get_mut(owner).and_then(|i| i.as_mut()).ok_or(EINVAL)?;
-        write(bytes, offset, &value.to_le_bytes())?;
+        objects.get_mut(owner).ok_or(EINVAL)?.u32(offset, value)?;
         applied[image as usize] += 1;
     }
     dev_info!(
