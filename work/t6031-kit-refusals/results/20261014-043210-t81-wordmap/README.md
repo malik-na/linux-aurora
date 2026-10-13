@@ -77,3 +77,19 @@ Runtime writes of `t6031_compute_regs` in this boot, the probe at N=1024 and N=8
 2. `0x7` (0x1a0e9 from 0 to 8): under H4, a change in the lost chunks, or a fault.
 3. `0xd` (UMA PTC back to the T6030 value): under H4, a change or a fault.
 4. `0xb` (DUPM back to the T6030 value; the J516C value is the selftest's per-USC formula at 10): under H4, a change or a fault.
+
+## H4 bisect result
+
+| `t6031_compute_regs` | change from 0xf | N=1024 | N=8192 |
+|---|---|---|---|
+| 0xe | tail back to T6030 (zeroed anyway by first_job_zero) | groups 8–15 lost | the same 64 groups |
+| 0x7 | 0x1a0e9 = 8 | groups 8–15 lost | the same 64 groups (block edges shift slightly) |
+| 0xd | UMA PTC back to T6030 | **job faulted**: firmware halt, info 0x27, job stamp 0xc10be3; no fault latched in any bank read; per-core CDM counters tiny on cores 0–2 only; the GPU device then gone for this boot | not run |
+| 0xb | DUPM back to T6030 | not run (stopped at the first fault) | |
+
+Reading: the control holds (0xe unchanged), and 0x1a0e9 does not shape the lost chunks. The J516C PTC value is
+needed for the dispatch to run at all (as t49 found without fills). DUPM, the value that fits the team's per-USC
+formula at 10 cores per cluster, is still untested on its own. The boot's GPU is unusable after the 0xd fault;
+the next run needs a new boot.
+
+Files: the fault snapshot decode (all banks clear) is in `kernel-lines-0xd.txt`.
