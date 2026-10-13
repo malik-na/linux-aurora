@@ -88,6 +88,14 @@ dword of a code-container lead in the Mesa tree). Both of core 9's faults are 0x
 (a), the USC reading past the end of objects in its window, is now favoured over a per-core array; the missing
 core 8 fault at + 0x48000 is unexplained. Next: fill every gap (mode 6) and see whether the job runs.
 
+## Finding 5 (boot t80): with every gap filled, the first G15C compute jobs run
+
+Mode 6 filled +0x4000, +0x48000, +0x50000 and +0x74000 (tagged). The first job completed with 1.07 ms of GPU time,
+no fault, no halt; compute-check ran 3021 jobs in 5 s, each 15/16 correct (61440 of 65536 words; 4096 wrong,
+first at index 512, zero where a value was expected). The stall of t47–t79 was the USC reading into unmapped pages
+of its window just past the client's objects. Open: the wrong 1/16, and where the real fix belongs (Mesa's guard
+pages in the USC heap, or kernel backing for them).
+
 ## Not needed yet
 
 The hypervisor comparison (SGX block polled at each firmware message during the macOS job) stays as the fallback
