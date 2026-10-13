@@ -80,6 +80,14 @@ impl Compute {
         Self::encode_command(&mut objects, &mut command_bytes, binding.slot(), control, 1, 0, registers)?;
         Self::encode_sequence(&mut objects, &mut sequence_bytes, stats, binding.slot(), timeline::stamp(0xc1000000,1), 0, ctx)?;
         UMA_POOL.initialize(&mut objects)?;
+        // asahi.t6031_pool_chunks=1: the pool manager's +0x44 word as the number of 4-MiB chunks the
+        // initial page list covers (the J516C's own driver: 0x30 for 0xc000 pages), not the
+        // qualified literal 0x40, which claims chunks the eight-chunk list does not hold.
+        if registers == command::RegisterSet::G15C && crate::m3_params::t6031_pool_chunks() {
+            let chunks = (crate::m3_pool_layout::INITIAL_PAGES * crate::m3_pool_layout::PAGE_SIZE / crate::m3_pool_layout::BACKING_SIZE) as u32;
+            dev_info!(dev.as_ref(), "M3 compute pool: +0x44 = {} chunks (asahi.t6031_pool_chunks=1)\n", chunks);
+            objects[storage::POOL].u32(0x44, chunks)?;
+        }
         // asahi.t6031_skip_pool=1: a pool id above 0xff makes the firmware skip the pool (the
         // J516S self-test's trick), to tell whether the pool is what the G15C dispatch waits on.
         if registers == command::RegisterSet::G15C && crate::m3_params::t6031_skip_pool() {

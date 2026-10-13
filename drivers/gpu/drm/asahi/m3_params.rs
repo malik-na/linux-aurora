@@ -877,6 +877,19 @@ pub(crate) fn t6031_skip_pool() -> bool {
         v => v != 0,
     }
 }
+/// `asahi.t6031_pool_chunks=1`: write the T6031 compute pool manager's +0x44 word as the number of
+/// 4-MiB chunks in its initial page list (8) instead of the qualified literal 0x40. The J516C's own
+/// driver writes 0x30 for a 0xc000-page list, i.e. the chunk count. Default 0.
+static T6031_POOL_CHUNKS: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_pool_chunks", T6031_POOL_CHUNKS, parse_t6031_number);
+
+/// Whether the pool manager's +0x44 word is the chunk count (`asahi.t6031_pool_chunks`).
+pub(crate) fn t6031_pool_chunks() -> bool {
+    match T6031_POOL_CHUNKS.load(Ordering::Relaxed) {
+        T6031_UNSET => false,
+        v => v != 0,
+    }
+}
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.
 static T6031_MTR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_mtr", T6031_MTR, parse_t6031_mtr);
