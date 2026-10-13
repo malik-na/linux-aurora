@@ -21,3 +21,8 @@ the USC window is laid out (Mesa's USC heap guard pages, or the kernel backing t
 about the read-past behaviour.
 
 Files: `kernel-lines.txt` (page map, fills, verdict, compute-check summary).
+
+**Correction (2026-10-14, #51 research):** "no fault latched" overstates it. The fault banks are read only when a
+job fails, so what t80 shows is that no job failed and no halt happened. The "no `prepare_map` errors" check grepped
+the full post-job dmesg (`dmesg-after-job.txt`) for `prepare_map|already owned|EBUSY` and found none. Only the tagged
+fill of these four pages has been booted; a zero fill (`asahi.t6031_usc_page=2`) has not.
