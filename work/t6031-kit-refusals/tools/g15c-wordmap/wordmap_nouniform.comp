@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: MIT
+// g15c-wordmap, no-uniform variant (ticket #50, H4): the same work as wordmap.comp, but nothing
+// comes from descriptors or push constants. The buffer addresses, N and the step count are
+// specialization constants baked into the shader, so a group that runs without its uniform or
+// descriptor state still knows where to write.
+#version 450
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x_id = 0) in;
+layout(constant_id = 1) const uint OUT_LO = 0u;
+layout(constant_id = 2) const uint OUT_HI = 0u;
+layout(constant_id = 3) const uint META_LO = 0u;
+layout(constant_id = 4) const uint META_HI = 0u;
+layout(constant_id = 5) const uint N = 0u;
+layout(constant_id = 6) const uint STEPS = 0u;
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Words { uint w[]; };
+
+void main()
+{
+   uint group = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+   uint i = group * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
+   if (i >= N)
+      return;
+   uint x = i * 2654435761u + 1u;
+   for (uint k = 0u; k < STEPS; k++) {
+      x ^= x << 13;
+      x ^= x >> 17;
+      x ^= x << 5;
+      x += k;
+   }
+   Words o = Words(uint64_t(OUT_HI) << 32 | uint64_t(OUT_LO));
+   Words m = Words(uint64_t(META_HI) << 32 | uint64_t(META_LO));
+   o.w[i] = x;
+   m.w[i] = group | (gl_LocalInvocationID.x << 16);
+}

@@ -1,15 +1,25 @@
 // SPDX-License-Identifier: MIT
-// g15c-wordmap kernel: invocation i writes wm_expect(i, steps) (analyze.c) to out[i] and its
-// workgroup and local index to meta[i].
+// g15c-wordmap kernel: invocation i (linear over a 1-D or 2-D grid of groups) writes
+// wm_expect(i, steps) (analyze.c) to out[i] and its linear group and local index to meta[i].
+// SPIN > 0 makes the groups in [SPIN_FIRST, SPIN_LAST] spin SPIN rounds first (timing probe).
 #version 450
-layout(local_size_x = 64) in;
+layout(local_size_x_id = 0) in;
+layout(constant_id = 1) const uint SPIN = 0u;
+layout(constant_id = 2) const uint SPIN_FIRST = 0u;
+layout(constant_id = 3) const uint SPIN_LAST = 0u;
 layout(std430, binding = 0) buffer Out { uint v[]; } out_buf;
 layout(std430, binding = 1) buffer Meta { uint m[]; } meta_buf;
 layout(push_constant) uniform Params { uint n; uint steps; } p;
 
 void main()
 {
-   uint i = gl_GlobalInvocationID.x;
+   uint group = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+   uint i = group * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
+   uint acc = i;
+   if (SPIN > 0u && group >= SPIN_FIRST && group <= SPIN_LAST) {
+      for (uint k = 0u; k < SPIN; k++)
+         acc = acc * 1664525u + 1013904223u;
+   }
    if (i >= p.n)
       return;
    uint x = i * 2654435761u + 1u;
@@ -20,5 +30,5 @@ void main()
       x += k;
    }
    out_buf.v[i] = x;
-   meta_buf.m[i] = gl_WorkGroupID.x | (gl_LocalInvocationID.x << 16);
+   meta_buf.m[i] = group | (gl_LocalInvocationID.x << 16) | ((acc & 1u) << 31);
 }
