@@ -231,6 +231,12 @@ impl Config {
         // The J516C word overlay, last, so the firmware sees the J516C driver's words where it
         // covers the generator's (asahi.t6031_overlay=j516c).
         if contents.overlay {crate::m3_adt_config::apply_overlay(dev.as_ref(),&mut objects)?;}
+        // An armed T6031 may stretch the firmware's compute progress check (asahi.t6031_cl_progress_ms):
+        // boot t56 showed the halted first job completing 2.5 ms after a resume.
+        if let Some(ms) = crate::m3_params::t6031_cl_progress_ms() {
+            dev_info!(dev.as_ref(), "M3 G15C start: compute progress check interval {} ms (asahi.t6031_cl_progress_ms)\n", ms);
+            objects[GLOBALS].u32(0x984, ms)?;
+        }
         // Firmware ktrace is for explicit detailed diagnostics. Normal games
         // still drain error/events, but need not generate trace records for
         // every firmware operation on the command-processing core.

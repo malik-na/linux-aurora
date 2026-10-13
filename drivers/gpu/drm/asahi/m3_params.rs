@@ -823,6 +823,19 @@ pub(crate) fn t6031_idle_ts() -> bool {
         v => v != 0,
     }
 }
+/// `asahi.t6031_cl_progress_ms=N`: the firmware's compute progress-check interval (Globals +0x984,
+/// milliseconds; the qualified value is 250, and the firmware halts after two checks without
+/// progress) on an armed T6031. Unset keeps the qualified value.
+static T6031_CL_PROGRESS_MS: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_cl_progress_ms", T6031_CL_PROGRESS_MS, parse_t6031_number);
+
+/// The compute progress-check interval override (`asahi.t6031_cl_progress_ms`), if given.
+pub(crate) fn t6031_cl_progress_ms() -> Option<u32> {
+    match T6031_CL_PROGRESS_MS.load(Ordering::Relaxed) {
+        T6031_UNSET => None,
+        v => u32::try_from(v).ok(),
+    }
+}
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.
 static T6031_MTR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_mtr", T6031_MTR, parse_t6031_mtr);
