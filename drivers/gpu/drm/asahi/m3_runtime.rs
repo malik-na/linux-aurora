@@ -174,6 +174,23 @@ impl Inner {
     }
 }
 impl Inner {
+    /// Queue a firmware-control flush for `pages` pages at `addr`, ring the 0x84 doorbell and
+    /// wait (up to 2 s) for the firmware to consume it.
+    fn send_fwctl(&mut self, addr: u64, pages: u16) -> Result {
+        let next=self.config.fwctl_flush(addr,pages)?;
+        dev_info!(self.drm.as_ref(),"M3 G15C: firmware-control flush of {} page(s) at {:#x} queued (asahi.t6031_pool_flush=1)\n",pages,addr);
+        Pin::new(&mut self.transport).send_message(0x21,0x0084000000000000)?;
+        let start=Instant::<Monotonic>::now();
+        loop {
+            self.config.drain(&self.drm)?;
+            if self.config.fwctl_done(next)? { return Ok(()); }
+            if start.elapsed()>=Delta::from_secs(2) {
+                dev_err!(self.drm.as_ref(),"M3 G15C: firmware-control flush not consumed within 2 s\n");
+                return Err(ETIMEDOUT);
+            }
+            fsleep(Delta::from_millis(1));
+        }
+    }
     /// Fail every packet that was never published. Their fences signal with the error.
     fn fail_pending(&mut self, error: Error) {
         for (packet,_) in self.pending.drain_all() {packet.finish(Err(error));}
@@ -364,6 +381,15 @@ impl Inner {
                 crate::m3_submit::Command::Render{..}=>NativeJob::Render(crate::m3_render::Render::new(&self.drm,&self.uat,&packet.vm,self.config.stats_region().map_err(early)?,self.device.soc().clusters,self.device.soc().registers).map_err(early)?),
             };
             self.jobs.push(job,GFP_KERNEL).map_err(|_|early(ENOMEM))?;
+            // asahi.t6031_pool_flush=1: before a new compute graph's first job, ask the firmware to
+            // flush its view of the pool manager record, as the J516C's own driver does for each
+            // pool manager before that pool's first job (firmware-control ring, doorbell 0x84).
+            if let NativeJob::Compute(j)=&self.jobs[index] {
+                if crate::t6031_start::is_t6031(self.device.soc()) && crate::m3_params::t6031_pool_flush() {
+                    let pool=j.pool_va();
+                    self.send_fwctl(pool,1).map_err(early)?;
+                }
+            }
         } else {
             match (&mut self.jobs[index],control) {
                 (NativeJob::Render(_),crate::m3_submit::Command::Render{..})=>{},

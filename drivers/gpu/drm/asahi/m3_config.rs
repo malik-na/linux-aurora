@@ -374,6 +374,30 @@ impl Config {
             halt_count,halted,resume,info[0],info[1],packet,self.completed_events,events);
         Ok(())
     }
+    /// Queue a firmware-control ("MemDesc") entry asking the firmware to flush its view of `pages`
+    /// pages at `addr` (14.x layout: u64 addr, u32 0, u32 slot 0x40, u16 pages, u16 2, u32 pad; the
+    /// write index at state +0x10). The J516C's own driver sends one for each pool manager record
+    /// before the record's first job. Returns the index the firmware's read index must reach.
+    pub(crate) fn fwctl_flush(&mut self, addr: u64, pages: u16) -> Result<u32> {
+        let count = (self.objects[FW_CONTROL_RING].size() / 0x18) as u32;
+        let w = self.objects[FW_CONTROL_STATE].read_u32(0x10)?;
+        let r = self.objects[FW_CONTROL_STATE].read_u32(0)?;
+        if count == 0 || w >= count || r != w { return Err(EBUSY); }
+        let mut bytes = [0u8; 0x18];
+        bytes[..8].copy_from_slice(&addr.to_le_bytes());
+        bytes[0xc..0x10].copy_from_slice(&0x40u32.to_le_bytes());
+        bytes[0x10..0x12].copy_from_slice(&pages.to_le_bytes());
+        bytes[0x12..0x14].copy_from_slice(&2u16.to_le_bytes());
+        self.objects[FW_CONTROL_RING].write(w as usize * 0x18, &bytes)?;
+        agx_memory::publish();
+        let next = (w + 1) % count;
+        self.objects[FW_CONTROL_STATE].u32(0x10, next)?;
+        agx_memory::publish();
+        Ok(next)
+    }
+    pub(crate) fn fwctl_done(&mut self, next: u32) -> Result<bool> {
+        Ok(self.objects[FW_CONTROL_STATE].read_u32(0)? == next)
+    }
     pub(crate) fn control(&mut self, opcode: u32) -> Result<u32> {
         if !matches!(opcode, 0x13 | 9 | 0x1c) { return Err(EINVAL); }
         let w = self.objects[storage::DEVICE_CONTROL*2].read_u32(0x20)?;

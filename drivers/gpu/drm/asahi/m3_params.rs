@@ -916,6 +916,20 @@ pub(crate) fn t6031_first_job_zero() -> bool {
         v => v != 0,
     }
 }
+/// `asahi.t6031_pool_flush=1`: before a new compute graph's first job on an armed T6031, queue a
+/// firmware-control flush of the pool manager record's page and ring the 0x84 doorbell, as the
+/// J516C's own driver does for each pool manager before that pool's first job (traced on this
+/// Mac); the qualified graph never writes that ring. Default 0.
+static T6031_POOL_FLUSH: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_pool_flush", T6031_POOL_FLUSH, parse_t6031_number);
+
+/// Whether the pool manager record is flushed through the firmware-control ring (`asahi.t6031_pool_flush`).
+pub(crate) fn t6031_pool_flush() -> bool {
+    match T6031_POOL_FLUSH.load(Ordering::Relaxed) {
+        T6031_UNSET => false,
+        v => v != 0,
+    }
+}
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.
 static T6031_MTR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_mtr", T6031_MTR, parse_t6031_mtr);

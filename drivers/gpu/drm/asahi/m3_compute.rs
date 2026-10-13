@@ -366,6 +366,8 @@ impl Compute {
     }
 
     pub(crate) fn queue(&self)->u64 {self.objects[storage::QUEUE].va()}
+    /// The pool manager record's firmware address (one page).
+    pub(crate) fn pool_va(&self)->u64 {self.objects[storage::POOL].va()}
     pub(crate) fn complete(&mut self)->Result<bool> {
         Ok(self.objects[storage::STAMP].read_u32(0)?==self.stamp()
             && self.objects[storage::FW_STAMP].read_u32(0)?==self.stamp()
