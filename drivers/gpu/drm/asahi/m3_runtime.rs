@@ -852,6 +852,11 @@ impl Runtime {
         } else {
             dev_info!(pdev.as_ref(), "M3 G15C start: idle power-off request (device control 0x9) left out (asahi.t6031_idle_off=0)\n");
         }
+        // An armed T6031 may add the idle-timestamp update its own driver sends after INIT.
+        if crate::t6031_start::is_t6031(self.inner.device.soc()) && crate::m3_params::t6031_idle_ts() {
+            dev_info!(pdev.as_ref(), "M3 G15C start: idle-timestamp update (device control 0x1c) sent after INIT (asahi.t6031_idle_ts=1)\n");
+            self.send_control(0x1c)?;
+        }
         self.inner.boot_step = BootStep::AwaitReady;
         let start = Instant::<Monotonic>::now();
         while !self.inner.config.ready()? {

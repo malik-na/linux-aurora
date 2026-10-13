@@ -360,7 +360,7 @@ impl Config {
         Ok(())
     }
     pub(crate) fn control(&mut self, opcode: u32) -> Result<u32> {
-        if !matches!(opcode, 0x13 | 9) { return Err(EINVAL); }
+        if !matches!(opcode, 0x13 | 9 | 0x1c) { return Err(EINVAL); }
         let w = self.objects[storage::DEVICE_CONTROL*2].read_u32(0x20)?;
         let r = self.objects[storage::DEVICE_CONTROL*2].read_u32(0)?;
         if w >= 256 || r != w { return Err(EBUSY); }

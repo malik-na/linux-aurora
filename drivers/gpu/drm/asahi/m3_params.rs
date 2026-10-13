@@ -807,6 +807,19 @@ pub(crate) fn t6031_ctx_areas() -> bool {
         v => v != 0,
     }
 }
+/// `asahi.t6031_idle_ts=1`: send the idle-timestamp update (device control 0x1c, no payload) after
+/// INIT on an armed T6031. The J516C's own driver sends 0x13 and then 0x1c (the G13 UpdateIdleTS
+/// at this firmware's numbering) and never 0x9. Default 0.
+static T6031_IDLE_TS: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_idle_ts", T6031_IDLE_TS, parse_t6031_number);
+
+/// Whether an armed T6031 sends the idle-timestamp update after INIT (`asahi.t6031_idle_ts`).
+pub(crate) fn t6031_idle_ts() -> bool {
+    match T6031_IDLE_TS.load(Ordering::Relaxed) {
+        T6031_UNSET => false,
+        v => v != 0,
+    }
+}
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.
 static T6031_MTR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_mtr", T6031_MTR, parse_t6031_mtr);
