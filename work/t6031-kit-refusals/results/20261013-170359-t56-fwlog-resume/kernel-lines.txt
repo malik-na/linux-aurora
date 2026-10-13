@@ -1,0 +1,10 @@
+[   53.005510] M3 compute graph: context=1 queue=… pool=…
+[   53.516726] Asahi: sealed 597963-byte firmware fault snapshot offered to devcoredump (M3FWD001)
+[   53.516822] M3 compute: stamps=0xc1000000/0x0 done=0 read=1
+[   53.517189] M3 firmware recovery state: halt_count=1 halted=1 resume=0 info=0x27/0xc1000100 
+[   53.517197] M3: resume-after-fault: the firmware halted (halt_count=1 halted=1); clearing halted and setting resume
+[   53.517202] M3: resume-after-fault: +1us: halt_count=1 halted=0 resume=1 engines=1 job_complete=false event_messages=9 crashed=false
+[   53.518475] M3: resume-after-fault: +1269us: halt_count=1 halted=0 resume=0 engines=0 job_complete=false event_messages=9 crashed=false
+[   53.519748] M3: resume-after-fault: +2537us: halt_count=1 halted=0 resume=0 engines=0 job_complete=true event_messages=10 crashed=false
+[   54.163609] M3 compute: stamps=0xc1000100/0xc1000100 done=1 read=1
+[   54.163679] M3 firmware recovery state: halt_count=1 halted=0 resume=0 info=0x27/0xc1000100 
