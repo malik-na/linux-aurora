@@ -259,6 +259,12 @@ pub(crate) struct Contents {
     pub(crate) read_only_slots: u32,
     /// The HwData object's placement and mapping (`Soc::hwdata_object`).
     pub(crate) hwdata_object: Option<crate::m3_soc::HwDataObject>,
+    /// The hardware record's size: the allocation table's, or the J516C's longer record on an
+    /// armed T6031 (`asahi.t6031_hw_tail=j516c`).
+    pub(crate) hardware_size: usize,
+    /// The fourth hardware view's offset into that record (`init::HARDWARE_VIEW_4`, or the
+    /// J516C record's).
+    pub(crate) hardware_view_4: u64,
 }
 
 fn read_u32(bytes: &[u8], offset: usize) -> Result<u32> {
@@ -299,7 +305,14 @@ impl Contents {
             },
         };
         storage::validate_iomaps(iomaps).map_err(|_| EINVAL)?;
-        let images = build_images(dev, firmware, soc, experiment, t6031, iomaps)?;
+        let (hardware_size, hardware_view_4) = match t6031 {
+            Some(e) => e.hardware_layout(),
+            None => (
+                storage::allocation(HWDATA).map_err(|_| EINVAL)?.size,
+                init::HARDWARE_VIEW_4,
+            ),
+        };
+        let images = build_images(dev, firmware, soc, experiment, t6031, iomaps, hardware_size)?;
         let hwdata = images.get(HWDATA).and_then(|i| i.as_deref()).ok_or(EINVAL)?;
         let pstates = PstatePolicy::new(
             dev,
@@ -368,7 +381,16 @@ impl Contents {
             Some(e) => e.hwdata_object(),
             None => soc.hwdata_object,
         };
-        Ok(Contents { images, pstates, iomaps, table, read_only_slots, hwdata_object })
+        Ok(Contents {
+            images,
+            pstates,
+            iomaps,
+            table,
+            read_only_slots,
+            hwdata_object,
+            hardware_size,
+            hardware_view_4,
+        })
     }
 
     /// Check the contents before they are uploaded.
@@ -402,7 +424,7 @@ fn allocation_region(index: usize, delta: u64) -> Result<init::Region> {
 
 /// The records the runtime constructs, encoded for its fixed allocation table moved by `delta`.
 pub(crate) fn allocation_records(delta: u64) -> Result<Records> {
-    Records::encode(|index| allocation_region(index, delta))
+    Records::encode(|index| allocation_region(index, delta), init::HARDWARE_VIEW_4)
 }
 
 /// The version word of the constructed InitData root.
@@ -781,6 +803,7 @@ fn build_images(
     experiment: Option<&Experiment>,
     t6031: Option<&crate::t6031_start::Experiment>,
     iomaps: &[storage::IoMap],
+    hardware_size: usize,
 ) -> Result<KVec<Option<KVVec<u8>>>> {
     check_layout().inspect_err(|_| {
         dev_err!(dev, "M3: the constructed InitData records do not match the G15 InitData structures\n")
@@ -901,8 +924,11 @@ fn build_images(
     write(&mut rt, offset_of!(RuntimePointers, cswitch_hist_ctl), &[0xff])?;
     images[RUNTIME_POINTERS] = Some(rt);
 
-    // HwData: HwDataB, then HwDataA.
-    let mut hwdata = zeroed(HWDATA)?;
+    // HwData: HwDataB, then HwDataA (and, in the J516C record, what follows HwDataA).
+    if hardware_size < storage::allocation(HWDATA).map_err(|_| EINVAL)?.size {
+        return Err(EINVAL);
+    }
+    let mut hwdata = KVVec::from_elem(0u8, hardware_size, GFP_KERNEL)?;
     write(&mut hwdata, 0, initdata::raw_bytes(&*c.hwdata_b))?;
     // The T8122 start experiment's unit masks (`asahi.t8122_unit_mask_a`/`_b`).
     if let Some(e) = experiment {
@@ -987,6 +1013,12 @@ fn build_images(
         }
     }
     fill_io_mappings(dev, cfg, experiment, t6031, io_mappings, iomaps, &mut hwdata)?;
+    // The J516C record's words past the G15S record's end (`asahi.t6031_hw_tail=j516c`).
+    if let Some(e) = t6031 {
+        for &(at, value) in e.hardware_tail() {
+            write(&mut hwdata, at, &value.to_le_bytes())?;
+        }
+    }
     images[HWDATA] = Some(hwdata);
 
     let mut globals = zeroed(GLOBALS)?;

@@ -25,7 +25,9 @@ use crate::{
     m3_firmware::{self, image_info},
     m3_init_storage as storage,
     m3_soc::{HwDataObject, IoMapping, Soc, T6030_HWDATA_B, T8122_HWDATA_ADDRESS},
-    t6031_knobs::{self as knobs, IoTable, Mapping, Start, Values, GPU_CORE, READ_ONLY_SLOTS, SLOTS},
+    t6031_knobs::{
+        self as knobs, HwTail, IoTable, Mapping, Start, Values, GPU_CORE, READ_ONLY_SLOTS, SLOTS,
+    },
 };
 
 /// `asahi-t6031/status` phase.
@@ -191,6 +193,28 @@ impl Experiment {
         match self.0.values.io_table {
             IoTable::J516c => !mapping.4,
             IoTable::Knobs => READ_ONLY_SLOTS & (1u32 << mapping.0) != 0,
+        }
+    }
+
+    /// The hardware record's size and the offset of the runtime's fourth hardware view: the
+    /// G15S record's (the allocation table's size, view at +0x8900), or the J516C's longer
+    /// record (`asahi.t6031_hw_tail=j516c`).
+    pub(crate) fn hardware_layout(&self) -> (usize, u64) {
+        match self.0.values.hw_tail {
+            HwTail::None => (
+                storage::allocation(storage::HARDWARE_DATA).map(|a| a.size).unwrap_or(0),
+                crate::m3_init_layout::HARDWARE_VIEW_4,
+            ),
+            HwTail::J516c => (knobs::J516C_HW_SIZE, knobs::J516C_HW_VIEW),
+        }
+    }
+
+    /// The words the J516C record carries past the G15S record's end (offset, value); none for
+    /// the G15S record.
+    pub(crate) fn hardware_tail(&self) -> &'static [(usize, u32)] {
+        match self.0.values.hw_tail {
+            HwTail::None => &[],
+            HwTail::J516c => &knobs::J516C_HW_TAIL,
         }
     }
 

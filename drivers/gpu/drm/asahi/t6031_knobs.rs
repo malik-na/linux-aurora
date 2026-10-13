@@ -137,6 +137,10 @@ pub(crate) fn parse_io_table(text: &str) -> u64 {
     parse(text, &[("knobs", 0), ("j516c", 1)])
 }
 
+pub(crate) fn parse_hw_tail(text: &str) -> u64 {
+    parse(text, &[("none", 0), ("j516c", 1)])
+}
+
 pub(crate) fn parse_mtr(text: &str) -> u64 {
     parse(text, &[("t6030", 0), ("t8122", 1), ("adt", 2), ("none", 3)])
 }
@@ -212,6 +216,7 @@ pub(crate) struct Raw {
     pub(crate) ane: u64,
     pub(crate) io_drop: u64,
     pub(crate) io_table: u64,
+    pub(crate) hw_tail: u64,
     pub(crate) mtr: u64,
     pub(crate) mtr_fast_die: u64,
     pub(crate) mtr_alarm: u64,
@@ -251,6 +256,7 @@ impl Raw {
         ane: UNSET,
         io_drop: UNSET,
         io_table: UNSET,
+        hw_tail: UNSET,
         mtr: UNSET,
         mtr_fast_die: UNSET,
         mtr_alarm: UNSET,
@@ -289,6 +295,7 @@ impl Raw {
                 self.ane,
                 self.io_drop,
                 self.io_table,
+                self.hw_tail,
                 self.mtr,
                 self.mtr_fast_die,
                 self.mtr_alarm,
@@ -365,6 +372,15 @@ pub(crate) enum IoTable {
     J516c,
 }
 
+/// The hardware record a boot hands the firmware.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum HwTail {
+    /// The G15S record (the default): 0x8a04 bytes, the fourth hardware view at +0x8900.
+    None,
+    /// The J516C record ([`J516C_HW_TAIL`]): 0xb480 bytes, the fourth view at +0xb400.
+    J516c,
+}
+
 /// The MTR sensor masks: from a choice, or as given.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Mtr {
@@ -395,6 +411,7 @@ pub(crate) struct Values {
     pub(crate) ane: Option<u64>,
     pub(crate) io_drop: u32,
     pub(crate) io_table: IoTable,
+    pub(crate) hw_tail: HwTail,
     pub(crate) mtr: Mtr,
     pub(crate) unit_mask_a: u64,
     pub(crate) unit_mask_b: u32,
@@ -522,6 +539,11 @@ pub(crate) fn resolve(raw: &Raw) -> Result<Values, Refusal> {
         Some(1) => IoTable::J516c,
         _ => return Err(refuse("t6031_io_table", "knobs or j516c")),
     };
+    let hw_tail = match given(raw.hw_tail, 0) {
+        Some(0) => HwTail::None,
+        Some(1) => HwTail::J516c,
+        _ => return Err(refuse("t6031_hw_tail", "none or j516c")),
+    };
     let mtr_choice = match given(raw.mtr, 0) {
         Some(0) => Mtr::Masks(MTR_T6030.0, MTR_T6030.1),
         Some(1) => Mtr::Masks(MTR_T8122.0, MTR_T8122.1),
@@ -603,6 +625,7 @@ pub(crate) fn resolve(raw: &Raw) -> Result<Values, Refusal> {
         ane,
         io_drop,
         io_table,
+        hw_tail,
         mtr,
         unit_mask_a,
         unit_mask_b,
@@ -721,6 +744,38 @@ pub(crate) const J516C_TRACED: [Mapping; 17] = [
     (26, 0x2_9040_0000, 0x8000, 0x8000, false),
     (28, 0x2_a4dc_0000, 0x2_4000, 0x2_4000, false),
     (29, SGX + CLOCK_GEN_E1C, 0x4000, 0x4000, false),
+];
+
+/// The size of the J516C hardware record (`t6031_hw_tail=j516c`), and the offset of the fourth
+/// hardware view the runtime pointers carry. The J516C firmware is given a record 0x2a7c bytes
+/// longer than the G15S one, its HwDataA ending about 0x6e60 bytes in, the view after it at
+/// +0xb400 and the next object at +0xb480 (2026-10-13).
+pub(crate) const J516C_HW_SIZE: usize = 0xb480;
+pub(crate) const J516C_HW_VIEW: u64 = 0xb400;
+
+/// The words past the G15S record's end (+0x8a04) that a J516C's own 14.8.9 firmware is given
+/// before it runs (2026-10-13; `t6031_hw_tail=j516c`): hardware record offset, value. They lie
+/// in the part of HwDataA the G15S record does not have. +0xb1d8 holds the board's
+/// `aon-ptd` `ptd_data_table` entries for the six GPU temperature sensors (g0TR..g3TR, r0TR,
+/// f0TR; 12 bytes each, as the ADT gives them), +0xb25c the same four g sensors' keys with
+/// their mask at +0xb27c, then r0TR and f0TR with a count of one each. The rest are as given.
+pub(crate) const J516C_HW_TAIL: [(usize, u32); 43] = [
+    (0xaa3c, 0x40a0_0000),
+    (0xb1d8, 0x6730_5452), (0xb1dc, 0x00ab_0001), (0xb1e0, 0x0000_1401),
+    (0xb1e4, 0x6731_5452), (0xb1e8, 0x008d_0001), (0xb1ec, 0x0000_1401),
+    (0xb1f0, 0x6732_5452), (0xb1f4, 0x008b_0001), (0xb1f8, 0x0000_1401),
+    (0xb1fc, 0x6733_5452), (0xb200, 0x00ad_0001), (0xb204, 0x0000_1401),
+    (0xb208, 0x7230_5452), (0xb20c, 0x00eb_0001), (0xb210, 0x0000_1401),
+    (0xb214, 0x6630_5452), (0xb218, 0x00cb_0001), (0xb21c, 0x0000_1601),
+    (0xb25c, 0x6730_5452), (0xb260, 0x6731_5452), (0xb264, 0x6732_5452), (0xb268, 0x6733_5452),
+    (0xb27c, 0x0000_000f),
+    (0xb284, 0x7230_5452), (0xb28c, 0x0000_0001),
+    (0xb294, 0x6630_5452), (0xb298, 0x0000_0001),
+    (0xb2b4, 0x468d_58f8),
+    (0xb300, 0x0000_0001), (0xb304, 0x0000_0001),
+    (0xb30c, 0x44ba_8000), (0xb310, 0x44b7_8000), (0xb314, 0x44b7_c000), (0xb318, 0x44bc_0000),
+    (0xb34c, 0x4248_0000), (0xb350, 0x4244_0000), (0xb354, 0x4248_0000), (0xb358, 0x4248_0000),
+    (0xb36c, 0x4398_8000), (0xb374, 0x4342_0000), (0xb37c, 0x4398_8000), (0xb384, 0x4342_0000),
 ];
 
 /// The IO mappings of one boot, in slot order, and how many there are.
@@ -1072,6 +1127,21 @@ mod tests {
         }))
         .unwrap());
         assert_eq!((n2, &m2[..n2]), (n, &m[..n]));
+    }
+
+    #[test]
+    fn j516c_hw_tail_lies_past_the_g15s_record_and_before_the_view() {
+        assert_eq!(resolve(&with(|_| {})).unwrap().hw_tail, HwTail::None);
+        assert_eq!(resolve(&with(|r| r.hw_tail = 2)).unwrap_err().name, "t6031_hw_tail");
+        let v = resolve(&with(|r| r.hw_tail = parse_hw_tail("j516c"))).unwrap();
+        assert_eq!(v.hw_tail, HwTail::J516c);
+        let mut last = 0;
+        for (at, value) in J516C_HW_TAIL {
+            assert!(at >= 0x8a04 && at % 4 == 0 && at > last && value != 0, "+{:#x}", at);
+            assert!(at + 4 <= J516C_HW_VIEW as usize, "+{:#x}", at);
+            last = at;
+        }
+        assert!(J516C_HW_VIEW as usize + 0x80 <= J516C_HW_SIZE);
     }
 
     #[test]

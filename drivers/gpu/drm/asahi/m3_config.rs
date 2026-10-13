@@ -20,7 +20,9 @@ pub(crate) struct Records {
     pub(crate) control: KVec<u8>,
 }
 impl Records {
-    pub(crate) fn encode(region: impl Fn(usize) -> Result<init::Region>) -> Result<Self> {
+    /// `hardware_view_4` is the fourth hardware view's offset into the hardware record
+    /// (`init::HARDWARE_VIEW_4` unless an armed T6031 uses the J516C record).
+    pub(crate) fn encode(region: impl Fn(usize) -> Result<init::Region>, hardware_view_4: u64) -> Result<Self> {
         let root = init::Root { region_a: region(REGION_A)?, runtime: region(RUNTIME_POINTERS)?,
             globals: region(GLOBALS)?, new_a: region(RUNTIME_FLAGS)?,
             control: region(CONTROL_REGION)?, power: region(GLOBALS_POWER)? };
@@ -31,7 +33,7 @@ impl Records {
         let runtime = init::RuntimePointers { hardware: region(HARDWARE_DATA)?,
             unknown_pair: region(UNKNOWN_PAIR)?, fwlog_payload: region(FWLOG_PAYLOAD)?,
             unknown_c0: region(UNKNOWN_C0)?, unknown_c1: region(UNKNOWN_C1)?,
-            unknown_c3: region(UNKNOWN_C3)?, channels };
+            unknown_c3: region(UNKNOWN_C3)?, channels, hardware_view_4 };
         let control = init::ControlRegion { channel: init::Channel {
             state: region(FW_CONTROL_STATE)?, ring: region(FW_CONTROL_RING)? } };
         let mut root_bytes = [0; init::ROOT_SIZE];
@@ -103,6 +105,8 @@ impl Config {
         let mut iomaps = KVec::new();
         for index in 0..storage::COUNT {
             let mut a=storage::allocation(index).map_err(|_|EINVAL)?;
+            // An armed T6031 may give the firmware the J516C's longer hardware record.
+            if index==HARDWARE_DATA {a.size=contents.hardware_size;}
             let image=contents.initial(index,&a)?;
             if a.initial!=storage::Initial::Zero && image.len()!=a.size {return Err(EINVAL);}
             // The SoC may place the HwData object elsewhere and have it mapped cacheable
@@ -129,7 +133,7 @@ impl Config {
         // This field is a physical address owned by the reserved GPU region,
         // unlike the firmware virtual references in the IOMapping records.
         objects[HARDWARE_DATA].u64(storage::GPU_REGION_PHYSICAL,firmware.resources.regions[0].base)?;
-        Self::initialize_records(&mut objects)?;
+        Self::initialize_records(&mut objects,contents.hardware_view_4)?;
         // The root record carries the G15 14.8.3 InitData version, which is every T6030
         // image's. Only the T8122 start experiment gives the firmware another one
         // (`asahi.t8122_initdata_version`).
@@ -186,10 +190,10 @@ impl Config {
             #[cfg(CONFIG_DEV_COREDUMP)] fault_reserve,
             pstates: crate::m3_adt_config::PstateWatch::new(contents.pstates), thermal })
     }
-    fn initialize_records(objects: &mut [Buffer]) -> Result {
+    fn initialize_records(objects: &mut [Buffer], hardware_view_4: u64) -> Result {
         let records = Records::encode(|index: usize| {
             init::Region::new(objects[index].va(), objects[index].size()).map_err(|_| EINVAL)
-        })?;
+        }, hardware_view_4)?;
         objects[storage::ROOT].write(0, &records.root)?;
         objects[RUNTIME_POINTERS].write(0, &records.runtime)?;
         objects[CONTROL_REGION].write(0, &records.control)

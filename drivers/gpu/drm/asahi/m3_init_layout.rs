@@ -3,6 +3,8 @@
 pub(crate) const ROOT_SIZE: usize = 0xc0;
 pub(crate) const RUNTIME_SIZE: usize = 0x4b3;
 pub(crate) const CONTROL_SIZE: usize = 0xc3d0;
+/// Offset into the hardware record of the runtime's fourth hardware view (G15S record).
+pub(crate) const HARDWARE_VIEW_4: u64 = 0x8900;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Error { Address, Bounds, Size }
 
@@ -130,6 +132,9 @@ pub(crate) struct RuntimePointers {
     pub(crate) unknown_c3: Region,
     /// Twelve TA/3D/CL host channels, DevCtrl, then Event/FWLog/KTrace/Stats.
     pub(crate) channels: [Channel; 17],
+    /// Offset of the fourth hardware view into the hardware record ([`HARDWARE_VIEW_4`] for the
+    /// G15S record; the J516C record keeps it after its longer HwDataA).
+    pub(crate) hardware_view_4: u64,
 }
 impl RuntimePointers {
     pub(crate) fn encode(&self, out: &mut [u8]) -> Result<(), Error> {
@@ -160,7 +165,7 @@ impl RuntimePointers {
         }
         pointer(bytes, runtime::FWLOG_PAYLOAD, fwlog_payload);
         // These are views of the retained hardware data, not new allocations.
-        for (offset, delta) in runtime::HARDWARE_B_VIEWS.iter().zip([0x1880u64, 0x24c0, 0x3740, 0x8900]) {
+        for (offset, delta) in runtime::HARDWARE_B_VIEWS.iter().zip([0x1880u64, 0x24c0, 0x3740, self.hardware_view_4]) {
             pointer(bytes, *offset, hardware + delta);
         }
         pointer(bytes, runtime::UNKNOWN_C0, c0);
