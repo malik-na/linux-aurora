@@ -780,6 +780,20 @@ m3_param!("t6031_idle_off", T6031_IDLE_OFF, parse_t6031_number);
 pub(crate) fn t6031_idle_off() -> bool {
     T6031_IDLE_OFF.load(Ordering::Relaxed) != 0
 }
+
+/// `asahi.t6031_compute_regs=MASK`: which of the G15C compute register values the T6031 command
+/// carries (bit 0 the preemption tail pointers, 1 UMA PTC 0xa599, 2 DUPM 0xd411, 3 0x1a0e9 = 0);
+/// a bit clear keeps the qualified T6030 value. Default 0xf (all four). For bisecting one build.
+static T6031_COMPUTE_REGS: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_compute_regs", T6031_COMPUTE_REGS, parse_t6031_number);
+
+/// The G15C compute register mask (`asahi.t6031_compute_regs`), all four when not given.
+pub(crate) fn t6031_compute_regs() -> u64 {
+    match T6031_COMPUTE_REGS.load(Ordering::Relaxed) {
+        T6031_UNSET => 0xf,
+        v => v & 0xf,
+    }
+}
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.
 static T6031_MTR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_mtr", T6031_MTR, parse_t6031_mtr);

@@ -72,12 +72,14 @@ impl Command {
         if out.len() < SIZE { return Err(Error::Size); }
         if self.context >= 64 || self.cdm_last.get() < self.cdm.get() { return Err(Error::Address); }
         let g15c = self.register_set == RegisterSet::G15C;
-        // Tail pointers, UMA PTC, DUPM and 0x1a0e9: the qualified two-cluster values, or G15C's.
-        let (tail, ptc, dupm, r1a0e9): (u64, u64, u64, u64) = if g15c {
-            (0x2980, 0x6000400020, 0x3c000000140, 0)
-        } else {
-            (0x1480, 0x13200400020, 0x200000001, 8)
-        };
+        // Tail pointers, UMA PTC, DUPM and 0x1a0e9: the qualified two-cluster values, or G15C's,
+        // each of the four behind its own bit of asahi.t6031_compute_regs (default all four) so
+        // one build bisects them.
+        let mask = if g15c { crate::m3_params::t6031_compute_regs() } else { 0 };
+        let tail: u64 = if mask & 1 != 0 { 0x2980 } else { 0x1480 };
+        let ptc: u64 = if mask & 2 != 0 { 0x6000400020 } else { 0x13200400020 };
+        let dupm: u64 = if mask & 4 != 0 { 0x3c000000140 } else { 0x200000001 };
+        let r1a0e9: u64 = if mask & 8 != 0 { 0 } else { 8 };
         if self.preemption.size() < (tail + 0x20) as usize || self.microsequence_size == 0 || self.microsequence_size > 4096 {
             return Err(Error::Size);
         }
