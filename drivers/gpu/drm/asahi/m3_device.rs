@@ -183,8 +183,8 @@ impl Device {
         // One fault bank (selected through 0xd800) per GPU cluster: banks 0 and 1 on the
         // two-cluster T6030, bank 0 alone on the single-cluster T8122. Never select a bank past
         // the SoC's clusters.
-        for bank in 0..u64::from(self.soc.clusters) {
-            sgx.try_write64(bank,0xd800)?;fault|=sgx.try_read64(0xd8c0)?;
+        for cluster in 0..self.soc.clusters {
+            sgx.try_write64(fault_instance_selector(cluster),0xd800)?;fault|=sgx.try_read64(0xd8c0)?;
         }
         sgx.try_write64(selector,0xd800)?;
         if fault!=0 {return Err(EIO);} Ok(())
@@ -311,5 +311,25 @@ impl Drop for Device {
         if let Err(error) = to_result(unsafe { bindings::apple_pmp_set_device_power(0x0f, 5, 0) }) {
             dev_err!(self.dev.as_ref(), "M3 G15G: PMP GPU power release failed: {:?}\n", error);
         }
+    }
+}
+
+/// The SGX+0xd800 value that selects fault instance `s`: `((s >> 2) & 0xf) | ((s & 3) << 18)`
+/// (`regs.rs`). Clusters 1..3 are instances 1..3, so their selector carries the cluster in bits
+/// 18..19, not in the low bits; the public G15G/G15S fault reports read banks 0, 1 and 0x100 of
+/// this encoding.
+pub(crate) fn fault_instance_selector(s: u32) -> u64 {
+    u64::from((s >> 2) & 0xf) | (u64::from(s & 3) << 18)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn fault_instance_selector_puts_the_cluster_in_bits_18_and_19() {
+        assert_eq!(super::fault_instance_selector(0), 0);
+        assert_eq!(super::fault_instance_selector(1), 0x40000);
+        assert_eq!(super::fault_instance_selector(2), 0x80000);
+        assert_eq!(super::fault_instance_selector(3), 0xc0000);
+        assert_eq!(super::fault_instance_selector(4), 1);
     }
 }
