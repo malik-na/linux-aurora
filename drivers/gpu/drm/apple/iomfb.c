@@ -34,6 +34,7 @@
 #include "iomfb_internal.h"
 #include "parser.h"
 #include "trace.h"
+#include "panel-edid.h"
 
 static int dcp_tx_offset(enum dcp_context_id id)
 {
@@ -702,7 +703,9 @@ int dcp_get_modes(struct drm_connector *connector)
 
 		/* The RPC can sleep while a disconnect or route change clears EDID. */
 		if (apple_connector_edid_begin(apple_connector, pdev, &generation)) {
-			edid = dcpavserv_copy_edid(dcp);
+			/* A panel has no EDID from the firmware; it gets a base block. */
+			edid = dcp_has_panel(dcp) ? dcp_panel_edid(dcp) :
+						    dcpavserv_copy_edid(dcp);
 			if (IS_ERR_OR_NULL(edid))
 				dev_info(dcp->dev, "copy_edid failed: %pe\n", edid);
 			else
@@ -718,6 +721,20 @@ int dcp_get_modes(struct drm_connector *connector)
 		}
 	} else {
 		drm_edid_connector_update(connector, NULL);
+	}
+
+	/*
+	 * The panel's base EDID carries its size in whole centimetres, and an
+	 * EDID update resets display_info either way. Put back the millimetres
+	 * the modes carry: the size DCP reported or the panel node's.
+	 */
+	if (count && dcp_has_panel(dcp)) {
+		mutex_lock(&dcp->modes_lock);
+		if (dcp->nr_modes) {
+			connector->display_info.width_mm = dcp->modes[0].mode.width_mm;
+			connector->display_info.height_mm = dcp->modes[0].mode.height_mm;
+		}
+		mutex_unlock(&dcp->modes_lock);
 	}
 
 	/*
