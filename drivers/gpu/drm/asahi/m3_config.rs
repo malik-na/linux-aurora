@@ -416,6 +416,13 @@ impl Config {
                             dev_info!(dev.as_ref(),"M3 fwlog payload {} {:02x?}\n",channel,payload);
                         }
                     }
+                    // With the recovery-resume knob on, the firmware's stats entries (power on/off,
+                    // power state, utilization) are logged raw as well: the only per-cluster power
+                    // signal the firmware gives the host.
+                    if state == storage::STATS*2 && crate::m3_params::t6031_resume_halt() {
+                        let mut raw=[0u8;0x40];self.objects[ring].read(r*size,&mut raw)?;
+                        dev_info!(dev.as_ref(), "M3 firmware stats {} bytes={:02x?}\n", self.objects[ring].read_u32(r*size)?, &raw[4..]);
+                    }
                     if state == storage::EVENT*2 {
                         let kind = self.objects[ring].read_u32(r*size)?;
                         let resume = crate::m3_params::t6031_resume_halt();
