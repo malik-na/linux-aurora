@@ -902,6 +902,20 @@ pub(crate) fn t6031_pool_flag58() -> bool {
         v => v != 0,
     }
 }
+/// `asahi.t6031_first_job_zero=1`: the T6031 compute command carries zero for the four preemption
+/// tail pointers (0x1a4d0..0x1a4e8) and for 0x12091/0x101d9, as the J516C's own driver does on a
+/// new queue's first job (traced on this Mac); the qualified graph gives saved-state pointers and
+/// 0x1c from the start. Default 0.
+static T6031_FIRST_JOB_ZERO: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_first_job_zero", T6031_FIRST_JOB_ZERO, parse_t6031_number);
+
+/// Whether the compute command starts without saved-state pointers (`asahi.t6031_first_job_zero`).
+pub(crate) fn t6031_first_job_zero() -> bool {
+    match T6031_FIRST_JOB_ZERO.load(Ordering::Relaxed) {
+        T6031_UNSET => false,
+        v => v != 0,
+    }
+}
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.
 static T6031_MTR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_mtr", T6031_MTR, parse_t6031_mtr);

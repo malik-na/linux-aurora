@@ -80,6 +80,10 @@ impl Command {
         let ptc: u64 = if mask & 2 != 0 { 0x6000400020 } else { 0x13200400020 };
         let dupm: u64 = if mask & 4 != 0 { 0x3c000000140 } else { 0x200000001 };
         let r1a0e9: u64 = if mask & 8 != 0 { 0 } else { 8 };
+        // The J516C's own first job on a new queue carries zero for the four preemption tail
+        // pointers and for 0x12091/0x101d9 (asahi.t6031_first_job_zero); ours gives the saved-state
+        // pointers and 0x1c from the start, as the qualified graph does.
+        let fresh = g15c && crate::m3_params::t6031_first_job_zero();
         if self.preemption.size() < (tail + 0x20) as usize || self.microsequence_size == 0 || self.microsequence_size > 4096 {
             return Err(Error::Size);
         }
@@ -88,10 +92,10 @@ impl Command {
         let preemption = self.preemption.base();
         let values = [
             (0x1a510, preemption), (0x1a420, self.cdm.get()),
-            (0x1a4d0, preemption+tail), (0x1a4d8, preemption+tail+8),
-            (0x1a4e0, preemption+tail+0x10), (0x1a4e8, preemption+tail+0x18),
+            (0x1a4d0, if fresh { 0 } else { preemption+tail }), (0x1a4d8, if fresh { 0 } else { preemption+tail+8 }),
+            (0x1a4e0, if fresh { 0 } else { preemption+tail+0x10 }), (0x1a4e8, if fresh { 0 } else { preemption+tail+0x18 }),
             (0x1a440, QUALIFIED_COMPUTE_CONTROL), (0x1a458, 0x10c08860),
-            (0x12091, 0x1c), (0x101d9, 0x1c),
+            (0x12091, if fresh { 0 } else { 0x1c }), (0x101d9, if fresh { 0 } else { 0x1c }),
             (0x1a089, 0), (0x1a091, 0), (0x1a059, 0), (0x1a061, 0),
             (0x1a0b9, 0), (0x1a0c1, 0), (0x101d1, 0), (0xd479, 0),
             (0x1a0e9, r1a0e9), (0x107a1, 0xff0000), (0xa599, ptc), (0xd411, dupm),
