@@ -7,7 +7,13 @@ Scripts used from the Air (m1n1 proxyclient, `~/m1n1-venv`). Paths inside them a
 - `run-shell.sh [BOOT_ARGS]` — one guest boot, no tracer, inside a tmux session `hv`;
   `HV_SCRIPT=<file>` adds a `-m` script. Break in with `tmux send-keys -t hv C-c`, then
   `exec(open('.../dump_initdata_shell.py').read())` reads the InitData through the live UAT.
-- `dump_initdata_shell.py` — the reader for that shell (page map of UAT context 0, root, regions).
+- `dump_initdata_shell.py` — the reader for that shell (page map of UAT context 0, root, regions);
+  `dump_all_pages.py` then copies every RAM page of context 0 (the login-time snapshot, 13:04).
+- `trace_agx_snap.py` — the MSG_INIT-time snapshot: the same copy taken on the driver's init message,
+  before the firmware touches the InitData (run with `HV_EXTRA="-C 4"`: one guest CPU, otherwise the
+  traced guest stalls at secondary bring-up; the no-debug boot args reset the Mac 15 s in).
+- `initdata_report.py DIR [PREFIX]` — pointer-field report of a snapshot (root, runtime, status,
+  debug, power, hardware, globals), the basis of the comparison on ticket #22.
 - `hide_kis.py`, `hide_hpm5.py`, `sink_usb0.py`, `block_smc_keys.py`, `trace_port_actors.py` —
   the 2026-10-13 experiments on why the proxy port turns into Apple's "Debug USB" gadget a few
   seconds after the guest starts its drivers (all negative; see the ticket).
