@@ -676,6 +676,10 @@ fn parse_t6031_hw_tail(text: &str) -> Option<u64> {
     Some(crate::t6031_knobs::parse_hw_tail(text))
 }
 
+fn parse_t6031_overlay(text: &str) -> Option<u64> {
+    Some(crate::t6031_knobs::parse_overlay(text))
+}
+
 fn parse_t6031_mtr(text: &str) -> Option<u64> {
     Some(crate::t6031_knobs::parse_mtr(text))
 }
@@ -762,6 +766,9 @@ m3_param!("t6031_io_table", T6031_IO_TABLE, parse_t6031_io_table);
 /// `asahi.t6031_hw_tail=none|j516c`: the G15S hardware record, or the J516C's longer one.
 static T6031_HW_TAIL: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_hw_tail", T6031_HW_TAIL, parse_t6031_hw_tail);
+/// `asahi.t6031_overlay=none|j516c`: apply the builtin word overlay to the InitData images.
+static T6031_OVERLAY: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_overlay", T6031_OVERLAY, parse_t6031_overlay);
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.
 static T6031_MTR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_mtr", T6031_MTR, parse_t6031_mtr);
@@ -832,6 +839,7 @@ pub(crate) fn t6031_params() -> crate::t6031_knobs::Raw {
         io_drop: get(&T6031_IO_DROP),
         io_table: get(&T6031_IO_TABLE),
         hw_tail: get(&T6031_HW_TAIL),
+        overlay: get(&T6031_OVERLAY),
         mtr: get(&T6031_MTR),
         mtr_fast_die: get(&T6031_MTR_FAST_DIE),
         mtr_alarm: get(&T6031_MTR_ALARM),

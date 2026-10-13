@@ -209,6 +209,11 @@ impl Experiment {
         }
     }
 
+    /// Whether the builtin word overlay is applied to the images (`asahi.t6031_overlay=j516c`).
+    pub(crate) fn overlay(&self) -> bool {
+        self.0.values.overlay
+    }
+
     /// The words the J516C record carries past the G15S record's end (offset, value); none for
     /// the G15S record.
     pub(crate) fn hardware_tail(&self) -> &'static [(usize, u32)] {

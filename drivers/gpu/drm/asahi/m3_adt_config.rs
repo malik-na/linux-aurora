@@ -1068,7 +1068,52 @@ fn build_images(
         dyncfg.pwr.max_power_mw
     );
     log_tables(dev, &c.hwdata_b, c.tables.len);
+    if t6031.is_some_and(|e| e.overlay()) {
+        apply_overlay(dev, &mut images)?;
+    }
     Ok(images)
+}
+
+/// The builtin word overlay (`asahi.t6031_overlay=j516c`): `asahi/t6031-hwdata-overlay.bin`,
+/// built into the kernel with CONFIG_EXTRA_FIRMWARE, never in the tree. Format, little-endian:
+/// magic "T6031OVL", u32 version 1, u32 count, then count records of (u32 image, u32 offset,
+/// u32 value) with image 0 the hardware record, 1 globals, 2 the power block. The words are
+/// read from a J516C's own InitData before its firmware ran; pointer fields are excluded when
+/// the overlay is generated, so nothing the runtime owns is overwritten.
+fn apply_overlay(dev: &device::Device, images: &mut [Option<KVVec<u8>>]) -> Result {
+    let fw = kernel::firmware::Firmware::request(c_str!("asahi/t6031-hwdata-overlay.bin"), dev)?;
+    let data = fw.data();
+    if data.len() < 16 || &data[..8] != b"T6031OVL" || read_u32(data, 8)? != 1 {
+        dev_err!(dev, "M3 G15C start: the word overlay has an unknown header\n");
+        return Err(EINVAL);
+    }
+    let count = read_u32(data, 12)? as usize;
+    if data.len() < 16 + count * 12 {
+        dev_err!(dev, "M3 G15C start: the word overlay is truncated\n");
+        return Err(EINVAL);
+    }
+    let mut applied = [0u32; 3];
+    for i in 0..count {
+        let at = 16 + i * 12;
+        let (image, offset, value) = (read_u32(data, at)?, read_u32(data, at + 4)? as usize, read_u32(data, at + 8)?);
+        let owner = match image {
+            0 => HWDATA,
+            1 => GLOBALS,
+            2 => GLOBALS_POWER,
+            _ => return Err(EINVAL),
+        };
+        let bytes = images.get_mut(owner).and_then(|i| i.as_mut()).ok_or(EINVAL)?;
+        write(bytes, offset, &value.to_le_bytes())?;
+        applied[image as usize] += 1;
+    }
+    dev_info!(
+        dev,
+        "M3 G15C start: word overlay applied: {} hardware, {} globals, {} power words\n",
+        applied[0],
+        applied[1],
+        applied[2]
+    );
+    Ok(())
 }
 
 /// Log the published performance-state tables, one line per entry: the primary table (fastest

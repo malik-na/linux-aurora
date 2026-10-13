@@ -141,6 +141,10 @@ pub(crate) fn parse_hw_tail(text: &str) -> u64 {
     parse(text, &[("none", 0), ("j516c", 1)])
 }
 
+pub(crate) fn parse_overlay(text: &str) -> u64 {
+    parse(text, &[("none", 0), ("j516c", 1)])
+}
+
 pub(crate) fn parse_mtr(text: &str) -> u64 {
     parse(text, &[("t6030", 0), ("t8122", 1), ("adt", 2), ("none", 3)])
 }
@@ -217,6 +221,7 @@ pub(crate) struct Raw {
     pub(crate) io_drop: u64,
     pub(crate) io_table: u64,
     pub(crate) hw_tail: u64,
+    pub(crate) overlay: u64,
     pub(crate) mtr: u64,
     pub(crate) mtr_fast_die: u64,
     pub(crate) mtr_alarm: u64,
@@ -257,6 +262,7 @@ impl Raw {
         io_drop: UNSET,
         io_table: UNSET,
         hw_tail: UNSET,
+        overlay: UNSET,
         mtr: UNSET,
         mtr_fast_die: UNSET,
         mtr_alarm: UNSET,
@@ -296,6 +302,7 @@ impl Raw {
                 self.io_drop,
                 self.io_table,
                 self.hw_tail,
+                self.overlay,
                 self.mtr,
                 self.mtr_fast_die,
                 self.mtr_alarm,
@@ -412,6 +419,10 @@ pub(crate) struct Values {
     pub(crate) io_drop: u32,
     pub(crate) io_table: IoTable,
     pub(crate) hw_tail: HwTail,
+    /// Apply the builtin word overlay `asahi/t6031-hwdata-overlay.bin` to the hardware record,
+    /// globals and power block (`asahi.t6031_overlay=j516c`): per-board words read from the
+    /// J516C's own InitData, kept out of the tree.
+    pub(crate) overlay: bool,
     pub(crate) mtr: Mtr,
     pub(crate) unit_mask_a: u64,
     pub(crate) unit_mask_b: u32,
@@ -544,6 +555,10 @@ pub(crate) fn resolve(raw: &Raw) -> Result<Values, Refusal> {
         Some(1) => HwTail::J516c,
         _ => return Err(refuse("t6031_hw_tail", "none or j516c")),
     };
+    let overlay = match given(raw.overlay, 0) {
+        Some(v @ (0 | 1)) => v == 1,
+        _ => return Err(refuse("t6031_overlay", "none or j516c")),
+    };
     let mtr_choice = match given(raw.mtr, 0) {
         Some(0) => Mtr::Masks(MTR_T6030.0, MTR_T6030.1),
         Some(1) => Mtr::Masks(MTR_T8122.0, MTR_T8122.1),
@@ -626,6 +641,7 @@ pub(crate) fn resolve(raw: &Raw) -> Result<Values, Refusal> {
         io_drop,
         io_table,
         hw_tail,
+        overlay,
         mtr,
         unit_mask_a,
         unit_mask_b,
