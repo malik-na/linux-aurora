@@ -41,6 +41,17 @@ pub(crate) struct Compute {
     /// The StartCL context areas as one run (A, B, run size, low client GPU addresses) when the
     /// G15C's own layout is in use (`asahi.t6031_ctx_areas`); `None` keeps the qualified areas.
     ctx: Option<(u64,u64,usize,bool)>,
+    /// The zeroed page at the client's USC window base + 0x4000 (`asahi.t6031_usc_page`), kept
+    /// mapped for the graph's lifetime.
+    _usc_page: Option<mmu::KernelMapping>,
+}
+/// Offset of the page `asahi.t6031_usc_page` maps in the client's USC window: the page after
+/// the first 16 KiB, where the G15C's USC cores 8 and 9 read (boots t50, t77).
+const USC_PAGE_OFFSET: u64 = 0x4000;
+/// The USC window pages logged around that mapping: the window's first four 16 KiB pages.
+fn usc_probe_pages(usc_base: u64) -> Option<[u64; 4]> {
+    let page = mmu::UAT_PGSZ as u64;
+    Some([usc_base, usc_base.checked_add(page)?, usc_base.checked_add(2 * page)?, usc_base.checked_add(3 * page)?])
 }
 impl Compute {
     pub(crate) fn new(dev: &driver::AsahiDevice, uat: &mmu::Uat, vm: &mmu::Vm,
@@ -120,6 +131,9 @@ impl Compute {
             let entry = queue::ring_entry(index, queue::QUALIFIED_CAPACITY, &[command]).map_err(|_| EINVAL)?;
             objects[storage::RING].write(index as usize * 8, &entry)?;
         }
+        let usc_page = if registers == command::RegisterSet::G15C && crate::m3_params::t6031_usc_page() {
+            Self::map_usc_page(dev, vm, control.usc_base)
+        } else { None };
         dev_info!(dev.as_ref(),"M3 compute graph: context={} queue={:#x} command={:#x} low={:#x} cdm={:#x}..{:#x} pool={:#x}\n",
             binding.slot(),objects[storage::QUEUE].va(),objects[storage::COMMAND].va(),
             objects[storage::COMMAND].gpu_va()?,control.base,control.end,objects[storage::POOL].va());
@@ -133,7 +147,30 @@ impl Compute {
         // the invalidation.
         crate::mem::sync();crate::mem::tlbi_all();crate::mem::sync();
         unsafe {core::arch::asm!("isb",options(nostack,preserves_flags))};
-        Ok(Self {_client_command:client_command.ok_or(EINVAL)?,objects,command_bytes,sequence_bytes,_binding:binding,stats,last_progress_ns:0,sequence:1,head:1,cached_views:KVec::new(),slot:0,batch_count:1,checkpoint:(0,0,0),registers,ctx})
+        Ok(Self {_client_command:client_command.ok_or(EINVAL)?,objects,command_bytes,sequence_bytes,_binding:binding,stats,last_progress_ns:0,sequence:1,head:1,cached_views:KVec::new(),slot:0,batch_count:1,checkpoint:(0,0,0),registers,ctx,_usc_page:usc_page})
+    }
+    /// `asahi.t6031_usc_page=1`: map a zeroed 16 KiB page, GPU read-only, at the client's USC
+    /// window base + 0x4000, logging which of the window's first four pages are mapped before
+    /// and after. A failure is logged and the graph goes on without the page, so the job still
+    /// shows what the hardware does.
+    fn map_usc_page(dev: &driver::AsahiDevice, vm: &mmu::Vm, usc_base: u64) -> Option<mmu::KernelMapping> {
+        let pages = usc_probe_pages(usc_base)?;
+        let page = mmu::UAT_PGSZ as u64;
+        let mapped = |vm: &mmu::Vm| pages.map(|p| vm.covers_range(p, page, true, false));
+        let before = mapped(vm);
+        let address = usc_base.checked_add(USC_PAGE_OFFSET)?;
+        let result = (|| -> Result<mmu::KernelMapping> {
+            let mut object = crate::gem::new_kernel_object(dev, mmu::UAT_PGSZ)?;
+            object.vmap()?.memset(0);
+            object.map_at(vm, address, mmu::PROT_GPU_SHARED_RO, false)
+        })();
+        match &result {
+            Ok(_) => dev_info!(dev.as_ref(), "M3 compute USC page: window base {:#x}, zeroed GPU-RO page at {:#x}; pages {:#x?} mapped before {:?} after {:?} (asahi.t6031_usc_page=1)\n",
+                usc_base, address, pages, before, mapped(vm)),
+            Err(e) => dev_info!(dev.as_ref(), "M3 compute USC page: window base {:#x}, mapping {:#x} failed ({:?}); pages {:#x?} mapped {:?} (asahi.t6031_usc_page=1)\n",
+                usc_base, address, e, pages, before),
+        }
+        result.ok()
     }
     fn encode_command(objects: &mut [Buffer], bytes: &mut [u8], context: u32,
         control: crate::agx_compute::Control, sequence: u64, slot: usize,
@@ -389,5 +426,20 @@ impl Compute {
         let mut roots=[(0,0);64];self._binding.vm().context_roots(&mut roots)?;
         dev_info!(dev.as_ref(),"M3 context {} roots={:x?}, bootstrap={:x?}\n",self._binding.slot(),roots[self._binding.slot() as usize],roots[0]);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn usc_page_is_the_second_page_of_the_window_where_t77_faulted() {
+        let pages = super::usc_probe_pages(0x100_0000_0000).unwrap();
+        assert_eq!(pages, [0x100_0000_0000, 0x100_0000_4000, 0x100_0000_8000, 0x100_0000_c000]);
+        assert_eq!(0x100_0000_0000 + super::USC_PAGE_OFFSET, 0x100_0000_4000);
+    }
+
+    #[test]
+    fn usc_probe_pages_refuses_a_window_at_the_top_of_the_address_space() {
+        assert!(super::usc_probe_pages(u64::MAX - 0x4000).is_none());
     }
 }
