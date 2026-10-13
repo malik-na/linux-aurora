@@ -1,0 +1,12 @@
+# g15c-first-job 2026-10-13T09:55:18Z, 5 s per job
+# kernel 7.1.12-aurora-dev; package 26.1.4.g15c1-2
+# total 0
+# drwxr-xr-x  2 root root        100 Oct 13 15:16 by-path
+# crw-rw----+ 1 root video  226,   0 Oct 13 15:16 card0
+# crw-rw----+ 1 root video  226,   1 Oct 13 15:16 card1
+# crw-rw-rw-  1 root render 226, 128 Oct 13 15:20 renderD128
+VERDICT compute-check exit=2 hang
+VERDICT vk-render-check exit=- skipped
+VERDICT gl-render-check exit=- skipped
+VERDICT gpu-heat exit=- skipped
+asahi: G15C admitted (ASAHI_M3_G15C=1): chip 0x6031, 4 clusters x 10 slots, 40 cores (masks 0x3ff 0x3ff 0x3ff 0x3ff), revision 0x12, features 0xa, max 338000 kHz; scheduling stalls off; VA layout m3-runtime-6c982dda3eba
