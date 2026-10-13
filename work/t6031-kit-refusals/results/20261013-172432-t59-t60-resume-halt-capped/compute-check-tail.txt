@@ -1,0 +1,14 @@
+MISMATCH run 1: 65536 of 65536 words wrong; first at 0: got 0x00000000 want 0x6f05e89c
+MISMATCH run 2: 65536 of 65536 words wrong; first at 0: got 0x00000000 want 0x6f05e89c
+progress t=1.0s runs=2 bad=2
+MISMATCH run 3: 65536 of 65536 words wrong; first at 0: got 0x00000000 want 0x6f05e89c
+MISMATCH run 4: 65536 of 65536 words wrong; first at 0: got 0x00000000 want 0x6f05e89c
+progress t=2.0s runs=4 bad=4
+MISMATCH run 5: 65536 of 65536 words wrong; first at 0: got 0x00000000 want 0x6f05e89c
+MISMATCH run 6: 65536 of 65536 words wrong; first at 0: got 0x00000000 want 0x6f05e89c
+progress t=3.0s runs=6 bad=6
+MISMATCH run 7: 65536 of 65536 words wrong; first at 0: got 0x00000000 want 0x6f05e89c
+MISMATCH run 8: 65536 of 65536 words wrong; first at 0: got 0x00000000 want 0x6f05e89c
+progress t=4.0s runs=8 bad=8
+progress t=5.0s runs=10 bad=10
+FAIL: 10 runs in 5.0 s, 10 with wrong results

@@ -1,0 +1,25 @@
+[   51.863717] M3 compute graph: context=1 queue=… pool=…
+[   52.365609] M3 firmware event 4 bytes=[…]
+[   52.365623] M3 firmware recovery event answered by a resume (halt_count=1, resumes=1); the job stays live
+[   52.366793] M3 firmware event 1 bytes=[…]
+[   52.366806] M3: thermal: SoC die temperature 59.7 C from zones: macsmc_soc_die (SMC die sensors)
+[   52.366809] M3: thermal: SoC die 59.7 C, runtime cap 1 (338 MHz) of 1..=1, firmware peak state 1 since the last summary, raised 0 and lowered 0 times so far
+[   52.366816] M3 G15C verdict: job-completed: the first compute job finished, 0 ns of GPU time
+[   52.867600] M3 firmware event 4 bytes=[…]
+[   52.867609] M3 firmware recovery event answered by a resume (halt_count=2, resumes=2); the job stays live
+[   52.868740] M3 firmware event 1 bytes=[…]
+[   53.369617] M3 firmware event 4 bytes=[…]
+[   53.369631] M3 firmware recovery event answered by a resume (halt_count=3, resumes=3); the job stays live
+[   53.370793] M3 firmware event 1 bytes=[…]
+[   53.370807] M3: performance state after a job: firmware actual 1 current 0 frequency 0 MHz, sgx+0xe01000 0x1; cap state 1 (338 MHz)
+[   53.871770] M3 firmware event 4 bytes=[…]
+[   53.871782] M3 firmware recovery event answered by a resume (halt_count=4, resumes=4); the job stays live
+[   53.872955] M3 firmware event 1 bytes=[…]
+[   53.872967] M3: performance state after a job: firmware actual 1 current 1 frequency 0 MHz, sgx+0xe01000 0x1; cap state 1 (338 MHz)
+[   54.373619] M3 firmware event 4 bytes=[…]
+[   54.373629] M3 firmware recovery event answered by a resume (halt_count=5, resumes=5); the job stays live
+[   54.374800] M3 firmware event 1 bytes=[…]
+[   54.374815] M3: performance state after a job: firmware actual 1 current 0 frequency 0 MHz, sgx+0xe01000 0x1; cap state 1 (338 MHz)
+[   54.875612] M3 firmware event 4 bytes=[…]
+[   54.875626] M3 firmware recovery event answered by a resume (halt_count=6, resumes=6); the job stays live
+[    0.078049] M3 G15C start: runtime cap republished after the overlay: state 1
