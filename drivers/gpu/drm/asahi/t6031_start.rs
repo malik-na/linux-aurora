@@ -654,23 +654,31 @@ pub(crate) fn job_completed_verdict(dev: &device::Device, kind: usize, gpu_ns: u
     mark(PHASE_RUNNING, 0);
 }
 
-struct CrashLog {
-    bytes: KVec<u8>,
-}
+/// The kept crash log, from `capture_crashlog` (RTKit callback; the runtime lock must not be
+/// taken there) to the runtime, which owns the InitData records and publishes one devcoredump
+/// with both. Null, or the `into_foreign` pointer of a `KBox<KVec<u8>>`; the last log wins.
+#[cfg(CONFIG_DEV_COREDUMP)]
+static PENDING_CRASHLOG: core::sync::atomic::AtomicPtr<core::ffi::c_void> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-impl kernel::devcoredump::DevCoreDump for CrashLog {
-    fn read(&self, output: &mut [u8], offset: usize) -> Result<usize> {
-        if offset >= self.bytes.len() {
-            return Ok(0);
-        }
-        let length = output.len().min(self.bytes.len() - offset);
-        output[..length].copy_from_slice(&self.bytes[offset..offset + length]);
-        Ok(length)
+/// Take the crash log `capture_crashlog` kept, if any. Each kept log is taken once.
+#[cfg(CONFIG_DEV_COREDUMP)]
+pub(crate) fn take_crashlog() -> Option<KBox<KVec<u8>>> {
+    use kernel::types::ForeignOwnable;
+    let raw = PENDING_CRASHLOG.swap(core::ptr::null_mut(), Ordering::AcqRel);
+    if raw.is_null() {
+        return None;
     }
+    // SAFETY: The only stores into `PENDING_CRASHLOG` are `into_foreign` results of a
+    // `KBox<KVec<u8>>`, and the swap above hands each one to exactly one caller.
+    Some(unsafe { <KBox<KVec<u8>> as ForeignOwnable>::from_foreign(raw) })
 }
 
-/// Offer the firmware crash log to devcoredump. No-op unless this boot armed a T6031 start.
+/// Keep the firmware crash log for devcoredump. No-op unless this boot armed a T6031 start.
 /// The bytes are the log the firmware already wrote; this does not read a GPU register.
+/// The log is parked here and published by the runtime (`Inner::flush_crashlog`, or the fault
+/// snapshot, whichever comes first) in the same devcoredump as the InitData records: a device
+/// holds one devcoredump at a time, so a separate crash-log dump would displace the other.
 pub(crate) fn capture_crashlog(dev: &device::Device, crashlog: &[u8]) {
     if !is_status_armed() {
         return;
@@ -681,34 +689,33 @@ pub(crate) fn capture_crashlog(dev: &device::Device, crashlog: &[u8]) {
     mark(PHASE_CRASHED, 0);
     dev_err!(
         dev,
-        "M3 G15C start: firmware crash log {} bytes (offering {})\n",
+        "M3 G15C start: firmware crash log {} bytes (keeping {})\n",
         crashlog.len(),
         kept
     );
     #[cfg(CONFIG_DEV_COREDUMP)]
     {
+        use kernel::types::ForeignOwnable;
         let mut bytes = KVec::new();
         if bytes.extend_from_slice(&crashlog[..kept], GFP_NOWAIT).is_err() {
             dev_err!(dev, "M3 G15C start: crash log was not copied; it is not in devcoredump\n");
             return;
         }
-        let owned = match KBox::new(CrashLog { bytes }, GFP_NOWAIT) {
+        let owned = match KBox::new(bytes, GFP_NOWAIT) {
             Ok(owned) => owned,
             Err(_) => {
-                dev_err!(dev, "M3 G15C start: crash log was not offered to devcoredump\n");
+                dev_err!(dev, "M3 G15C start: crash log was not kept for devcoredump\n");
                 return;
             }
         };
-        kernel::devcoredump::dev_coredump(
-            dev,
-            &crate::THIS_MODULE,
-            owned,
-            GFP_NOWAIT,
-            kernel::devcoredump::DEFAULT_TIMEOUT,
-        );
+        let previous = PENDING_CRASHLOG.swap(owned.into_foreign(), Ordering::AcqRel);
+        if !previous.is_null() {
+            // SAFETY: As in `take_crashlog`; the swap made this caller the owner.
+            drop(unsafe { <KBox<KVec<u8>> as ForeignOwnable>::from_foreign(previous) });
+        }
         dev_info!(
             dev,
-            "M3 G15C start: {}-byte firmware crash log offered to devcoredump\n",
+            "M3 G15C start: {}-byte firmware crash log kept for the devcoredump with the InitData records\n",
             kept
         );
     }

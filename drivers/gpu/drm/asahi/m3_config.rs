@@ -61,17 +61,73 @@ pub(crate) struct Config {
 impl Config {
     /// Snapshot owned RAM only. Firmware can still update these buffers;
     /// per-record time intervals explicitly describe sequential observations.
+    /// `crashlog` is the firmware crash log, when RTKit reported one first (armed T6031 start).
     #[cfg(CONFIG_DEV_COREDUMP)]
-    pub(crate) fn fault_snapshot(&mut self, dev: &driver::AsahiDevice, primary: Error, gpu_pending: bool) -> Result {
+    pub(crate) fn fault_snapshot(&mut self, dev: &driver::AsahiDevice, primary: Error, gpu_pending: bool,
+        crashlog: Option<&[u8]>) -> Result {
         let mut dump = self.fault_reserve.take().ok_or(ENOMEM)?;
         dump.begin(0);
+        Self::record_cause(&mut dump, 1, primary.to_errno(), gpu_pending)?;
+        if let Some(crashlog) = crashlog {
+            Self::record_crashlog(dev, &mut dump, crashlog);
+        }
+        self.initdata_records(dev, &mut dump);
+        dump.publish(dev.as_ref())
+    }
+
+    /// The firmware crashed and no host step failed: one snapshot of the crash log and the
+    /// InitData records, for comparing the records offline. The cause record has kind 2
+    /// (firmware crash), errno 0.
+    ///
+    /// The devcoredump is the `agx_fault::Dump` format ("M3FWD001"): a 40-byte header (magic[8],
+    /// u32 record count, u32 version 1, u64 job 0, u64 begin ns, u64 total length), then the
+    /// records back to back, each name[32] (NUL padded), u64 firmware VA, u64 length, u64 begin
+    /// ns, u64 end ns, then `length` bytes. All integers are little-endian. Records, in order:
+    /// host-first-error, firmware-crashlog, then those of `initdata_records`.
+    #[cfg(CONFIG_DEV_COREDUMP)]
+    pub(crate) fn crash_snapshot(&mut self, dev: &driver::AsahiDevice, gpu_pending: bool,
+        crashlog: &[u8]) -> Result {
+        let mut dump = self.fault_reserve.take().ok_or(ENOMEM)?;
+        dump.begin(0);
+        Self::record_cause(&mut dump, 2, 0, gpu_pending)?;
+        Self::record_crashlog(dev, &mut dump, crashlog);
+        self.initdata_records(dev, &mut dump);
+        dump.publish(dev.as_ref())
+    }
+
+    /// "host-first-error": u32 kind (1 host fault, 2 firmware crash), i32 errno, u64 whether
+    /// a GPU job was pending.
+    #[cfg(CONFIG_DEV_COREDUMP)]
+    fn record_cause(dump: &mut crate::agx_fault::Dump, kind: u32, errno: i32, gpu_pending: bool) -> Result {
         let mut cause = [0u8; 16];
-        cause[..4].copy_from_slice(&1u32.to_le_bytes());
-        cause[4..8].copy_from_slice(&primary.to_errno().to_le_bytes());
+        cause[..4].copy_from_slice(&kind.to_le_bytes());
+        cause[4..8].copy_from_slice(&errno.to_le_bytes());
         cause[8..16].copy_from_slice(&u64::from(gpu_pending).to_le_bytes());
         dump.record("host-first-error", 0, cause.len(), |out| {
             out.copy_from_slice(&cause); Ok(())
-        })?;
+        })
+    }
+
+    /// "firmware-crashlog": the log bytes RTKit retained, as many as `capture_crashlog` kept.
+    /// A record that does not fit is logged and skipped, never fatal to the rest.
+    #[cfg(CONFIG_DEV_COREDUMP)]
+    fn record_crashlog(dev: &driver::AsahiDevice, dump: &mut crate::agx_fault::Dump, crashlog: &[u8]) {
+        if crashlog.is_empty() { return; }
+        if let Err(error) = dump.record("firmware-crashlog", 0, crashlog.len(), |out| {
+            out.copy_from_slice(crashlog); Ok(())
+        }) {
+            dev_warn!(dev.as_ref(), "M3: crash log record skipped: {:?}\n", error);
+        }
+    }
+
+    /// Record the host-written InitData records and the channel storage, in this order: root,
+    /// runtime pointers, hardware record (its live size, which may exceed the allocation
+    /// table's), globals, control region, flags, power block, then the device-control,
+    /// firmware-control, event, firmware-log and trace queues. Reads are of the live buffers,
+    /// so after the firmware ran they show what it wrote too. A record that cannot be read or
+    /// does not fit is logged and skipped.
+    #[cfg(CONFIG_DEV_COREDUMP)]
+    fn initdata_records(&mut self, dev: &driver::AsahiDevice, dump: &mut crate::agx_fault::Dump) {
         for (name, index) in [
             ("root", storage::ROOT), ("runtime", RUNTIME_POINTERS),
             ("hardware", HARDWARE_DATA), ("globals", GLOBALS),
@@ -93,9 +149,11 @@ impl Config {
             ("trace-ring", storage::TRACE * 2 + 1),
         ] {
             let buffer = &mut self.objects[index];
-            dump.record(name, buffer.va(), buffer.size(), |out| buffer.read(0, out))?;
+            let (va, size) = (buffer.va(), buffer.size());
+            if let Err(error) = dump.record(name, va, size, |out| buffer.read(0, out)) {
+                dev_warn!(dev.as_ref(), "M3: snapshot record {} skipped: {:?}\n", name, error);
+            }
         }
-        dump.publish(dev.as_ref())
     }
 
     pub(crate) fn new(dev: &driver::AsahiDevice, uat: &mmu::Uat, firmware: &crate::m3_firmware::Firmware,

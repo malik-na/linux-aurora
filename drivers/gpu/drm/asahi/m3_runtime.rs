@@ -74,8 +74,31 @@ impl Inner {
         if self.fault_captured { return; }
         self.fault_captured = true;
         #[cfg(CONFIG_DEV_COREDUMP)]
-        if let Err(error) = self.config.fault_snapshot(&self.drm, primary, self.gpu_pending) {
-            dev_err!(self.drm.as_ref(), "M3 fault snapshot failed: {:?}\n", error);
+        {
+            // A crash log RTKit parked goes into this snapshot: a device holds one devcoredump.
+            let crashlog = crate::t6031_start::take_crashlog();
+            let bytes: Option<&[u8]> = match crashlog {
+                Some(ref log) => Some(&log[..]),
+                None => None,
+            };
+            if let Err(error) = self.config.fault_snapshot(&self.drm, primary, self.gpu_pending, bytes) {
+                dev_err!(self.drm.as_ref(), "M3 fault snapshot failed: {:?}\n", error);
+            }
+        }
+    }
+
+    /// The firmware crashed with no published batch to fail: publish the crash log RTKit parked,
+    /// with the InitData records, as the devcoredump. With a batch active the failure path
+    /// latches the fault snapshot, which takes the log itself. Armed T6031 start only.
+    #[cfg(CONFIG_DEV_COREDUMP)]
+    fn flush_crashlog(&mut self) {
+        let Some(crashlog) = crate::t6031_start::take_crashlog() else { return; };
+        if self.fault_captured {
+            dev_info!(self.drm.as_ref(), "M3: firmware crash log ({} bytes) came after the fault snapshot; not offered\n", crashlog.len());
+            return;
+        }
+        if let Err(error) = self.config.crash_snapshot(&self.drm, self.gpu_pending, &crashlog[..]) {
+            dev_err!(self.drm.as_ref(), "M3 crash snapshot failed: {:?}\n", error);
         }
     }
 
@@ -771,6 +794,8 @@ impl Runtime {
     pub(crate) fn service_job(&mut self)->Service {
         let inner: &mut Inner=&mut *self.inner;
         if inner.active.is_empty() {
+            #[cfg(CONFIG_DEV_COREDUMP)]
+            inner.flush_crashlog();
             if inner.fault_captured || !inner.state.healthy() {inner.fail_pending(EIO);return Service::Idle;}
             if let Err(error)=inner.config.drain(&inner.drm) {
                 inner.capture_fault(error);inner.fail_pending(EIO);return Service::Idle;

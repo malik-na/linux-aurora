@@ -240,6 +240,11 @@ impl rtkit::Operations for Operations {
     type Buffer = FirmwareBuffer;
 
     fn crashed(state: ArcBorrow<'_, State>, crashlog: Option<&[u8]>) {
+        // Park the crash log before the crash is visible: whoever sees the unhealthy state (the
+        // boot, or the completion worker woken below) must find it to publish with the InitData.
+        if let Some(bytes) = crashlog {
+            crate::t6031_start::capture_crashlog(state.dev.as_ref(), bytes);
+        }
         state.health.crashed.store(true, Ordering::Release);
         // Wake the serialized worker even if the firmware can no longer send
         // its usual completion notification. Never take the runtime lock here.
@@ -250,9 +255,6 @@ impl rtkit::Operations for Operations {
             "M3 G15S: firmware crashed, retained crashlog bytes={}\n",
             crashlog.map_or(0, |b| b.len())
         );
-        if let Some(bytes) = crashlog {
-            crate::t6031_start::capture_crashlog(state.dev.as_ref(), bytes);
-        }
     }
 
     fn shmem_map(
