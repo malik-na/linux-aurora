@@ -20,6 +20,13 @@ pub(crate) struct Buffer {
     _coherent_allocation: Option<crate::agx_memory_stats::Allocation>,
 }
 
+/// The kernel-half window the runtime's job objects are placed in: 52 GiB into the kernel half
+/// (the qualified T6030 window), or, on an armed T6031 with asahi.t6031_job_window=1, the 1 GiB
+/// right above the InitData objects (2..3 GiB in), inside a 32-bit offset of the kernel base.
+pub(crate) fn job_window()->core::ops::Range<u64> {
+    if crate::m3_params::t6031_job_window() {0xffff_fc20_8000_0000..0xffff_fc20_c000_0000}
+    else {0xffff_fc2d_0000_0000..0xffff_fc2e_0000_0000}
+}
 impl Buffer {
     pub(crate) fn at(dev: &driver::AsahiDevice, fw: &mmu::Vm,
         gpu: Option<(&mmu::Vm,u64)>, address: Option<u64>, size: usize,
@@ -43,7 +50,7 @@ impl Buffer {
             kernel::dma::attrs::DMA_ATTR_NO_WARN).inspect_err(|_| dev_err!(dev.as_ref(),"M3: cannot allocate {} KiB of GPU memory\n",allocated/1024))?;
         let pa:usize=object.dma_handle().try_into()?;
         let mapping=if let Some(a)=address {fw.map_io(a&!0x3fff,pa,allocated,protection)?}
-            else {fw.map_io_in_range(0xffff_fc2d_0000_0000..0xffff_fc2e_0000_0000,pa,allocated,protection)?};
+            else {fw.map_io_in_range(job_window(),pa,allocated,protection)?};
         let gpu_mapping=if let Some((vm,a))=gpu {Some(vm.map_io(a&!0x3fff,pa,allocated,gpu_protection)?)} else {None};
         Ok(Self {mapping,gpu_mapping,gpu_protection,object:Backing::Coherent(object),offset,size,
             _coherent_allocation:Some(crate::agx_memory_stats::Allocation::coherent(allocated)?)})
@@ -58,7 +65,7 @@ impl Buffer {
         // GEM provides zeroed pages and the same WC CPU/device coherency used
         // by M4. Keep both mappings ahead of their backing in drop order.
         let mut object=gem::new_kernel_object_wc(dev,size)?;
-        let mapping=object.map_into_range(fw,0xffff_fc2d_0000_0000..0xffff_fc2e_0000_0000,
+        let mapping=object.map_into_range(fw,job_window(),
             mmu::UAT_PGSZ as u64,prot::PROT_GPU_FW_SHARED_RW,true)?;
         // Growth retains the cached GPU-only policy of the original TPC and
         // tilemap allocations; the firmware alias remains shared/uncached.

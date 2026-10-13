@@ -944,6 +944,20 @@ pub(crate) fn t6031_run_timestamp() -> bool {
         v => v != 0,
     }
 }
+/// `asahi.t6031_job_window=1`: place the runtime's job objects (queues, commands, pools,
+/// scratch, stamps, tiler storage) in the kernel half 2..3 GiB in, right above the InitData
+/// objects, instead of the qualified window 52 GiB in. The J516C's own driver keeps every
+/// kernel-half allocation within the first 256 MiB. Default 0.
+static T6031_JOB_WINDOW: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_job_window", T6031_JOB_WINDOW, parse_t6031_number);
+
+/// Whether the job objects use the low kernel-half window (`asahi.t6031_job_window`).
+pub(crate) fn t6031_job_window() -> bool {
+    match T6031_JOB_WINDOW.load(Ordering::Relaxed) {
+        T6031_UNSET => false,
+        v => v != 0,
+    }
+}
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.
 static T6031_MTR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_mtr", T6031_MTR, parse_t6031_mtr);
