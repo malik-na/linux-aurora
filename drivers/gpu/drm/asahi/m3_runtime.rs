@@ -401,7 +401,7 @@ impl Inner {
         } else {
             match (&mut self.jobs[index],control) {
                 (NativeJob::Render(_),crate::m3_submit::Command::Render{..})=>{},
-                (NativeJob::Compute(j),crate::m3_submit::Command::Compute(c))=>j.replay(&self.uat,&packet.vm,c).map_err(early)?,
+                (NativeJob::Compute(j),crate::m3_submit::Command::Compute(c))=>j.replay(&self.drm,&self.uat,&packet.vm,c).map_err(early)?,
                 _=>return Err(early(ENOTSUPP)),
             }
         }

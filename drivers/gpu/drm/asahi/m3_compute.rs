@@ -300,13 +300,23 @@ impl Compute {
         // command is submitted again.
         objects[PREEMPTION].fill(0xcc)
     }
-    pub(crate) fn replay(&mut self, uat: &mmu::Uat, vm: &mmu::Vm,
+    pub(crate) fn replay(&mut self, dev: &driver::AsahiDevice, uat: &mmu::Uat, vm: &mmu::Vm,
         control: crate::agx_compute::Control) -> Result {
         if !self.complete()? { return Err(EBUSY); }
         // All prior flushed stamps/events and engine idle were checked by
         // Runtime before entry. Keep pool/queue ownership, remap only client
         // views and patch the context when switching Vulkan processes.
         if !self._binding.matches(vm) {
+            // asahi.t6031_usc_page: the fills live in one client's VM, so a graph that switches to
+            // another client fills that client's window with the mode in force now. The old
+            // client's fills go first; its binding stays leased in `cached_views` meanwhile.
+            if self.registers == command::RegisterSet::G15C {
+                self._usc_pages.clear();
+                let mode = crate::m3_params::t6031_usc_page();
+                if mode != 0 {
+                    self._usc_pages = Self::map_usc_pages(dev, vm, control, mode)?;
+                }
+            }
             let next = if let Some(index) = self.cached_views.iter().position(|v| v.binding.matches(vm)) {
                 self.cached_views.remove(index).map_err(|_| EIO)?
             } else {

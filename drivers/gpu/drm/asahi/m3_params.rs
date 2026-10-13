@@ -785,7 +785,9 @@ pub(crate) fn t6031_idle_off() -> bool {
 /// carries (bit 0 the preemption tail pointers, 1 UMA PTC 0xa599, 2 DUPM 0xd411, 3 0x1a0e9 = 0);
 /// a bit clear keeps the qualified T6030 value. Default 0xf (all four). For bisecting one build.
 static T6031_COMPUTE_REGS: AtomicU64 = AtomicU64::new(T6031_UNSET);
-m3_param!("t6031_compute_regs", T6031_COMPUTE_REGS, parse_t6031_number);
+// Writable at runtime (/sys/module/asahi/parameters): the next compute command is encoded with the
+// new mask, so one boot can try several masks (ticket #50).
+m3_param!("t6031_compute_regs", T6031_COMPUTE_REGS, parse_t6031_number, 0o644, Some(get_atomic_param));
 
 /// The G15C compute register mask (`asahi.t6031_compute_regs`), all four when not given.
 pub(crate) fn t6031_compute_regs() -> u64 {
@@ -907,7 +909,8 @@ pub(crate) fn t6031_pool_flag58() -> bool {
 /// new queue's first job (traced on this Mac); the qualified graph gives saved-state pointers and
 /// 0x1c from the start. Default 0.
 static T6031_FIRST_JOB_ZERO: AtomicU64 = AtomicU64::new(T6031_UNSET);
-m3_param!("t6031_first_job_zero", T6031_FIRST_JOB_ZERO, parse_t6031_number);
+// Writable at runtime, read when each compute command is encoded (ticket #50).
+m3_param!("t6031_first_job_zero", T6031_FIRST_JOB_ZERO, parse_t6031_number, 0o644, Some(get_atomic_param));
 
 /// Whether the compute command starts without saved-state pointers (`asahi.t6031_first_job_zero`).
 pub(crate) fn t6031_first_job_zero() -> bool {
@@ -1055,7 +1058,9 @@ pub(crate) fn t6031_params() -> crate::t6031_knobs::Raw {
 /// logs the window's page map, the base page's bytes and the launch's pipeline descriptor.
 /// Experiment knob; default 0.
 static T6031_USC_PAGE: AtomicU64 = AtomicU64::new(T6031_UNSET);
-m3_param!("t6031_usc_page", T6031_USC_PAGE, parse_t6031_number);
+// Writable at runtime: a compute graph refills the client's USC window with the current mode each
+// time it switches to another client VM (ticket #50).
+m3_param!("t6031_usc_page", T6031_USC_PAGE, parse_t6031_number, 0o644, Some(get_atomic_param));
 
 /// The USC window mode of a T6031 compute graph (`asahi.t6031_usc_page`), as given; 0 when
 /// unset. `m3_usc_window` decides what each value fills.
