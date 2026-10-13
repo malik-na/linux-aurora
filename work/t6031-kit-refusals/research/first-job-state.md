@@ -33,6 +33,19 @@ Next (boot t77, no build): t76's parameters without the resume knob, so the snap
 `asahi.debug_flags=0x1000` to log the client's CDM bytes; the launch's program address against the fault address
 tells (a) from (b).
 
+## Finding 2 (boot t77): the reads are at fixed offsets from the window base, not along the program
+
+The client's launch names its program at 0x10000054000 (window base + 0x54000); the faults stay at base + 0x4000
+and + 0x4180 (UL1C 8 and 9). So reading (a), a fetch past the shader's end, is out. The 0x180 spacing between
+cores 8 and 9, with cores 0–7 running without a fault, fits a per-core block at base + 0x3400 (stride 0x180) that
+overflows the first 16 KiB page into the unmapped one after it; that is an inference from two points.
+
+What it points to (one experiment, needs a build): make the page at the client's USC window base + 0x4000 resident
+before the first job, read-only and zeroed, behind a T6031 knob, and see whether the faults move (to + 0x8000 or to
+other cores), vanish with the job running, or vanish with the job still producing nothing (the block needs real
+contents, as G17P's base page does in the Mesa tree). The real fix belongs with whoever lays out the USC window
+(Mesa, with the kernel's window rules), so the result is also the question for the team.
+
 ## Not needed yet
 
 The hypervisor comparison (SGX block polled at each firmware message during the macOS job) stays as the fallback
