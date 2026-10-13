@@ -47,6 +47,7 @@ mod fw;
 mod m3_resources;
 mod m3_firmware;
 mod m3_device;
+mod m3_usc_window;
 mod m3_rtkit;
 mod m3_init_storage;
 mod m3_compute;
