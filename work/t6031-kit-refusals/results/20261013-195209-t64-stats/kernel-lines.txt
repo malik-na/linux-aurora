@@ -1,0 +1,80 @@
+[   57.213400] stats 14 TempSensor   sensor=63 raw=27170 scale=8
+[   57.213415] stats 10 Temperature  806b0000080000002b00000035000000
+[   57.213423] stats  0 Power        99780000090000002c00000035000000
+[   57.213431] stats  9 AvgPower     avg_power_mw=637
+[   57.213439] stats 11 PowerState   active=1 poweroff=0 unk1=7 pstate=1 unk2=800 unk3=0
+[   57.213448] stats 15 type 15      unknown type 15: 01000000090000002c00000030000000
+[   57.213876] stats  4 Utilization  util=0,0,100,100
+[   57.221586] stats 13 PState       ps_min=1 ps_max=1
+[   57.221598] stats 14 TempSensor   sensor=0 raw=27342 scale=8
+[   57.221606] stats 14 TempSensor   sensor=1 raw=27321 scale=8
+[   57.221614] stats 14 TempSensor   sensor=3 raw=27296 scale=8
+[   57.221627] stats 14 TempSensor   sensor=5 raw=27368 scale=8
+[   57.221635] stats 14 TempSensor   sensor=17 raw=27319 scale=8
+[   57.221651] stats 14 TempSensor   sensor=19 raw=27446 scale=8
+[   57.221661] stats 14 TempSensor   sensor=21 raw=27426 scale=8
+[   57.221668] stats 14 TempSensor   sensor=31 raw=27224 scale=8
+[   57.221679] stats 14 TempSensor   sensor=32 raw=27404 scale=8
+[   57.221687] stats 14 TempSensor   sensor=33 raw=27173 scale=8
+[   57.221697] stats 14 TempSensor   sensor=35 raw=27303 scale=8
+[   57.221705] stats 14 TempSensor   sensor=37 raw=27219 scale=8
+[   57.221713] stats 14 TempSensor   sensor=44 raw=24595 scale=8
+[   57.221721] stats 14 TempSensor   sensor=49 raw=27466 scale=8
+[   57.221731] stats 14 TempSensor   sensor=51 raw=27521 scale=8
+[   57.221748] stats 14 TempSensor   sensor=53 raw=27304 scale=8
+[   57.221756] stats 14 TempSensor   sensor=60 raw=24943 scale=8
+[   57.221764] stats 14 TempSensor   sensor=63 raw=27201 scale=8
+[   57.221772] stats 10 Temperature  816b0000080000002b00000035000000
+[   57.221781] stats  0 Power        3b6b0000080000002c00000035000000
+[   57.221789] stats  9 AvgPower     avg_power_mw=637
+[   57.221799] stats 11 PowerState   active=1 poweroff=0 unk1=7 pstate=1 unk2=800 unk3=0
+[   57.221807] stats 15 type 15      unknown type 15: 01000000080000002c00000030000000
+[   57.221942] stats  4 Utilization  util=0,0,100,100
+[   57.229885] stats  4 Utilization  util=0,0,100,100
+[   57.229897] stats 13 PState       ps_min=1 ps_max=1
+[   57.229905] stats 14 TempSensor   sensor=0 raw=27372 scale=8
+[   57.229912] stats 14 TempSensor   sensor=1 raw=27292 scale=8
+[   57.229920] stats 14 TempSensor   sensor=3 raw=27327 scale=8
+[   57.229937] stats 14 TempSensor   sensor=5 raw=27416 scale=8
+[   57.229948] stats 14 TempSensor   sensor=17 raw=27304 scale=8
+[   57.229955] stats 14 TempSensor   sensor=19 raw=30918 scale=9
+[   57.229965] stats 14 TempSensor   sensor=21 raw=30821 scale=9
+[   57.229973] stats 14 TempSensor   sensor=31 raw=30635 scale=9
+[   57.229984] stats 14 TempSensor   sensor=32 raw=30805 scale=9
+[   57.229992] stats 14 TempSensor   sensor=33 raw=30534 scale=9
+[   57.230008] stats 14 TempSensor   sensor=35 raw=30774 scale=9
+[   57.230017] stats 14 TempSensor   sensor=37 raw=30597 scale=9
+[   57.230025] stats 14 TempSensor   sensor=44 raw=27640 scale=9
+[   57.230033] stats 14 TempSensor   sensor=49 raw=30888 scale=9
+[   57.230040] stats 14 TempSensor   sensor=51 raw=30957 scale=9
+[   57.230048] stats 14 TempSensor   sensor=53 raw=30705 scale=9
+[   57.230055] stats 14 TempSensor   sensor=60 raw=28061 scale=9
+[   57.230063] stats 14 TempSensor   sensor=63 raw=30600 scale=9
+[   57.230071] stats 10 Temperature  ed780000090000002b00000035000000
+[   57.230079] stats  0 Power        916b0000080000002c00000035000000
+[   57.230086] stats  9 AvgPower     avg_power_mw=637
+[   57.230101] stats 11 PowerState   active=1 poweroff=0 unk1=7 pstate=1 unk2=800 unk3=0
+[   57.230109] stats 15 type 15      unknown type 15: 01000000080000002c00000035000000
+[   57.237903] stats  4 Utilization  util=0,0,100,100
+[   57.238226] stats 13 PState       ps_min=1 ps_max=1
+[   57.238234] stats 14 TempSensor   sensor=0 raw=30786 scale=9
+[   57.238250] stats 14 TempSensor   sensor=1 raw=30741 scale=9
+[   57.238257] stats 14 TempSensor   sensor=3 raw=30741 scale=9
+[   57.238265] stats 14 TempSensor   sensor=5 raw=30782 scale=9
+[   57.238281] stats 14 TempSensor   sensor=17 raw=30717 scale=9
+[   57.238289] stats 14 TempSensor   sensor=19 raw=27476 scale=8
+[   57.238297] stats 14 TempSensor   sensor=21 raw=27410 scale=8
+[   57.238305] stats 14 TempSensor   sensor=31 raw=27224 scale=8
+[   57.238312] stats 14 TempSensor   sensor=32 raw=27373 scale=8
+[   57.238330] stats 14 TempSensor   sensor=33 raw=27173 scale=8
+[   57.238341] stats 14 TempSensor   sensor=35 raw=27333 scale=8
+[   57.238349] stats 14 TempSensor   sensor=37 raw=27204 scale=8
+[   57.238356] stats 14 TempSensor   sensor=44 raw=24548 scale=8
+[   57.238364] stats 14 TempSensor   sensor=49 raw=27466 scale=8
+[   57.238371] stats 14 TempSensor   sensor=51 raw=27505 scale=8
+[   57.238379] stats 14 TempSensor   sensor=53 raw=27288 scale=8
+[   57.238395] stats 14 TempSensor   sensor=60 raw=24943 scale=8
+[   57.238403] stats 14 TempSensor   sensor=63 raw=27201 scale=8
+[   57.238411] stats 10 Temperature  716b0000080000002b00000036000000
+[   57.238418] stats  0 Power        0b790000090000002c00000036000000
+[   57.238426] stats  9 AvgPower     avg_power_mw=638
