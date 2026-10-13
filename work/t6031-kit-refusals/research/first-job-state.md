@@ -79,6 +79,15 @@ Next (#49, revised with Naeem): t78's single page, now filled with a pattern nam
 of the window's page map, the base page's bytes and the pipeline descriptor (which should give the code's address).
 Mode 2 (fill every gap) comes after. Mode 2 caveat: client binds onto a filled page fail with EBUSY.
 
+## Finding 4 (boot t79): content does not steer the read; the faults sit just past object ends
+
+With the +0x4000 page filled with a self-naming pattern instead of zeros, core 9 faults at the same + 0x48180 as in
+t78. The window's page map (first 1 MiB) shows + 0x48000 is an unmapped page right after a 256 KiB object
+(+0x8000..+0x48000), as + 0x4000 is right after the 16 KiB object at the base (which starts with 0x340, the size
+dword of a code-container lead in the Mesa tree). Both of core 9's faults are 0x180 past an object's end. Reading
+(a), the USC reading past the end of objects in its window, is now favoured over a per-core array; the missing
+core 8 fault at + 0x48000 is unexplained. Next: fill every gap (mode 6) and see whether the job runs.
+
 ## Not needed yet
 
 The hypervisor comparison (SGX block polled at each firmware message during the macOS job) stays as the fallback
