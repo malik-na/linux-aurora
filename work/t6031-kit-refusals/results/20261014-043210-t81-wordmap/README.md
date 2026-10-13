@@ -32,3 +32,40 @@ pre-filled with sentinels), run as a second client: `g15c-run ./g15c-wordmap` on
 2. g15c-wordmap with `usc_page=6`: tells H5 (GREEN?) and gives the map for H1/H2.
 3. `echo 2 > /sys/module/asahi/parameters/t6031_usc_page`, g15c-wordmap again: tests H3.
 4. Only after reporting 1–3: the register bisect for H4 (`t6031_compute_regs` single-bit flips), which may fault.
+
+## Result (2026-10-14 04:32–04:50, one boot, no reboot between runs)
+
+1. **compute-check** (harness, first client): every job completes (1.08 ms GPU time), 3005 runs, all wrong: t80 reproduced.
+2. **g15c-wordmap, `usc_page=6`, N=65536** (second client; the new client's window was refilled, mode 6, the same
+   four pages): RED, **4096 of 65536 wrong in every run, all still the sentinel, all with the meta word unwritten,
+   whole workgroups (every lane), 64 of 1024 groups, all inside the first 128 groups (invocations 0–8191)**, in
+   blocks of about 8 groups (512 invocations), roughly every other block; the exact blocks vary slightly between runs.
+3. **`usc_page=2` (zero fill):** identical blocks. **H3 falsified.**
+
+Further runs in the same boot (probe arguments only, no parameter change):
+
+| N (invocations) | groups | wrong | where |
+|---|---|---|---|
+| 512 | 8 | 0 | — |
+| 1024 | 16 | 512 (groups 8–15) | the second half |
+| 2048 | 32 | 1024 | 512–1023, 1536–2047 |
+| 4096 | 64 | 2048 | every other 8-group block |
+| 8192 | 128 | 4096 | every other block |
+| 16384 | 256 | 4096 | the same 64 groups in the first 128 |
+| 131072 | 2048 | 4096 (one run 4608, + 130560–131071) | the same, plus once the last block |
+| 262144 | 4096 | 124928 / 119296 | the first-128 pattern, then about half of groups 2032–2392 and everything after ~2392 |
+
+Step count (N=8192; steps 1, 16, 4096, 65536): the same 64 groups lost every time, so not timing.
+
+**Reading:**
+- **H5 falsified:** the probe goes RED exactly as compute-check does.
+- **H2 doesn't fit:** nothing is written at all; the meta words stay unwritten.
+- **H1 confirmed in a sharpened form:** the work is handed out in chunks of about 8 workgroups, alternating between
+  two destinations for the first 128 groups. One destination accepts its chunks and never runs them; after its
+  64 groups everything goes to the working one. A second effect appears past group ~2032 (invocation ~2^17).
+- **Smallest repro:** N=1024 (16 groups); groups 8–15 never run.
+- Consistent with the t50/t51 per-core snapshots (shader-core activity on cluster 0's cores only) and
+  `SGX +0xc080 = 0xff…fe`.
+
+Next: H4, the register bisect (single-bit flips of `t6031_compute_regs`, may fault), and the per-cluster enables
+(InitData unit masks: `asahi.t6031_unit_mask_a/b`, `hwb_b20`; boot-time only).
