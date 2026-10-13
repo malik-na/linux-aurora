@@ -104,6 +104,10 @@ EOF
 cat "$out/collect.txt"
 # the full kernel log of this boot, kept with the filtered one
 "${SSH[@]}" "sudo -n dmesg" >"$out/dmesg.txt" 2>&1 || true
+# the devcoredump of this boot (firmware crash log, and the InitData records once the kernel
+# publishes them), kept before its 5-minute timeout removes it
+"${SSH[@]}" 'for d in /sys/class/devcoredump/devcd*; do [ -e "$d/data" ] && sudo -n cat "$d/data" && break; done' >"$out/devcoredump.bin" 2>/dev/null || true
+if [[ -s "$out/devcoredump.bin" ]]; then echo "== devcoredump: $(wc -c <"$out/devcoredump.bin") bytes"; else rm -f "$out/devcoredump.bin"; fi
 
 # 7. disarm (the one-shot is already consumed by Limine; this removes the entry)
 disarm
