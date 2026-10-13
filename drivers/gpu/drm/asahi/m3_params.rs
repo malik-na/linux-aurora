@@ -864,6 +864,19 @@ pub(crate) fn t6031_tail_blockmgr() -> bool {
         v => v != 0,
     }
 }
+/// `asahi.t6031_skip_pool=1`: give the T6031 compute pool manager the id 0xffffffff, which makes
+/// the firmware skip the pool (the J516S self-test's trick). Diagnostic: whether the first compute
+/// dispatch waits on the pool. Default 0.
+static T6031_SKIP_POOL: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_skip_pool", T6031_SKIP_POOL, parse_t6031_number);
+
+/// Whether the compute pool is skipped (`asahi.t6031_skip_pool`).
+pub(crate) fn t6031_skip_pool() -> bool {
+    match T6031_SKIP_POOL.load(Ordering::Relaxed) {
+        T6031_UNSET => false,
+        v => v != 0,
+    }
+}
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.
 static T6031_MTR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_mtr", T6031_MTR, parse_t6031_mtr);

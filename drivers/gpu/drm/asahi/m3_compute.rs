@@ -80,6 +80,12 @@ impl Compute {
         Self::encode_command(&mut objects, &mut command_bytes, binding.slot(), control, 1, 0, registers)?;
         Self::encode_sequence(&mut objects, &mut sequence_bytes, stats, binding.slot(), timeline::stamp(0xc1000000,1), 0, ctx)?;
         UMA_POOL.initialize(&mut objects)?;
+        // asahi.t6031_skip_pool=1: a pool id above 0xff makes the firmware skip the pool (the
+        // J516S self-test's trick), to tell whether the pool is what the G15C dispatch waits on.
+        if registers == command::RegisterSet::G15C && crate::m3_params::t6031_skip_pool() {
+            dev_info!(dev.as_ref(), "M3 compute pool: id set to 0xffffffff, the firmware skips the pool (asahi.t6031_skip_pool=1)\n");
+            objects[storage::POOL].u32(8, 0xffff_ffff)?;
+        }
         Self::initialize_state(&mut objects, binding.slot())?;
         // Queue references are firmware VAs from live allocations. In contrast
         // to render's unpublished seed entries, compute dispatches entry zero
