@@ -91,3 +91,9 @@ cluster-scaled register values on a fresh queue) still fails: the firmware halts
 The question is posted on omacom #61 (comment 6154212550); watch it for replies. The frontier is research
 ticket #47, which compares the hardware's and firmware's state (SGX status registers read from the main CPU, the
 firmware's private records) between macOS mid-job and ours at the halt. Display #34 waits behind the GPU line.
+
+**Update 2026-10-14 02:20:** #47 and #48 are closed, and the stall turned out to be a fault. With the J516C register
+values the USC cores start and read just past the client's USC objects, into the unbound guard pages of its USC
+window (t50, t77, t78; `research/first-job-state.md`). The installed kernel is dev-76, with the
+`asahi.t6031_usc_page` knob; e7af3a72, the review fix, is pushed but not packaged. The frontier is #49: log the
+window's page map and fill every guard page (`=2`), one build and one boot.
