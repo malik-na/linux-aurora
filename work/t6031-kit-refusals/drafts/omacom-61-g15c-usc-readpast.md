@@ -1,6 +1,6 @@
 # Draft: update for omacom/linux-aurora#61 (map ticket #51)
 
-Status: draft, 2026-10-14, after boot t80 and the #51 grilling. Not posted; Naeem approves the exact text first.
+Status: posted 2026-10-14 with Naeem's approval: https://github.com/omacom/linux-aurora/issues/61#issuecomment-6156913905
 
 ---
 
