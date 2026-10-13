@@ -1,0 +1,3 @@
+asahi 40a400000.gpu: M3 G15C start: idle power-off request (device control 0x9) left out (asahi.t6031_idle_off=0)
+asahi 40a400000.gpu: M3 firmware readiness: magic=0x0 runtime=0 newA=1/1 newB=1
+asahi 40a400000.gpu: M3 G15C verdict: initdata-rejected (ETIMEDOUT): the firmware did not acknowledge the InitData (version 0xc08e21e84820490) within 2 s
