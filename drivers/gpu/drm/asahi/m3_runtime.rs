@@ -846,7 +846,12 @@ impl Runtime {
         Pin::new(&mut self.inner.transport).send_message(0x20, 0x0081000000000000 | (root & ((1u64<<44)-1)))?;
         self.inner.boot_step = BootStep::DeviceControl;
         self.send_control(0x13)?;
-        self.send_control(9)?;
+        // An armed T6031 may leave the idle power-off request out (asahi.t6031_idle_off=0).
+        if !crate::t6031_start::is_t6031(self.inner.device.soc()) || crate::m3_params::t6031_idle_off() {
+            self.send_control(9)?;
+        } else {
+            dev_info!(pdev.as_ref(), "M3 G15C start: idle power-off request (device control 0x9) left out (asahi.t6031_idle_off=0)\n");
+        }
         self.inner.boot_step = BootStep::AwaitReady;
         let start = Instant::<Monotonic>::now();
         while !self.inner.config.ready()? {

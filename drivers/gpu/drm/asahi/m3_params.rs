@@ -769,6 +769,17 @@ m3_param!("t6031_hw_tail", T6031_HW_TAIL, parse_t6031_hw_tail);
 /// `asahi.t6031_overlay=none|j516c`: apply the builtin word overlay to the InitData images.
 static T6031_OVERLAY: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_overlay", T6031_OVERLAY, parse_t6031_overlay);
+/// `asahi.t6031_idle_off=0`: leave the GPU idle power-off request (device control 0x9) out of the
+/// sequence after INIT on an armed T6031. The J516C's own driver sends 0x13 and never 0x9; the
+/// first compute job on a G15C ended in a firmware halt (recovery packet, info 0x27) with it.
+/// Default 1: the sequence the T6030 runtime was qualified with.
+static T6031_IDLE_OFF: AtomicU64 = AtomicU64::new(T6031_UNSET);
+m3_param!("t6031_idle_off", T6031_IDLE_OFF, parse_t6031_number);
+
+/// Whether an armed T6031 sends the idle power-off request after INIT (`asahi.t6031_idle_off`).
+pub(crate) fn t6031_idle_off() -> bool {
+    T6031_IDLE_OFF.load(Ordering::Relaxed) != 0
+}
 /// `asahi.t6031_mtr=t6030|t8122|adt|none`.
 static T6031_MTR: AtomicU64 = AtomicU64::new(T6031_UNSET);
 m3_param!("t6031_mtr", T6031_MTR, parse_t6031_mtr);
