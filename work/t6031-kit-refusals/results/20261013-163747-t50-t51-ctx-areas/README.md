@@ -24,3 +24,10 @@ only other known from-scratch G15 port, not specific to the four-cluster part. T
 0xf400, 0x800 on T8122, which is exactly `ctx_sizes(10, 1)`: the formula is right, the areas were not the problem.
 
 Files: `kernel-lines.txt`.
+
+**Correction (2026-10-14, ticket #47):** "no MMU fault bank set" is wrong for t50. Its post-halt snapshot latched
+two faults: bank 0 `fault=0x8069030211` at 0x10000004000 and bank 0x100 `fault=0x8069032211` at 0x10000004180,
+both unmapped reads in VM slot 1 (the client context) by the USC L1 caches of cores 8 and 9
+(`tools/decode_m3_fault.py`). The cluster 1–3 instances read clear; t51 (T6030 values) reads every bank clear. So
+with the J516C's register values the USC cores start fetching and fault. Ticket #41's "no translation fault" holds
+only for the T6030-value runs. See `research/first-job-state.md`.
