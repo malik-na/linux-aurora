@@ -1,0 +1,4 @@
+asahi 40a400000.gpu: M3 G15C start: armed (asahi.t6031_start=1, one attempt this boot): initdata_version=0x0c08e21e84820490 io_mappings=17 fender=0x144000 pstate_cap=1 power_cap_mw=30000
+asahi 40a400000.gpu: M3 G15C start: word overlay applied: 376 hardware, 7 globals, 2 power words
+asahi 40a400000.gpu: M3: unexpected performance-state words in the InitData; not starting the firmware
+asahi 40a400000.gpu: M3 G15C verdict: driver-refused (EINVAL): the GPU firmware is up, but the driver did not publish the InitData
