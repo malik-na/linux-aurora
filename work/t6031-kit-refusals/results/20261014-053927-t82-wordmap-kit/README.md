@@ -97,3 +97,26 @@ zeros there let it slide into +0x4000 (bug 1), and with fills it reaches the rea
 with fills on: witness groups 8–15 keep the **sentinel**, nouniform turns **RED** (8–15 lost), and the spin on 8–15
 adds **no** time. If the outputs still equal the kit's, the second destination does not enter the base page at all,
 and this model is refuted too.
+
+### dev-term2 and dev-term2m (fills on)
+
+- **dev-term2** (an end at +0x380 and at the code entry +0x3c0): identical to the kit (witness 8–15 n=0,
+  nouniform GREEN, the spin on 8–15 adds time).
+- **dev-term2m** (also an end at +0x3fc0): identical to the kit. The kernel's log of base page +0x3fc0 now shows Mesa's
+  end program (`03 00 07 00 02 00 …` then `06 00` filler), so **the patched page is what the GPU window holds**.
+- **The slide model is refuted.** The second destination never executes code in the base page.
+- What still holds (t82 witness): its uniform state depends on the guard fills' *contents* (zeros give correct push
+  constants, the tag pattern gives zeros). So those units read the area just past object ends **as data**: units 8 and
+  9 at +0x4000/+0x4180 (0x180 apart) past the base page, and again past the 256 KiB pool. Zeros there are "good";
+  the tags are not.
+- INFERRED: per-unit records the hardware or firmware reads at fixed offsets near object ends, sized so that units 8
+  and 9 overrun. That would be Chris's "sized for G15S" idea, but outside Mesa's source.
+
+### Arm E (predictions written before the run): dev-pad, kernel fills off (`usc_page=0`)
+
+dev-pad backs each USC object's trailing guard with Mesa's own zero page (base page two pages).
+- If zeros past object ends are what the second destination needs: **no fault**, the job completes, the witness
+  shows correct push constants on 8–15 (as under the kernel zero fill), nouniform GREEN. The plain kernel still loses
+  8–15 (as under the kernel zero fill in t81: descriptors still wrong). No prepare_map errors.
+- A fault at an address past the padded page means the reads extend further than one page (the pad is too short).
+  That costs the GPU for the boot.
