@@ -1,0 +1,183 @@
+From d04bc2b82ce6ecb42055b013c644638caf34dbc9 Mon Sep 17 00:00:00 2001
+From: Naeem Malik <malik2015naeem@gmail.com>
+Date: Wed, 14 Oct 2026 08:14:13 +0530
+Subject: [PATCH] asahi: G15C dev experiment: HK_G15C_PROFILE=land|nocall for
+ the profile helper call
+
+Ticket malik-na/linux-aurora#50. land puts a helper terminal at every
+16-byte slot of the USC window base page past the lead's two tables
+(keeping the zero block-size dword at +0x340); nocall replaces the
+profile prefix's final computed CNDCALL with three nops. Unset, the
+build behaves as m3max/g15c.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/asahi/lib/agx_device.c            | 15 +++++++++++++
+ src/asahi/lib/agx_ioto_program_core.c | 32 ++++++++++++++++++++++++---
+ src/asahi/lib/agx_linker.c            | 23 ++++++++++++++-----
+ src/asahi/lib/agx_linker.h            |  1 +
+ 4 files changed, 62 insertions(+), 9 deletions(-)
+
+diff --git a/src/asahi/lib/agx_device.c b/src/asahi/lib/agx_device.c
+index 316e2eb0717..3273064c892 100644
+--- a/src/asahi/lib/agx_device.c
++++ b/src/asahi/lib/agx_device.c
+@@ -1488,6 +1488,21 @@ agx_open_device(void *memctx, struct agx_device *dev)
+ 
+       memset(map, 0, usc_base_size);
+       agx3_build_container_lead_for_chip(map, dev->chip);
++
++      /* Dev experiment (malik-na/linux-aurora#50, G15C): HK_G15C_PROFILE=land
++       * puts a helper terminal at every 16-byte slot past the lead's two
++       * tables, keeping the zero block-size dword at +0x340 that ends the
++       * page's container chain. */
++      if (dev->chip == AGX_CHIP_G15C) {
++         const char *prof = getenv("HK_G15C_PROFILE");
++         if (prof && !strcmp(prof, "land")) {
++            agx3_fill_helper_landing(map, 0x2c0, 0x340);
++            agx3_fill_helper_landing(map, 0x350, usc_base_size);
++            fprintf(stderr, "[g15c-prof] base page: helper terminals at "
++                            "+0x2c0..+0x340 and +0x350..+0x%zx\n",
++                    usc_base_size);
++         }
++      }
+       if (agx_bo_sync_for_device(usc_base, 0, usc_base_size))
+          return false;
+ 
+diff --git a/src/asahi/lib/agx_ioto_program_core.c b/src/asahi/lib/agx_ioto_program_core.c
+index 72ece147cd1..a9f7088b1e6 100644
+--- a/src/asahi/lib/agx_ioto_program_core.c
++++ b/src/asahi/lib/agx_ioto_program_core.c
+@@ -8,6 +8,8 @@
+ #include "agx_ioto_core.h"
+ #include "agx_ioto_load_core.h"
+ 
++#include <stdio.h>
++#include <stdlib.h>
+ #include <string.h>
+ 
+ /* Exact fixed regions surrounding the runtime state tail in the SPDX-MIT
+@@ -58,6 +60,30 @@ static const uint8_t
+       0x02, 0x00, 0x04, 0x00, 0x00, 0x00, 0x0f, 0x12, 0x54, 0x00, 0x4c, 0x00,
+ };
+ 
++/* Dev experiment (malik-na/linux-aurora#50, G15C): the same prefix with its
++ * final computed CNDCALL (the last six bytes) replaced by three nops, chosen
++ * at run time by HK_G15C_PROFILE=nocall. */
++static const uint8_t
++   g17p_nocall_profile_prefix[AGX_IOTO_G17P_DEFAULT_PROFILE_PREFIX_SIZE] = {
++      0x1c, 0x80, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x81, 0x11, 0x06,
++      0x00, 0x00, 0x00, 0x00, 0x0c, 0x80, 0x02, 0x00, 0x04, 0x00, 0x00, 0x00,
++      0x9f, 0x11, 0x54, 0x00, 0x02, 0x00, 0x08, 0xa8, 0x10, 0x05, 0x1c, 0x80,
++      0x02, 0x00, 0x04, 0x00, 0x00, 0x00, 0x06, 0x00, 0x06, 0x00, 0x06, 0x00,
++};
++
++static const uint8_t *
++g17p_profile_prefix(void)
++{
++   static int nocall = -1;
++   if (nocall < 0) {
++      const char *mode = getenv("HK_G15C_PROFILE");
++      nocall = mode && !strcmp(mode, "nocall");
++      if (nocall)
++         fprintf(stderr, "[g15c-prof] profile prefix: CNDCALL replaced by nops\n");
++   }
++   return nocall ? g17p_nocall_profile_prefix : g17p_default_profile_prefix;
++}
++
+ static const uint8_t
+    g17p_default_profile_suffix[AGX_IOTO_G17P_DEFAULT_PROFILE_SUFFIX_SIZE] = {
+       0x03, 0x00, 0x07, 0x00, 0x02, 0x00, 0x00, 0x00, 0x60, 0x00,
+@@ -491,7 +517,7 @@ agx_ioto_g17p_no_resource_program_compose(
+    size_t offset = 0;
+    memcpy(staged + offset, packed_tail->bytes, packed_tail->length);
+    offset += packed_tail->length;
+-   memcpy(staged + offset, g17p_default_profile_prefix,
++   memcpy(staged + offset, g17p_profile_prefix(),
+           sizeof(g17p_default_profile_prefix));
+    offset += sizeof(g17p_default_profile_prefix);
+    memcpy(staged + offset, g17p_default_profile_suffix,
+@@ -524,7 +550,7 @@ agx_ioto_g17p_fragment_no_resource_program_compose(
+    size_t offset = 0;
+    memcpy(staged + offset, packed_tail->bytes, packed_tail->length);
+    offset += packed_tail->length;
+-   memcpy(staged + offset, g17p_default_profile_prefix,
++   memcpy(staged + offset, g17p_profile_prefix(),
+           sizeof(g17p_default_profile_prefix));
+    offset += sizeof(g17p_default_profile_prefix);
+    memcpy(staged + offset, g17p_fragment_pixrel,
+@@ -589,7 +615,7 @@ g17p_resource_program_compose(
+    } while (0)
+    APPEND_SPAN(pre_copy_body, pre_copy_body_size);
+    APPEND_SPAN(packed_tail->bytes, packed_tail->length);
+-   APPEND_SPAN(g17p_default_profile_prefix,
++   APPEND_SPAN(g17p_profile_prefix(),
+                sizeof(g17p_default_profile_prefix));
+    APPEND_SPAN(copies, copies_size);
+    APPEND_SPAN(terminal_protocol, terminal_protocol_size);
+diff --git a/src/asahi/lib/agx_linker.c b/src/asahi/lib/agx_linker.c
+index e3794717b96..2e97841eb5c 100644
+--- a/src/asahi/lib/agx_linker.c
++++ b/src/asahi/lib/agx_linker.c
+@@ -118,13 +118,15 @@ static const uint8_t sample_loop_footer[] = {
+ #define AGX3_CONTAINER_CONST_PROG  0x40u
+ 
+ /* "0f 00 54 <opcode> 00 x6 06 00 06 00 06 00" per record, then two terminals. */
++static const uint8_t agx3_helper_terminal[16] = {
++   0xf7, 0x03, 0xaa, 0x00, 0x8f, 0x02, 0x54, 0x01,
++   0x06, 0x00, 0x06, 0x00, 0x06, 0x00, 0x06, 0x00,
++};
++
+ static void
+ agx3_fill_helper_table(uint8_t *image, size_t base, unsigned positions)
+ {
+-   static const uint8_t terminal[16] = {
+-      0xf7, 0x03, 0xaa, 0x00, 0x8f, 0x02, 0x54, 0x01,
+-      0x06, 0x00, 0x06, 0x00, 0x06, 0x00, 0x06, 0x00,
+-   };
++   const uint8_t *terminal = agx3_helper_terminal;
+ 
+    for (unsigned i = 0; i < positions; ++i) {
+       uint8_t *record = image + base + i * 0x10;
+@@ -138,8 +140,8 @@ agx3_fill_helper_table(uint8_t *image, size_t base, unsigned positions)
+          record[h + 1] = 0x00;
+       }
+    }
+-   memcpy(image + base + positions * 16, terminal, sizeof(terminal));
+-   memcpy(image + base + (positions + 1) * 16, terminal, sizeof(terminal));
++   memcpy(image + base + positions * 16, terminal, 16);
++   memcpy(image + base + (positions + 1) * 16, terminal, 16);
+ }
+ 
+ static void
+@@ -181,6 +183,15 @@ agx3_build_container_lead_for_chip(uint8_t *image, enum agx_chip chip)
+    agx3_fill_helper_table(image, 0x200, positions);
+ }
+ 
++/* Dev experiment (malik-na/linux-aurora#50): a helper terminal at every
++ * 16-byte slot of [from, to), so a helper call landing there returns. */
++void
++agx3_fill_helper_landing(uint8_t *image, size_t from, size_t to)
++{
++   for (size_t offset = from; offset + 16 <= to; offset += 16)
++      memcpy(image + offset, agx3_helper_terminal, 16);
++}
++
+ void
+ agx3_build_container_lead(uint8_t *image)
+ {
+diff --git a/src/asahi/lib/agx_linker.h b/src/asahi/lib/agx_linker.h
+index ba6ff800b86..74ab9735cd1 100644
+--- a/src/asahi/lib/agx_linker.h
++++ b/src/asahi/lib/agx_linker.h
+@@ -69,6 +69,7 @@ struct agx_linked_shader {
+ #define AGX3_CONTAINER_LEAD_SIZE 0x340u
+ void agx3_build_container_lead(uint8_t *image);
+ void agx3_build_container_lead_for_chip(uint8_t *image, enum agx_chip chip);
++void agx3_fill_helper_landing(uint8_t *image, size_t from, size_t to);
+ 
+ enum agx_link_result {
+    AGX_LINK_SUCCESS,
+-- 
+2.55.0
+
