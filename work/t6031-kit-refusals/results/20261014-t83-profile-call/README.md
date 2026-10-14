@@ -68,5 +68,32 @@ off, skipping or corrupting the uniform copies. The t82 "slide" observations wer
 at the window base. INFERRED, to be tested: bug 1 (the read past object ends without fills) is the same run-off,
 so `usc_page=0` with either arm should complete with no fault.
 
-Not yet run (ask first): zero fill (`usc_page=2`), compute-check (the original 4096-of-65536 symptom), and the
-no-fill arm (`usc_page=0`, last, since a fault halts the GPU for the rest of the boot).
+### The zero fill, compute-check and no fill (Naeem's go-ahead, same boot, ~08:50)
+
+| arm | `usc_page` | witness 8–15 | wordmap 1024 / 8192 | nouniform 2-D | compute-check (5 s, 65536 × 256) |
+|---|---|---|---|---|---|
+| control | 6 | n=0 | RED / RED | RED | **4096 of 65536 wrong** in every run (first at 512), as t80–t83 |
+| control | 2 | correct | RED (8 groups) / RED (64) | GREEN | — |
+| land | 2 | correct | GREEN / GREEN | GREEN | — |
+| nocall | 2 | correct | GREEN / GREEN | GREEN | — |
+| land | 6 | correct | GREEN / GREEN | GREEN | **PASS**, 5712 runs, 0 wrong |
+| nocall | 6 | correct | GREEN / GREEN | GREEN | **PASS**, 5519 runs, 0 wrong |
+| land | **0** (no fill) | correct | GREEN / GREEN | GREEN | **PASS**, 5666 runs, 0 wrong |
+| nocall | **0** (no fill) | correct | GREEN / GREEN | GREEN | **PASS**, 5740 runs, 0 wrong |
+
+No fault and no halt in any arm (`dmesg`). With `usc_page=0` the kernel mapped no fill pages (no USC window log
+lines at all). `usc_page` was set back to 6 afterwards.
+
+**Reading.**
+- OBSERVED: with either Mesa change and no kernel fill, every compute job completes, and every probe and
+  compute-check is right. The kit with fills gets 4096 of 65536 wrong.
+- So bug 1 (the USC reading past object ends without fills, t77–t79) and bug 2 (the second destination without
+  uniform state, t80–t83) are one bug: the launch program's computed profile helper call runs off the base page
+  for the groups whose special-register value is past the two 10-entry tables. Without fills the run-off faults
+  at the unmapped page after the base page; with fills it runs through them and skips or clobbers the uniform
+  copies.
+- The kernel's USC window fill (`asahi.t6031_usc_page`) is not needed with either Mesa change. It stays an
+  experiment knob.
+- The fix belongs in Mesa, G15C-only (ticket #52, a PR against m3max/g15c). Open: which form (fill the base page's
+  free slots with helper returns; drop the call; per-cluster tables once the register's value is known; or one
+  fixed call as the J516C driver makes), and what the profile call does that `nocall` skips.
