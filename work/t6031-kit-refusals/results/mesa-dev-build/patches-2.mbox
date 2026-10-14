@@ -1,0 +1,151 @@
+From caf2e155cd9f4f454d2f6c334950caf20dcb438e Mon Sep 17 00:00:00 2001
+From: Naeem Malik <malik2015naeem@gmail.com>
+Date: Wed, 14 Oct 2026 07:26:40 +0530
+Subject: [PATCH] asahi: G15C launch experiment w3 (malik-na/linux-aurora#50)
+
+---
+ src/asahi/lib/agx3_compute_program_core.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/asahi/lib/agx3_compute_program_core.c b/src/asahi/lib/agx3_compute_program_core.c
+index fa809cb6b34..0db1ddb7227 100644
+--- a/src/asahi/lib/agx3_compute_program_core.c
++++ b/src/asahi/lib/agx3_compute_program_core.c
+@@ -162,7 +162,10 @@ agx3_g17p_native_compute_launch_pack(
+                                  (uint32_t)(program->program_va >> 32) << 16);
+       agx3_cmdstream_store_le32(packed + 8,
+                                  (uint32_t)(program->program_va >> 6));
+-      agx3_cmdstream_store_le32(packed + 12, 0x40);
++      /* G15C experiment (malik-na/linux-aurora#50): the J516C driver sends the HAL200
++       * control word 0x40000000 here, not the T6030 layout's 0x40. */
++      agx3_cmdstream_store_le32(packed + 12,
++                                program->chip == AGX_CHIP_G15C ? UINT32_C(0x40000000) : 0x40);
+       for (unsigned axis = 0; axis < 3; ++axis) {
+          agx3_cmdstream_store_le32(packed + 16 + axis * 4, global_size[axis]);
+          agx3_cmdstream_store_le32(packed + 28 + axis * 4, grid->local_size[axis]);
+-- 
+2.55.0
+
+From 350923d3f3b640e2e8d2606f37d2c815c38460a8 Mon Sep 17 00:00:00 2001
+From: Naeem Malik <malik2015naeem@gmail.com>
+Date: Wed, 14 Oct 2026 07:26:43 +0530
+Subject: [PATCH] asahi: G15C launch experiment b23 (malik-na/linux-aurora#50)
+
+---
+ src/asahi/lib/agx3_compute_program_core.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/asahi/lib/agx3_compute_program_core.c b/src/asahi/lib/agx3_compute_program_core.c
+index fa809cb6b34..9a55ba4ceb1 100644
+--- a/src/asahi/lib/agx3_compute_program_core.c
++++ b/src/asahi/lib/agx3_compute_program_core.c
+@@ -157,7 +157,9 @@ agx3_g17p_native_compute_launch_pack(
+    if (agx_chip_uses_g15s_runtime(program->chip)) {
+       if (program->launch_template.word1 != 0)
+          return false;
+-      agx3_cmdstream_store_le32(packed, program->launch_template.word0);
++      /* G15C experiment (malik-na/linux-aurora#50): the J516C driver sets word0 bit 23. */
++      agx3_cmdstream_store_le32(packed, program->launch_template.word0 |
++                                 (program->chip == AGX_CHIP_G15C ? UINT32_C(1) << 23 : 0));
+       agx3_cmdstream_store_le32(packed + 4,
+                                  (uint32_t)(program->program_va >> 32) << 16);
+       agx3_cmdstream_store_le32(packed + 8,
+-- 
+2.55.0
+
+From f702ac4115bfe30c40b450832e5936e9386e5e76 Mon Sep 17 00:00:00 2001
+From: Naeem Malik <malik2015naeem@gmail.com>
+Date: Wed, 14 Oct 2026 06:07:22 +0530
+Subject: [PATCH 1/2] asahi: G15C base page ends at its code entry too
+ (experiment for malik-na/linux-aurora#50)
+
+---
+ src/asahi/lib/agx_device.c |  2 +-
+ src/asahi/lib/agx_linker.c | 11 +++++++++++
+ src/asahi/lib/agx_linker.h |  1 +
+ 3 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/src/asahi/lib/agx_device.c b/src/asahi/lib/agx_device.c
+index 1cf2182c5b0..ab171cd44f3 100644
+--- a/src/asahi/lib/agx_device.c
++++ b/src/asahi/lib/agx_device.c
+@@ -1491,7 +1491,7 @@ agx_open_device(void *memctx, struct agx_device *dev)
+        * in the vertex/compute constant program, so a fetch from the window
+        * base finds a terminated program rather than the bare lead block. */
+       if (dev->chip == AGX_CHIP_G15C)
+-         agx3_build_container(map, 0, false, dev->chip);
++         agx3_build_container_ending_at_entry(map, dev->chip);
+       else
+          agx3_build_container_lead_for_chip(map, dev->chip);
+       if (agx_bo_sync_for_device(usc_base, 0, usc_base_size))
+diff --git a/src/asahi/lib/agx_linker.c b/src/asahi/lib/agx_linker.c
+index a9ce4024425..e83989a64e5 100644
+--- a/src/asahi/lib/agx_linker.c
++++ b/src/asahi/lib/agx_linker.c
+@@ -201,6 +201,17 @@ agx3_build_container(uint8_t *image, size_t code_size, bool fragment, enum agx_c
+    agx3_build_container_constant_program(constant, fragment);
+ }
+ 
++/* G15C experiment (malik-na/linux-aurora#50): a container whose code block is
++ * one more copy of its own constant program, so the code entry right after the
++ * constant program (lead + header + constant = +0x3c0) also ends. */
++void
++agx3_build_container_ending_at_entry(uint8_t *image, enum agx_chip chip)
++{
++   agx3_build_container(image, AGX3_CONTAINER_CONST_PROG, false, chip);
++   uint8_t *constant = image + AGX3_CONTAINER_LEAD + AGX3_CONTAINER_BLOCK_HDR;
++   memcpy(constant + AGX3_CONTAINER_CONST_PROG, constant, AGX3_CONTAINER_CONST_PROG);
++}
++
+ static bool
+ agx3_uses_code_container(const struct agx_device *dev)
+ {
+diff --git a/src/asahi/lib/agx_linker.h b/src/asahi/lib/agx_linker.h
+index 0bf04911753..05995c3d70c 100644
+--- a/src/asahi/lib/agx_linker.h
++++ b/src/asahi/lib/agx_linker.h
+@@ -73,6 +73,7 @@ void agx3_build_container_lead_for_chip(uint8_t *image, enum agx_chip chip);
+  * the CODE block's size word and its constant program. */
+ void agx3_build_container(uint8_t *image, size_t code_size, bool fragment,
+                           enum agx_chip chip);
++void agx3_build_container_ending_at_entry(uint8_t *image, enum agx_chip chip);
+ 
+ enum agx_link_result {
+    AGX_LINK_SUCCESS,
+-- 
+2.55.0
+
+
+From 3a613ddaf3db8fefd434ab41e26d72abb83c3bf9 Mon Sep 17 00:00:00 2001
+From: Naeem Malik <malik2015naeem@gmail.com>
+Date: Wed, 14 Oct 2026 06:09:25 +0530
+Subject: [PATCH 2/2] asahi: G15C base page also ends in its last 64 bytes
+ (experiment for malik-na/linux-aurora#50)
+
+---
+ src/asahi/lib/agx_device.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/src/asahi/lib/agx_device.c b/src/asahi/lib/agx_device.c
+index ab171cd44f3..55e1930f003 100644
+--- a/src/asahi/lib/agx_device.c
++++ b/src/asahi/lib/agx_device.c
+@@ -1490,9 +1490,13 @@ agx_open_device(void *memctx, struct agx_device *dev)
+       /* G15C experiment: make the base page a complete container that ends
+        * in the vertex/compute constant program, so a fetch from the window
+        * base finds a terminated program rather than the bare lead block. */
+-      if (dev->chip == AGX_CHIP_G15C)
++      if (dev->chip == AGX_CHIP_G15C) {
+          agx3_build_container_ending_at_entry(map, dev->chip);
+-      else
++         /* Also end the last 64 bytes of the page (+0x3fc0). They sit inside the range the
++          * asahi.t6031_usc_page kernel log prints, so the log shows this page reached the
++          * GPU, and a fetch anywhere in the page ends before the guard. */
++         memcpy(map + usc_base_size - 0x40, map + 0x380, 0x40);
++      } else
+          agx3_build_container_lead_for_chip(map, dev->chip);
+       if (agx_bo_sync_for_device(usc_base, 0, usc_base_size))
+          return false;
+-- 
+2.55.0
+
