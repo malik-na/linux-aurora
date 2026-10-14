@@ -96,6 +96,38 @@ first at index 512, zero where a value was expected). The stall of t47–t79 was
 of its window just past the client's objects. Open: the wrong 1/16, and where the real fix belongs (Mesa's guard
 pages in the USC heap, or kernel backing for them).
 
+## Finding 6 (no boot, 2026-10-14): the kit's Mesa source (m3max/g15c, ff120e88), read and verified
+
+From a verified research workflow over iconidentify/mesa-omacom m3max/g15c (4 commits on 7ff89a4d; G15C added to
+`agx_chip_uses_g15s_runtime`, so it takes every G15S path):
+- **No per-USC, per-core or per-cluster table exists on the G15C compute path or in the USC window.** No core or
+  cluster count reaches the hardware from Mesa: the submit struct has no such field, and the launch record is
+  template word0, the pipeline VA, word3 = 0x40, then sizes. The scratch helper header (the one per-core table)
+  is never built on G15C. Chris's 'sized for G15S' idea therefore has no Mesa site; if it holds, it is kernel or
+  firmware setup.
+- **The window objects** (inferred from sizes and allocation order; the pipeline decode is observed): +0x0 is the 16 KiB
+  "HAL200 USC window base" page (the container lead only: 0x340, 0x0006 filler, two 10-entry helper tables);
+  +0x8000 is the 256 KiB "Internal programs" pool slab (no code for a compute-only client); +0x4c000 is the
+  kernel's 16 KiB "Linked executable" container; +0x54000 is a 128 KiB command-pool object holding the launch's
+  program, whose shader pointer decodes to base + 0x4c3c0 (the container's entry at +0x3c0).
+- **The base page has no unconditional end.** Decoded with Mesa's own disassembler: zeros decode as f16add, the
+  filler as nop, and the helper terminals as conditional returns. That gives a new, unverified candidate: units
+  that execute or prefetch from the base page and run off its end. This would explain the fault moving to the
+  next object once a guard is backed. The M3 path never programs USC_EXEC_BASE_CP, though, so nothing known
+  points a unit there.
+- **The end-of-stream barrier is a mismatch.** On G15C, hk ends every compute stream with the wide-visibility
+  barrier 0x600215fe, but the T6031 kernel does not advertise `compute_wide_visibility` (features 0xa) while the
+  T6030 does. Candidate for "the job completes although 64 groups never ran". Testable without a build:
+  `HK_M4_CDM_VISIBILITY_BARRIER=0`, with or without `HK_M4_CDM_END_BARRIER=1`.
+- **Word0 bit 19** (SubKernelXTargetWorkitems) is stored unchanged on 1-D grids; Mesa's model of the Apple emitter
+  clears bits 17..19 there. The A18 Pro and the M3 Pro also send it, so this is weak. Testing it needs a rebuild,
+  with the probe's WM_SHAPE as a no-build companion.
+- **The multiple-AGC flag** exists only in a different (40-byte) record layout. No buildable change follows until the
+  J516C's own launch words are captured.
+- **Rebuilding is possible.** The kit's build recipe (omacom integration/aurora tools/aurora-sep/recipes/mesa-m3-g15c)
+  is byte-identical to the one that built the kit. A dev build can go into a private prefix (`/opt/mesa-m3-g15c-dev*`)
+  run through `G15C_PREFIX`, next to the kit's.
+
 ## Not needed yet
 
 The hypervisor comparison (SGX block polled at each firmware message during the macOS job) stays as the fallback
