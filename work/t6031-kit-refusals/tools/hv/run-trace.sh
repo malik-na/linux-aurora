@@ -8,7 +8,7 @@
 set -euo pipefail
 ARGS=${1:-"apcie=0xfffffffe wdt=-1 clpc=0"}
 KERNEL=/home/naeem/m3-images/t22/upload/kc-a.macho
-TRACER=/home/naeem/m3-images/t22/trace_agx_min.py
+TRACER=${TRACER:-/home/naeem/m3-images/t22/trace_agx_min.py}
 PC=/home/naeem/Projects/m1n1/proxyclient
 PY=/home/naeem/m1n1-venv/bin/python3
 
@@ -18,7 +18,7 @@ sleep 3
 R=$HOME/m3-results/hv-t22-$(date +%Y%m%d-%H%M%S); mkdir -p "$R/initdata"; cd "$R"
 echo "$R" > "$HOME/m3-results/hv-t22.current"; echo "run dir: $R"; echo "boot args: $ARGS"
 sudo -n env M1N1DEVICE=/dev/ttyACM0 AGX_FWVER=V14_7 AGX_GPU=G15X AGX_INITDATA_DUMP_DIR="$R/initdata" \
-    PYTHONPATH=$PC setsid nohup $PY $PC/tools/run_guest.py -l "$R/hv.log" -m $TRACER "$KERNEL" -- "$ARGS" \
+    PYTHONPATH=$PC setsid nohup $PY $PC/tools/run_guest.py -l "$R/hv.log" ${HV_EXTRA:-} -m $TRACER "$KERNEL" -- "$ARGS" \
     > "$R/run.log" 2>&1 < /dev/null &
 disown
 echo "started; watch with: grep -E 'T6031:|Traceback' $R/run.log; ls $R/initdata"

@@ -15,12 +15,14 @@
 # through the job's OWN UAT context (the command's context slot at +0x10): the client's CDM stream (the
 # command register 0x1a420), its first launch record and the pipeline it names (0x400 bytes), the page map
 # of the client's USC window (2 MiB from the pipeline's 4 GiB-aligned base) with 0x200 bytes past each mapped
-# run that is followed by a mapped page, and the SGX status block (plain MMIO reads, no writes). Everything
-# is bounded and in try blocks; a failure is logged and never stops the guest. Dumps stay on the Air.
-import datetime, os, traceback
+# run (and at each physical break inside one), and the GPU performance state and core masks (three plain
+# MMIO reads, no writes; the 0xc000 status block is NOT read, review 2026-10-14). Everything is bounded and
+# in try blocks; a failure is logged and never stops the guest. Physical reads are limited to RAM.
+# Dumps stay on the Air.
+import datetime, os, struct, traceback
 from m1n1.utils import *
 from m1n1.trace.asc import ASCTracer, EP, msg, DIR
-from m1n1.hw.uat import UAT
+from m1n1.hw.uat import UAT, Page_PTE
 from m1n1.trace.agx import GpuMsg, PongMsg, KickMsg
 
 DUMP_DIR = os.environ.get("AGX_INITDATA_DUMP_DIR", "initdata")
@@ -28,7 +30,10 @@ LAUNCH_DUMPS = int(os.environ.get("AGX_LAUNCH_DUMPS", "3"))
 WINDOW = 2 << 20          # bytes of the USC window mapped page by page
 PAGE = 0x4000
 CDM_REGISTER = 0x1a420    # the compute command's CDM stream base (m3_compute_layout.rs register list)
-SGX_OFFSETS = [0xc000 + 8 * i for i in range(0x150 // 8)] + [0xe01500, 0xe01504]
+SGX_OFFSETS = [0xe01000, 0xe01500, 0xe01504]   # perf state, core masks (what our kernel reads safely)
+RAM_LO, RAM_HI = 0x10000000000, 0x10c00000000      # the M3's DRAM (dump_all_pages.py)
+MAX_BREAKS = 16
+VA_LIMIT = 1 << 42
 NAMES = ["TA_0","3D_0","CL_0","TA_1","3D_1","CL_1","TA_2","3D_2","CL_2","TA_3","3D_3","CL_3",
          "DevCtrl","Event","FWLog","KTrace","Stats"]
 ENTRY = [0x18]*12 + [0x38, 0x38, 0xd8, 0x38, 0x40]   # pipe entries are 0x18 bytes on 14.x (our runtime's stride)
@@ -48,6 +53,7 @@ class Shared:
     fwctl_last = 0
     launches = 0
     sgx_base = None
+    sgx_pending = set()   # capture tags still owed one after-flag snapshot
 
 S = Shared()
 
@@ -150,54 +156,126 @@ def wf(name, data):
         f.write(data)
 
 def sgx_snapshot(ep, tag):
-    # Plain 64-bit MMIO reads of the SGX status block from the hypervisor; no selector writes.
+    # Three 32-bit MMIO reads: performance state and the two core-mask words. Nothing else on the
+    # SGX is read here (some status and fault registers hang G15 parts when read at the wrong time).
     try:
         if S.sgx_base is None:
             S.sgx_base = ep.tracer.hv.adt["/arm-io/sgx"].get_reg(0)[0]
         p = ep.tracer.hv.p
-        vals = [(o, p.read64(S.sgx_base + o) if o < 0xe00000 else p.read32(S.sgx_base + o)) for o in SGX_OFFSETS]
+        vals = [(o, p.read32(S.sgx_base + o)) for o in SGX_OFFSETS]
         ep.log(f"T6031 {now()} SGX {tag}: " + " ".join(f"{o:#x}={v:#x}" for o, v in vals))
-    except Exception:
-        ep.log("T6031 SGX snapshot failed:\n" + traceback.format_exc())
+    except Exception as e:
+        ep.log(f"T6031 SGX snapshot {tag} failed: {e!r}")
+
+def cread(ctx, va, n):
+    # Read n bytes at va in UAT context ctx, refusing anything unmapped or outside RAM.
+    out = []
+    for phys, size in S.uat.iotranslate(ctx, va, n):
+        if phys is None:
+            raise Exception(f"unmapped at {ctx}:{va:#x}")
+        if not (RAM_LO <= phys and phys + size <= RAM_HI):
+            raise Exception(f"not RAM: {phys:#x}")
+        out.append(S.uat.iface.readmem(phys, size))
+    return b"".join(out)
+
+def l3_table(ctx, va):
+    # The 2048-entry L3 table covering va (32 MiB), read once, or None if a higher level is invalid.
+    t = S.uat.gpu_region + ctx * 16
+    for off, size, cls in S.uat.LEVELS[:3]:
+        pte = S.uat.fetch_pte(t, va >> off, size, cls)
+        if not pte.valid():
+            return None
+        t = pte.offset()
+    return S.uat.get_pt(t, size=S.uat.Lx_SIZE)[1]
+
+def capture_window(ep, ctx, base, tag):
+    # Map the 2 MiB from base from one L3 table: valid runs, plus physical breaks inside them.
+    tbl = l3_table(ctx, base)
+    if tbl is None:
+        ep.log(f"T6031 window {tag}: no L3 table for {base:#x}")
+        return
+    first = (base >> 14) & 2047
+    ptes = tbl[first:first + WINDOW // PAGE]
+    wf(f"job-{tag}-window-ptes.bin", struct.pack(f"<{len(ptes)}Q", *ptes))
+    valid = [Page_PTE(v).valid() for v in ptes]
+    phys = [Page_PTE(v).offset() if ok else None for v, ok in zip(ptes, valid)]
+    runs, start = [], 0
+    for k in range(1, len(valid) + 1):
+        if k == len(valid) or valid[k] != valid[start]:
+            runs.append((start * PAGE, k * PAGE, valid[start]))
+            start = k
+    ep.log(f"T6031 {now()} USC window {tag} base {base:#x}: " +
+           " ".join(f"+{a:#x}..+{b:#x}:{'M' if m else '-'}" for a, b, m in runs))
+    breaks = [k for k in range(1, len(valid)) if valid[k] and valid[k - 1] and phys[k] != phys[k - 1] + PAGE]
+    ep.log(f"T6031 window {tag}: physical breaks inside mapped runs at " + " ".join(f"+{k * PAGE:#x}" for k in breaks[:64]))
+    if valid[0]:
+        try:
+            wf(f"job-{tag}-base.bin", cread(ctx, base, PAGE))
+        except Exception as e:
+            ep.log(f"T6031 window {tag}: base page unreadable: {e!r}")
+    for k in breaks[:MAX_BREAKS]:
+        try:
+            wf(f"job-{tag}-break-{k * PAGE:x}.bin", cread(ctx, base + k * PAGE, 0x200))
+        except Exception as e:
+            ep.log(f"T6031 window {tag}: +{k * PAGE:#x} (physical break) unreadable: {e!r}")
+    # a 128-bit valid mask of the L2 entries covering [base, base + 4 GiB) would need the L2 table;
+    # the run list above already answers whether the page after each object is mapped.
 
 def capture_launch(ep, body, tag):
     try:
-        ctx = u32(body, 0x10) & 0xff
+        ctx = u32(body, 0x10)
+        if not 0 < ctx < 64:
+            ep.log(f"T6031 launch {tag}: context {ctx:#x} out of range, skipped")
+            return
         count = int.from_bytes(body[0x728:0x72a], "little") or 22
         regs = {u32(body, 0x20 + 12 * n): u64(body, 0x24 + 12 * n) for n in range(min(count, 64))}
         cdm = regs.get(CDM_REGISTER)
         ep.log(f"T6031 {now()} launch {tag}: context {ctx}, {count} registers, CDM {cdm if cdm is None else hex(cdm)}")
-        sgx_snapshot(ep, f"at-kick {tag}")
-        if not cdm:
+        sgx_snapshot(ep, f"pre-doorbell {tag}")
+        S.sgx_pending.add(tag)
+        if not cdm or cdm >= VA_LIMIT or cdm & 3:
+            ep.log(f"T6031 launch {tag}: CDM address unusable, skipped")
             return
-        stream = S.uat.ioread(ctx, cdm, 0x100)
-        wf(f"job-{tag}-cdm.bin", stream)
-        w = [u32(stream, 4 * i) for i in range(16)]
-        ep.log(f"T6031 {now()} CDM {tag}: " + " ".join(f"{x:08x}" for x in w))
-        if w[0] >> 29 != 0:
-            ep.log(f"T6031 CDM {tag}: first record is not a launch (type {w[0] >> 29})")
-            return
-        pipeline = ((w[1] >> 22) << 38) | (w[2] << 6)
-        ep.log(f"T6031 {now()} launch {tag}: word0 {w[0]:#010x} word3 {w[3]:#010x} pipeline {pipeline:#x}")
+        last = u64(body, 0x79c)
+        span = last - cdm + 4 if cdm <= last < cdm + 0x1000 else 0x100
         try:
-            wf(f"job-{tag}-pipeline.bin", S.uat.ioread(ctx, pipeline, 0x400))
+            stream = cread(ctx, cdm, span)
         except Exception as e:
-            ep.log(f"T6031 pipeline {pipeline:#x} unreadable: {e!r}")
-        base = pipeline & ~((1 << 32) - 1)
-        ranges = S.uat.iotranslate(ctx, base, WINDOW)
-        runs, off = [], 0
-        for phys, size in ranges:
-            runs.append((off, off + size, phys is not None))
-            off += size
-        ep.log(f"T6031 {now()} USC window {tag} base {base:#x}: " +
-               " ".join(f"+{a:#x}..+{b:#x}:{'M' if m else '-'}" for a, b, m in runs))
-        for i, (a, b, m) in enumerate(runs):
-            if m and b < WINDOW:
-                try:
-                    wf(f"job-{tag}-past-{b:x}.bin", S.uat.ioread(ctx, base + b, 0x200))
-                    ep.log(f"T6031 window {tag}: +{b:#x} is mapped (0x200 bytes saved)")
-                except Exception:
-                    ep.log(f"T6031 window {tag}: +{b:#x} unmapped (the page after a mapped run)")
+            span = min(span, PAGE - (cdm & (PAGE - 1)))
+            ep.log(f"T6031 CDM {tag}: full read failed ({e!r}), reading {span:#x} bytes")
+            stream = cread(ctx, cdm, span)
+        wf(f"job-{tag}-cdm.bin", stream)
+        w = [u32(stream, 4 * i) for i in range(len(stream) // 4)]
+        ep.log(f"T6031 {now()} CDM {tag} ({len(stream):#x} bytes): " + " ".join(f"{x:08x}/{x >> 29}" for x in w[:24]))
+        off = 0
+        while off < len(w) and w[off] >> 29 == 3:
+            off += 1
+        if off + 3 > len(w) or w[off] >> 29 != 0:
+            ep.log(f"T6031 CDM {tag}: no launch record found (word {off})")
+            return
+        pipeline = ((w[off + 1] >> 22) << 38) | (w[off + 2] << 6)
+        ep.log(f"T6031 {now()} launch {tag} at word {off}: word0 {w[off]:#010x} word3 "
+               f"{w[off + 3] if off + 3 < len(w) else 0:#010x} pipeline {pipeline:#x} (pipeline>>32 {pipeline >> 32:#x}, cdm>>32 {cdm >> 32:#x})")
+        if pipeline >= VA_LIMIT:
+            ep.log(f"T6031 launch {tag}: pipeline above 2^42, skipped")
+            return
+        try:
+            try:
+                wf(f"job-{tag}-pipeline.bin", cread(ctx, pipeline, 0x400))
+            except Exception as e:
+                n = min(0x400, PAGE - (pipeline & (PAGE - 1)))
+                ep.log(f"T6031 pipeline {tag}: full read failed ({e!r}), reading {n:#x} bytes")
+                wf(f"job-{tag}-pipeline.bin", cread(ctx, pipeline, n))
+        except Exception as e:
+            ep.log(f"T6031 pipeline {tag} unreadable: {e!r}")
+        try:
+            base = pipeline & ~((1 << 32) - 1)
+            ep.log(f"T6031 launch {tag}: pipeline - base = {pipeline - base:#x}")
+            capture_window(ep, ctx, base, tag)
+            if pipeline - base >= WINDOW:
+                capture_window(ep, ctx, pipeline & ~(WINDOW - 1), tag + "-pipe")
+        except Exception:
+            ep.log(f"T6031 window {tag} failed:\n" + traceback.format_exc())
     except Exception:
         ep.log("T6031 launch capture failed:\n" + traceback.format_exc())
 
@@ -210,8 +288,10 @@ def redump(ep):
                 with open(os.path.join(DUMP_DIR, f"job-{tag}-useq-after.bin"), "wb") as f: f.write(ub)
                 dump_startcl_objects(ep, ub, tag, "-after")
             ep.log(f"T6031 {now()} compute command {cmd:#x} re-dumped after a flag event as job-{tag}-*-after")
-            if S.launches and S.launches <= LAUNCH_DUMPS:
-                sgx_snapshot(ep, f"after-flag {tag}")
+        hit = S.sgx_pending & {t for _, _, t in S.live_compute}
+        if hit:
+            S.sgx_pending -= hit
+            sgx_snapshot(ep, "after-flag " + ",".join(sorted(hit)))
     except Exception:
         ep.log("T6031 re-dump failed:\n" + traceback.format_exc())
     S.live_compute = []
