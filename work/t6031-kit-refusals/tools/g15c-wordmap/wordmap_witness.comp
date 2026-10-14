@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: MIT
+// g15c-wordmap, witness variant (ticket #50): every invocation writes, through addresses baked in as
+// specialization constants, what it sees in its push constants and system values: out[i] = p.n,
+// meta[i] = p.steps | (gl_NumWorkGroups.x << 16). Groups that run without the launch's uniform state
+// show what they read instead.
+#version 450
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x_id = 0) in;
+layout(constant_id = 1) const uint OUT_LO = 0u;
+layout(constant_id = 2) const uint OUT_HI = 0u;
+layout(constant_id = 3) const uint META_LO = 0u;
+layout(constant_id = 4) const uint META_HI = 0u;
+layout(constant_id = 5) const uint N = 0u;
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Words { uint w[]; };
+layout(push_constant) uniform Params { uint n; uint steps; } p;
+
+void main()
+{
+   uint i = gl_WorkGroupID.x * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
+   if (i >= N)
+      return;
+   Words o = Words(uint64_t(OUT_HI) << 32 | uint64_t(OUT_LO));
+   Words m = Words(uint64_t(META_HI) << 32 | uint64_t(META_LO));
+   o.w[i] = p.n;
+   m.w[i] = p.steps | (gl_NumWorkGroups.x << 16);
+}

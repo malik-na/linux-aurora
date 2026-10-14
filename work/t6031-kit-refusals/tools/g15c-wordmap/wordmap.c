@@ -10,6 +10,9 @@
  *   WM_LOCAL=32|64|128    workgroup size (default 64)
  *   WM_VARIANT=nouniform  no descriptors or push constants: addresses, N and steps are
  *                         specialization constants (wordmap_nouniform.spv; needs buffer device address)
+ *   WM_VARIANT=witness    every invocation writes the push constants and gl_NumWorkGroups.x it sees
+ *                         (out = n, meta = steps | numgroups.x << 16) through baked-in addresses;
+ *                         prints them by group instead of the wrong-word map
  *   WM_SPIN=ITERS         groups WM_SPIN_GROUPS=A-B (linear) spin ITERS rounds first (plain variant)
  *   WM_RAW=PREFIX         save each run's output and meta words to PREFIX-runN-{out,meta}.bin
  * Every run prints its GPU wall time (submit to fence). */
@@ -76,7 +79,8 @@ int main(int argc, char **argv)
    int runs = argc > 3 ? atoi(argv[3]) : 3;
    const uint32_t GROUP = env_u32("WM_LOCAL", 64);
    const char *variant = getenv("WM_VARIANT");
-   const int nouniform = variant && !strcmp(variant, "nouniform");
+   const int witness = variant && !strcmp(variant, "witness");
+   const int nouniform = (variant && !strcmp(variant, "nouniform")) || witness; /* baked-in addresses */
    const char *raw = getenv("WM_RAW");
    const uint32_t spin = env_u32("WM_SPIN", 0);
    uint32_t spin_first = 0, spin_last = 0;
@@ -155,7 +159,7 @@ int main(int argc, char **argv)
    }
 
    size_t spv_size;
-   uint32_t *spv = load_spirv(nouniform ? "wordmap_nouniform.spv" : "wordmap.spv", &spv_size);
+   uint32_t *spv = load_spirv(witness ? "wordmap_witness.spv" : nouniform ? "wordmap_nouniform.spv" : "wordmap.spv", &spv_size);
    VkShaderModuleCreateInfo smci = { .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = spv_size, .pCode = spv };
    VkShaderModule sm;
    CHECK(vkCreateShaderModule(dev, &smci, NULL, &sm));
@@ -167,7 +171,7 @@ int main(int argc, char **argv)
    CHECK(vkCreateDescriptorSetLayout(dev, &dslci, NULL, &dsl));
    VkPushConstantRange pcr = { .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .size = 8 };
    VkPipelineLayoutCreateInfo plci = { .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-      .setLayoutCount = nouniform ? 0 : 1, .pSetLayouts = &dsl, .pushConstantRangeCount = nouniform ? 0 : 1, .pPushConstantRanges = &pcr };
+      .setLayoutCount = nouniform ? 0 : 1, .pSetLayouts = &dsl, .pushConstantRangeCount = (nouniform && !witness) ? 0 : 1, .pPushConstantRanges = &pcr };
    VkPipelineLayout pl;
    CHECK(vkCreatePipelineLayout(dev, &plci, NULL, &pl));
    /* Specialization: constant 0 is the local size in both kernels; the plain kernel takes the
@@ -181,12 +185,13 @@ int main(int argc, char **argv)
       }
       printf("nouniform: out %#llx meta %#llx\n", (unsigned long long)a[0], (unsigned long long)a[1]);
       uint32_t nu[7] = { GROUP, (uint32_t)a[0], (uint32_t)(a[0] >> 32), (uint32_t)a[1], (uint32_t)(a[1] >> 32), n, steps };
+      /* the witness kernel takes N as constant 5 and reads steps from its push constants */
       memcpy(spec, nu, sizeof(spec));
    }
    VkSpecializationMapEntry entries[7];
    for (uint32_t e = 0; e < 7; e++)
       entries[e] = (VkSpecializationMapEntry){ .constantID = e, .offset = e * 4, .size = 4 };
-   VkSpecializationInfo si_spec = { .mapEntryCount = nouniform ? 7 : 4, .pMapEntries = entries, .dataSize = sizeof(spec), .pData = spec };
+   VkSpecializationInfo si_spec = { .mapEntryCount = witness ? 6 : nouniform ? 7 : 4, .pMapEntries = entries, .dataSize = sizeof(spec), .pData = spec };
    VkComputePipelineCreateInfo cpci = { .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, .layout = pl,
       .stage = { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = sm,
                  .pName = "main", .pSpecializationInfo = &si_spec } };
@@ -226,10 +231,10 @@ int main(int argc, char **argv)
       VkCommandBufferBeginInfo bi = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
       CHECK(vkBeginCommandBuffer(cb, &bi));
       vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipe);
-      if (!nouniform) {
+      if (!nouniform)
          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pl, 0, 1, &ds, 0, NULL);
+      if (!nouniform || witness)
          vkCmdPushConstants(cb, pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), pc);
-      }
       vkCmdDispatch(cb, gx, gy, 1);
       VkMemoryBarrier mb = { .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT };
       vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
@@ -244,6 +249,23 @@ int main(int argc, char **argv)
       if (wr != VK_SUCCESS) { printf("run %d: fence wait failed (%d); the job did not complete\n", run, wr); return 1; }
       CHECK(vkResetFences(dev, 1, &fence));
       CHECK(vkResetCommandBuffer(cb, 0));
+      if (witness) {
+         /* Runs of groups whose lane 0 saw the same (n, steps|numgroups<<16); flag groups whose lanes disagree. */
+         printf("run %d: witness (expected n=%#x, steps|numgroups<<16=%#x):\n", run, n, steps | (gx << 16));
+         uint32_t start = 0;
+         for (uint32_t g = 1; g <= n / GROUP; g++) {
+            uint32_t a = start * GROUP, b = g * GROUP;
+            if (g < n / GROUP && map[0][b] == map[0][a] && map[1][b] == map[1][a])
+               continue;
+            int mixed = 0;
+            for (uint32_t k = a; k < b; k++)
+               mixed |= map[0][k] != map[0][a] || map[1][k] != map[1][a];
+            printf("  groups %u-%u: n=%#x meta=%#x%s\n", start, g - 1, map[0][a], map[1][a], mixed ? " (lanes differ)" : "");
+            start = g;
+         }
+         if (raw) { save_raw(raw, run, "out", map[0], n); save_raw(raw, run, "meta", map[1], n); }
+         continue;
+      }
       struct wm_report r;
       wm_analyze(map[0], map[1], n, GROUP, steps, &r);
       printf("run %d: %.3f ms submit to fence\n", run, ms);
