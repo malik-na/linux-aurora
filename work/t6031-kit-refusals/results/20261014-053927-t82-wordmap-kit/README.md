@@ -73,3 +73,27 @@ Order: every `usc_page=6` arm first, then `usc_page=0` arms last (a fault there 
 | C | dev-b19, 6 | wordmap N=1024, 8192 | bit 19 drives the split → no loss; otherwise identical (expected identical, since B lacks state) |
 | D | dev-term, **0** | compute-check 1; wordmap N=1024 | slide model: **no fault** at +0x4000 (B stops in the base page); the job completes with B's groups lost. A fault at +0x4000/+0x4180 refutes the model and costs the GPU |
 | E | dev-pad, **0** (only if D left the GPU alive) | compute-check 1; wordmap N=1024 | the Mesa equivalent of t80's fills: the job completes, B's groups lost as in t81; no prepare_map errors |
+
+### Part 2 results (fills on, `usc_page=6`)
+
+- **A (dev, B0):** identical to the kit (N=1024: groups 8–15; N=8192: 64 groups; nouniform GREEN; witness 8–15
+  n=0). The rebuild reproduces the kit. The loader took the dev prefix's ICD (checked with `VK_LOADER_DEBUG=driver`).
+- **B (dev-term):** **identical to the kit**: witness 8–15 n=0, nouniform GREEN, the spin on 8–15 adds 77 ms like the
+  spin on 0–7. **The prediction failed, so the slide model as stated (B starts at window base +0x0 and runs through
+  the base page) is refuted.** B does not reach the `end` placed at +0x380.
+- **C (dev-b19):** **N=1024 GREEN** (all 16 groups right). N=8192 still loses 64 groups, in a different pattern
+  (1024–2559, 3584–4095, 5120–7167). Clearing word0 bits 17–19 changes how groups are split but does not stop the
+  second destination from getting work. Not the fix.
+- **D (dev-term, fills off):** not run. With B refuted it would only reproduce bug 1's fault and cost the GPU.
+
+### Refined prediction (written before dev-term2)
+
+In dev-term the base page has the `end` at +0x380 and zeros at the container entry, +0x3c0. The working
+destination's kernel is at window base + 0x4c3c0 (its container +0x4c000, entry +0x3c0). **If the second
+destination keeps only the low bits of the shader pointer (0x4c3c0 & 0x3fff = 0x3c0), it starts at base + 0x3c0**:
+zeros there let it slide into +0x4000 (bug 1), and with fills it reaches the real kernel without its state (bug 2).
+
+**dev-term2** copies Mesa's own copy+end constant program (the 0x40 bytes at +0x380) to +0x3c0 as well. The prediction
+with fills on: witness groups 8–15 keep the **sentinel**, nouniform turns **RED** (8–15 lost), and the spin on 8–15
+adds **no** time. If the outputs still equal the kit's, the second destination does not enter the base page at all,
+and this model is refuted too.
