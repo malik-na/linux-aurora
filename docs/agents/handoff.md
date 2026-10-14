@@ -103,3 +103,15 @@ window's page map and fill every guard page (`=2`), one build and one boot.
 the logs). Every job completes (1.07 ms GPU time) and 15/16 of compute-check's output is right. The stall was the
 USC reading past the client's USC objects into unmapped pages (#47–#49). The knob is an experiment, not a fix.
 Frontier: #50 (the wrong 1/16), #51 (where the fix belongs, grilling, team post needs Naeem's text approval).
+
+**Update 2026-10-14 08:55: G15C compute is right, and #50's cause is found (one Mesa bug).** Neo's Mesa is
+`aurora-silicon/mesa` `agx3b` (local `~/Projects/mesa-aurora`; the kit's m3max/g15c is checked out beside it at
+`~/Projects/mesa-kit-g15c`). Reading it against the kit found the cause: the kit's launch program, for any program
+with uniforms, makes a computed "profile" helper call (special register × 16 into the base page). The base page's two
+10-entry tables cover only values 0..27, and the second destination's groups ran off the page. That was bug 1 (the
+fault past object ends) and bug 2 (no uniform state) at once. The Mesa variant `dev-prof` (`patches-3.mbox`,
+`HK_G15C_PROFILE=land|nocall`) makes every probe and compute-check pass with **no kernel fill**
+(`results/20261014-t83-profile-call/`, #50 comments). The M3 is still on the t83 boot (usc_page back at 6).
+Frontier: #52, the Mesa fix as a PR against m3max/g15c. Its form is Naeem's call: land / nocall / per-cluster
+tables / one fixed call as the J516C driver makes. Also: the held team post, and render on the G15C (the fragment
+programs carry the same prefix). The full hv trace is no longer needed for compute.
