@@ -1,4 +1,4 @@
-# t83 boot, part 2 (planned): the launch program's profile helper call, predictions written before the runs
+# t83 boot, part 2: the launch program's profile helper call (predictions written before the runs; results below)
 
 Ticket #50. Same boot as t83 (kernel dev-82, `asahi.t6031_compute_regs=0xf asahi.t6031_first_job_zero=1
 asahi.t6031_usc_page=6 asahi.debug_flags=0x1000`); no new boot. One new Mesa prefix, `/opt/mesa-m3-g15c-dev-prof`
@@ -42,3 +42,31 @@ The kernel's existing logs verify each arm took effect: the base page's +0x3400.
 launch program bytes (nocall). If `land` is GREEN and `nocall` is not (or the reverse), the call's target or its
 side effect matters, and the next step is a per-cluster table layout (four 10-entry tables) to learn what the
 register holds.
+
+## Results (2026-10-14 ~08:40, t83 boot, `usc_page=6`, no fault, no halt)
+
+`~/g15c-wordmap/t83b-run.sh ARM` (copy in `tools/g15c-wordmap/t83b-run.sh`); logs on the M3 under
+`~/m3-first-job/t83-profile-call/`.
+
+| arm | witness N=1024 | wordmap N=1024 | wordmap N=8192 | nouniform 2-D 8×16 |
+|---|---|---|---|---|
+| control (unset) | groups 0–7 n=0x400, **8–15 n=0 meta=0** | **RED**, 512 words (8 groups) | **RED**, 4096 words (64 groups) | **RED**, 64 groups |
+| land | **groups 0–15 n=0x400 meta=0x100100** | GREEN | GREEN | GREEN |
+| nocall | **groups 0–15 n=0x400 meta=0x100100** | GREEN | GREEN | GREEN |
+
+Each arm took effect, checked in the kernel's own window log (`dmesg-ARM-page6.txt`):
+- the control's and land's launch programs contain the CNDCALL bytes; nocall's do not;
+- land's base page holds the helper terminal at every slot of the logged +0x3400..+0x4000 (768 slots over 4
+  jobs); the control's and nocall's hold none.
+The control reproduces the kit (t82, t83) exactly.
+
+**Reading.** OBSERVED: with either change, the second destination's groups get the launch's push constants and
+`gl_NumWorkGroups`, and the plain and 2-D kernels lose nothing. Either giving the profile helper call somewhere
+to return across the base page, or removing the call, is enough. So H-prof holds: the second destination's
+groups compute a helper call target past the base page's two 10-entry tables (special-register value > 27) and run
+off, skipping or corrupting the uniform copies. The t82 "slide" observations were this run-off, not units starting
+at the window base. INFERRED, to be tested: bug 1 (the read past object ends without fills) is the same run-off,
+so `usc_page=0` with either arm should complete with no fault.
+
+Not yet run (ask first): zero fill (`usc_page=2`), compute-check (the original 4096-of-65536 symptom), and the
+no-fill arm (`usc_page=0`, last, since a fault halts the GPU for the rest of the boot).
