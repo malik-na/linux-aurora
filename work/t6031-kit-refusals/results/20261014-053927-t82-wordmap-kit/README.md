@@ -120,3 +120,31 @@ dev-pad backs each USC object's trailing guard with Mesa's own zero page (base p
   8–15 (as under the kernel zero fill in t81: descriptors still wrong). No prepare_map errors.
 - A fault at an address past the padded page means the reads extend further than one page (the pad is too short).
   That costs the GPU for the boot.
+
+### Arm E result (dev-pad, kernel fills off): fault, the boot's GPU is gone
+
+- witness N=1024: the job did not complete. Bank 0x100 latched `fault=0x8c69626211 address_word=0x400000206`: an
+  **unmapped read by UL1C(3)** (unit 0x31) at **base + 0x8180**; banks 0, 1 and the cluster 1–3 selectors are clear.
+  CDM counters are tiny on cores 0–3. info 0x27. The GPU is unusable for the rest of this boot.
+- dev-pad made the base object two pages (+0x0..+0x8000; the guard is now at +0x8000), and **the read moved to 0x180
+  past the new end**. So the read follows the end of the object (or the start of the next one: the guard is still
+  exactly one page, so "end of A + 0x180" and "start of B − 0x3e80" are still the same address). It is not a fixed
+  per-unit offset, and it is not tied to units 8 and 9 (unit 3 here). The "per-unit table sized for 9 cores" reading
+  is not supported.
+- Padding each object by one page does not stop the read. t80's kernel fills worked because they covered every gap
+  below the top object and the page after it.
+
+## t82 summary: what is established
+
+- OBSERVED: the second destination's workgroups **run** (spin timing), with the launch's uniform state missing or
+  wrong. A kernel that needs no uniforms is correct at every size (the first fully correct G15C dispatches).
+- OBSERVED: what those groups see in their push constants depends on the guard pages' *contents* (zero: correct;
+  tags: zero). The plain kernel still loses them under zero fill (descriptor state wrong).
+- OBSERVED: Mesa variants that end the base page (dev-term, dev-term2, dev-term2m; verified in the window) change
+  nothing. The second destination does not execute the base page.
+- OBSERVED: clearing word0 bits 17–19 (dev-b19) changes how groups are split (N=1024 all right) but not the loss at
+  larger sizes.
+- OBSERVED: the read-past follows the end of the object it passes, and moved with dev-pad's larger base object.
+- Escalation (the agreed three-tries rule): five Mesa variants and no fix for the second destination's state. The
+  direct way forward is the J516C driver's own compute launch (CDM words, Ioto program, USC window layout and what
+  macOS maps after objects) from a hypervisor trace, and putting these results to the team.
