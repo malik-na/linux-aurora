@@ -1,0 +1,166 @@
+From 353fd4eddd4355c446515fd8736f1d08ec3e1e94 Mon Sep 17 00:00:00 2001
+From: Naeem Malik <malik2015naeem@gmail.com>
+Date: Wed, 14 Oct 2026 05:57:24 +0530
+Subject: [PATCH] asahi: build the G15C USC window base page as a terminated
+ container (experiment for malik-na/linux-aurora#50)
+
+---
+ src/asahi/lib/agx_device.c | 8 +++++++-
+ src/asahi/lib/agx_linker.c | 2 +-
+ src/asahi/lib/agx_linker.h | 4 ++++
+ 3 files changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/src/asahi/lib/agx_device.c b/src/asahi/lib/agx_device.c
+index 316e2eb0717..1cf2182c5b0 100644
+--- a/src/asahi/lib/agx_device.c
++++ b/src/asahi/lib/agx_device.c
+@@ -1487,7 +1487,13 @@ agx_open_device(void *memctx, struct agx_device *dev)
+       }
+ 
+       memset(map, 0, usc_base_size);
+-      agx3_build_container_lead_for_chip(map, dev->chip);
++      /* G15C experiment: make the base page a complete container that ends
++       * in the vertex/compute constant program, so a fetch from the window
++       * base finds a terminated program rather than the bare lead block. */
++      if (dev->chip == AGX_CHIP_G15C)
++         agx3_build_container(map, 0, false, dev->chip);
++      else
++         agx3_build_container_lead_for_chip(map, dev->chip);
+       if (agx_bo_sync_for_device(usc_base, 0, usc_base_size))
+          return false;
+ 
+diff --git a/src/asahi/lib/agx_linker.c b/src/asahi/lib/agx_linker.c
+index e3794717b96..a9ce4024425 100644
+--- a/src/asahi/lib/agx_linker.c
++++ b/src/asahi/lib/agx_linker.c
+@@ -187,7 +187,7 @@ agx3_build_container_lead(uint8_t *image)
+    agx3_build_container_lead_for_chip(image, AGX_CHIP_G17P);
+ }
+ 
+-static void
++void
+ agx3_build_container(uint8_t *image, size_t code_size, bool fragment, enum agx_chip chip)
+ {
+    memset(image, 0, agx3_container_size(code_size));
+diff --git a/src/asahi/lib/agx_linker.h b/src/asahi/lib/agx_linker.h
+index ba6ff800b86..0bf04911753 100644
+--- a/src/asahi/lib/agx_linker.h
++++ b/src/asahi/lib/agx_linker.h
+@@ -69,6 +69,10 @@ struct agx_linked_shader {
+ #define AGX3_CONTAINER_LEAD_SIZE 0x340u
+ void agx3_build_container_lead(uint8_t *image);
+ void agx3_build_container_lead_for_chip(uint8_t *image, enum agx_chip chip);
++/* Write a whole container for `code_size` bytes of code: the leading block,
++ * the CODE block's size word and its constant program. */
++void agx3_build_container(uint8_t *image, size_t code_size, bool fragment,
++                          enum agx_chip chip);
+ 
+ enum agx_link_result {
+    AGX_LINK_SUCCESS,
+-- 
+2.55.0
+
+From 7b1fabf8bf7b9df0b9226e916f436cd494a0e9a9 Mon Sep 17 00:00:00 2001
+From: Naeem Malik <malik2015naeem@gmail.com>
+Date: Wed, 14 Oct 2026 05:57:27 +0530
+Subject: [PATCH] asahi: back each G15C USC-heap object's trailing guard with
+ its own zeroed page (experiment for malik-na/linux-aurora#50)
+
+---
+ src/asahi/lib/agx_device.c | 21 ++++++++++++++++-----
+ 1 file changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/src/asahi/lib/agx_device.c b/src/asahi/lib/agx_device.c
+index 316e2eb0717..36892f0da13 100644
+--- a/src/asahi/lib/agx_device.c
++++ b/src/asahi/lib/agx_device.c
+@@ -318,7 +318,14 @@ agx_bo_alloc(struct agx_device *dev, size_t size, size_t align,
+    if (dev->chip == AGX_CHIP_G16G && (flags & AGX_BO_EXEC))
+       flags |= AGX_BO_READONLY;
+ 
+-   struct drm_asahi_gem_create gem_create = {.size = size};
++   /* G15C experiment: back a USC-heap object's trailing guard page with an
++    * extra zeroed page of the object itself. bo->size stays the object's
++    * size and the reserved (unbound) VA guard still follows the pad. */
++   const size_t pad =
++      (dev->chip == AGX_CHIP_G15C && (flags & AGX_BO_LOW_VA)) ? AIL_PAGESIZE
++                                                             : 0;
++
++   struct drm_asahi_gem_create gem_create = {.size = size + pad};
+ 
+    if (flags & AGX_BO_WRITEBACK)
+       gem_create.flags |= DRM_ASAHI_GEM_WRITEBACK;
+@@ -345,14 +352,14 @@ agx_bo_alloc(struct agx_device *dev, size_t size, size_t align,
+    assert(!memcmp(bo, &((struct agx_bo){}), sizeof(*bo)));
+ 
+    bo->dev = dev;
+-   bo->size = gem_create.size;
++   bo->size = gem_create.size - pad;
+    bo->align = align;
+    bo->flags = flags;
+    bo->handle = bo->uapi_handle = handle;
+    bo->prime_fd = -1;
+ 
+    enum agx_va_flags va_flags = flags & AGX_BO_LOW_VA ? AGX_VA_USC : 0;
+-   bo->va = agx_va_alloc(dev, size, bo->align, va_flags, 0);
++   bo->va = agx_va_alloc(dev, size + pad, bo->align, va_flags, 0);
+    if (!bo->va) {
+       fprintf(stderr, "Failed to allocate BO VMA\n");
+       agx_bo_free(dev, bo);
+@@ -364,7 +371,7 @@ agx_bo_alloc(struct agx_device *dev, size_t size, size_t align,
+       bind |= DRM_ASAHI_BIND_WRITE;
+    }
+ 
+-   ret = agx_bo_bind(dev, bo, bo->va->addr, bo->size, 0, bind);
++   ret = agx_bo_bind(dev, bo, bo->va->addr, bo->size + pad, 0, bind);
+    if (ret) {
+       agx_bo_free(dev, bo);
+       return NULL;
+@@ -1460,7 +1467,11 @@ agx_open_device(void *memctx, struct agx_device *dev)
+     * rather than a blank page.
+     */
+    if (agx_chip_uses_hal200_ioto(dev->chip)) {
+-      const size_t usc_base_size = AIL_PAGESIZE;
++      /* G15C experiment: the base page's trailing guard is backed by a
++       * zeroed page of its own, as for every other USC-heap object. */
++      const size_t usc_base_pad =
++         dev->chip == AGX_CHIP_G15C ? AIL_PAGESIZE : 0;
++      const size_t usc_base_size = AIL_PAGESIZE + usc_base_pad;
+ 
+       simple_mtx_lock(&dev->vma_lock);
+       bool reserved = util_vma_heap_alloc_addr(&dev->usc_heap, dev->shader_base,
+-- 
+2.55.0
+
+From e7c10747f7cc6e4d35adacf7adfdc01ec8604be1 Mon Sep 17 00:00:00 2001
+From: Naeem Malik <malik2015naeem@gmail.com>
+Date: Wed, 14 Oct 2026 05:57:30 +0530
+Subject: [PATCH] asahi: clear launch word0 bits 17-19 for G15C grids with Y
+ and Z below 2 (experiment for malik-na/linux-aurora#50)
+
+---
+ src/asahi/lib/agx3_compute_program_core.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/src/asahi/lib/agx3_compute_program_core.c b/src/asahi/lib/agx3_compute_program_core.c
+index fa809cb6b34..da9cbf9123b 100644
+--- a/src/asahi/lib/agx3_compute_program_core.c
++++ b/src/asahi/lib/agx3_compute_program_core.c
+@@ -157,7 +157,13 @@ agx3_g17p_native_compute_launch_pack(
+    if (agx_chip_uses_g15s_runtime(program->chip)) {
+       if (program->launch_template.word1 != 0)
+          return false;
+-      agx3_cmdstream_store_le32(packed, program->launch_template.word0);
++      uint32_t word0 = program->launch_template.word0;
++      /* G15C experiment: for a grid that is one-dimensional in Y and Z,
++       * clear word0 bits 17-19. */
++      if (program->chip == AGX_CHIP_G15C && global_size[1] < 2 &&
++          global_size[2] < 2)
++         word0 &= UINT32_C(0xfff1ffff);
++      agx3_cmdstream_store_le32(packed, word0);
+       agx3_cmdstream_store_le32(packed + 4,
+                                  (uint32_t)(program->program_va >> 32) << 16);
+       agx3_cmdstream_store_le32(packed + 8,
+-- 
+2.55.0
+

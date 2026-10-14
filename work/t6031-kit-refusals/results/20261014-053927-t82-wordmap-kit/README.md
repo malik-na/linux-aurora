@@ -57,3 +57,19 @@ constants. Each invocation writes the n, steps and `gl_NumWorkGroups.x` it sees.
 - Mesa `dev-term` (base page built as a terminated container) predicts no fault at +0x4000 even without fills,
   B's groups writing nothing and adding no spin time.
 - The J516C's own CDM launch words (hv capture) show what macOS sends to reach the second destination.
+
+## Part 2, same boot: the dev Mesa prefixes (predictions written before the runs)
+
+Build report: `results/mesa-dev-build.md` (m3max/g15c ff120e88 rebuilt byte-identical from source; prefixes
+`/opt/mesa-m3-g15c-dev` (B0), `-dev-term` (base page = a terminated container: lead, block size 0x80 at +0x340,
+constant copy+end program at +0x380), `-dev-pad` (each USC object's trailing guard backed by its own zero page),
+`-dev-b19` (word0 bits 17–19 cleared on 1-D grids), all G15C-only). Run through `G15C_PREFIX=<prefix>`.
+Order: every `usc_page=6` arm first, then `usc_page=0` arms last (a fault there costs the GPU).
+
+| # | Prefix, fill | Run | Prediction |
+|---|---|---|---|
+| A | dev (B0), 6 | wordmap N=1024, 8192; nouniform N=1024; witness N=1024 | identical to the kit (8 / 64 groups lost; nouniform GREEN; witness 8–15 n=0) |
+| B | dev-term, 6 | witness N=1024; nouniform N=1024; spin 1M on 8–15; wordmap N=1024 | **slide model:** B ends at +0x380 before the kernel, so witness groups 8–15 keep the **sentinel** (not n=0), nouniform turns **RED** (groups 8–15 lost), the spin on 8–15 adds **no** time; wordmap still loses 8–15. If the outputs equal the kit's, B does not start at the window base and the model is refuted |
+| C | dev-b19, 6 | wordmap N=1024, 8192 | bit 19 drives the split → no loss; otherwise identical (expected identical, since B lacks state) |
+| D | dev-term, **0** | compute-check 1; wordmap N=1024 | slide model: **no fault** at +0x4000 (B stops in the base page); the job completes with B's groups lost. A fault at +0x4000/+0x4180 refutes the model and costs the GPU |
+| E | dev-pad, **0** (only if D left the GPU alive) | compute-check 1; wordmap N=1024 | the Mesa equivalent of t80's fills: the job completes, B's groups lost as in t81; no prepare_map errors |
