@@ -1,0 +1,71 @@
+From e871b0770c1dcb3faa09f9e5a437ce9ee2b4db12 Mon Sep 17 00:00:00 2001
+From: Naeem Malik <malik2015naeem@gmail.com>
+Date: Sun, 18 Oct 2026 17:39:48 +0530
+Subject: [PATCH] asahi: G15C dev experiment: HK_G15C_PROFILE=4tab (four
+ 10-entry helper tables)
+
+Adds two 10-position helper tables at +0x300 and +0x400 of the USC window
+base page (G15C only) to test S = (cluster << 4) | core. The table at
++0x300 overwrites the container chain dword at +0x340. See
+malik-na/linux-aurora#50.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/asahi/lib/agx_device.c | 14 ++++++++++++++
+ src/asahi/lib/agx_linker.c |  2 +-
+ src/asahi/lib/agx_linker.h |  1 +
+ 3 files changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/src/asahi/lib/agx_device.c b/src/asahi/lib/agx_device.c
+index 3273064c892..c30abea7f29 100644
+--- a/src/asahi/lib/agx_device.c
++++ b/src/asahi/lib/agx_device.c
+@@ -1501,6 +1501,20 @@ agx_open_device(void *memctx, struct agx_device *dev)
+             fprintf(stderr, "[g15c-prof] base page: helper terminals at "
+                             "+0x2c0..+0x340 and +0x350..+0x%zx\n",
+                     usc_base_size);
++         } else if (prof && !strcmp(prof, "4tab")) {
++            /* Hypothesis: S = (cluster << 4) | core on 4 clusters x 10
++             * cores, so the call target base + 0x100 + 16 * S for clusters
++             * 2 and 3 lands at +0x300.. and +0x400... Add two more
++             * 10-position helper tables there; no landing terminals.
++             * Wrinkle: the lead's first dword is 0x340 and the zero
++             * block-size dword at +0x340 ends the page's container chain;
++             * the table at +0x300 (to +0x3c0) overwrites it. Diagnostic
++             * only. */
++            agx3_fill_helper_table(map, 0x300, 10);
++            agx3_fill_helper_table(map, 0x400, 10);
++            fprintf(stderr, "[g15c-prof] base page: four helper tables at "
++                            "+0x100/+0x200/+0x300/+0x400 (container chain "
++                            "dword at +0x340 overwritten)\n");
+          }
+       }
+       if (agx_bo_sync_for_device(usc_base, 0, usc_base_size))
+diff --git a/src/asahi/lib/agx_linker.c b/src/asahi/lib/agx_linker.c
+index 2e97841eb5c..5ce4f92ab1a 100644
+--- a/src/asahi/lib/agx_linker.c
++++ b/src/asahi/lib/agx_linker.c
+@@ -123,7 +123,7 @@ static const uint8_t agx3_helper_terminal[16] = {
+    0x06, 0x00, 0x06, 0x00, 0x06, 0x00, 0x06, 0x00,
+ };
+ 
+-static void
++void
+ agx3_fill_helper_table(uint8_t *image, size_t base, unsigned positions)
+ {
+    const uint8_t *terminal = agx3_helper_terminal;
+diff --git a/src/asahi/lib/agx_linker.h b/src/asahi/lib/agx_linker.h
+index 74ab9735cd1..803673d3de0 100644
+--- a/src/asahi/lib/agx_linker.h
++++ b/src/asahi/lib/agx_linker.h
+@@ -70,6 +70,7 @@ struct agx_linked_shader {
+ void agx3_build_container_lead(uint8_t *image);
+ void agx3_build_container_lead_for_chip(uint8_t *image, enum agx_chip chip);
+ void agx3_fill_helper_landing(uint8_t *image, size_t from, size_t to);
++void agx3_fill_helper_table(uint8_t *image, size_t base, unsigned positions);
+ 
+ enum agx_link_result {
+    AGX_LINK_SUCCESS,
+-- 
+2.55.0
+
