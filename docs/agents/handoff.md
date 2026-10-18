@@ -133,3 +133,10 @@ DCP firmware 14.7.0 is admitted, IOMFB starts, `card2-eDP-1` is connected at 345
 the native Mesa (kernel-conditional `~/.config/uwsm/env` on the M3). kmscube atomic runs 10 s, rc 0; legacy mode gives
 page-flip EBUSY. Panel not yet seen. Records: `results/20261018-205047-t88-dcp/`. Not yet in PR #363.
 Open: visual confirmation; legacy EBUSY; backlight/EDID; DCP commits into a PR; 14.8.x pin; board-data DT builder.
+
+**Update 2026-10-18 21:47: kmscube runs on the built-in panel through the G15C.** The earlier dark-panel runs were kmscube
+exiting on EOF from stdin (no `-N`, no tty); with `-A -N -D /dev/dri/card2` on t88 (kernel `t6031/silicon-dcp` a3bb02d0,
+native Mesa) it renders 1200 frames at 60 fps on "Apple M3 Max (G15C B2)", GPU buffer imported via kmsro, 0 refused
+presents; camera still (private, ~/m3-results/cam-t88-kmscube/). No kernel/Mesa change needed. Hyprland also runs on card2
+(scale 2; 3 is not a clean divisor of 2234). Open: presents take 15-16 ms (60 fps on a 120 Hz mode); DCP commits not yet
+in a PR (#363 GPU and mesa#25 open); legacy EBUSY; backlight/EDID; 14.8.x pin. Command and detail: `results/20261018-205047-t88-dcp/`.

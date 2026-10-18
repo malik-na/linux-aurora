@@ -62,3 +62,32 @@ DCP syslog noise (harmless so far): "IOMFB LACS_ERROR: DCP took too long to resp
 - Pin the 14.8.x firmware build (still the text-prefix escape).
 - Board-data DT builder.
 - Default-kernel switch (Naeem's call).
+
+## kmscube on the panel through the G15C (21:47)
+
+Boot t88, kernel `t6031/silicon-dcp` a3bb02d0 (package silicon-8), Mesa `/opt/mesa-m3-g15c-native`. Date 2026-10-18.
+
+**Correction to the earlier dark-panel runs.** They were kmscube itself. Without `-N` it polls stdin; over ssh/timeout with no tty it sees EOF as a key press, prints "user interrupted!" and exits before its first present (crtc presents counter unchanged, refused=0). The dmesg brightness 0, modeset, restore lines were the fbdev client restore after kmscube exited.
+
+**Working command** (Hyprland stopped with `sudo systemctl stop sddm`, restarted with `sudo systemctl start sddm` after):
+
+```
+sudo timeout -k 3 25 env LD_LIBRARY_PATH=/opt/mesa-m3-g15c-native/lib \
+  GBM_BACKENDS_PATH=/opt/mesa-m3-g15c-native/lib/gbm \
+  LIBGL_DRIVERS_PATH=/opt/mesa-m3-g15c-native/lib/dri \
+  __EGL_VENDOR_LIBRARY_FILENAMES=/opt/mesa-m3-g15c-native/share/glvnd/egl_vendor.d/50_mesa.json \
+  ~/aurora-test/bin/kmscube -A -N -D /dev/dri/card2 -c 1200
+```
+
+**Result**
+- 1200 frames at 60.0 fps. Renderer "Apple M3 Max (G15C B2)", OpenGL ES 3.2 Mesa 26.3.0-devel (git-aab698d2ef).
+- The GBM buffer is a GPU buffer imported into apple-drm via kmsro (dma-buf prime import, 3456x2234x4 linear, 30883840 bytes, inside the display DART's scanout window).
+- Display CRTC presents 1420 to 2621, refused 0, crashed 0.
+- Shaded cube visible on the built-in panel: camera still (private, ~/m3-results/cam-t88-kmscube/).
+- No kernel or Mesa change was needed.
+
+**Also on t88:** the Hyprland desktop runs on card2 with the native Mesa (kernel-conditional `~/.config/uwsm/env`). Scale changed 3 to 2 (Naeem); 3 gave "Invalid scale ... failed to find a clean divisor" since 2234/3 is not integral.
+
+**Observation / open question:** each present takes 15-16 ms (swap_ns_last), so clients run at 60 fps although the mode is 120 Hz.
+
+**Wayfinder #18:** this reaches the destination "kmscube on the built-in display through the G15C". Remaining for the full destination: merge through the team's gate. aurora-silicon/linux#363 (GPU) is open; the DCP commits on `t6031/silicon-dcp` are not yet in a PR; aurora-silicon/mesa#25 is open.

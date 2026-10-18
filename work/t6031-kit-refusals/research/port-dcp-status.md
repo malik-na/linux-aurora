@@ -126,6 +126,29 @@ A compositor (Hyprland, sddm) will pick the same pairing through GBM.
 7. Not ported: the panel EDID (fork `dbfd5df7`), backlight, external displays, suspend. The `clk_disp0` rate is the
    T6030 712 MHz (confirmed by the J516C DCP's own `display clock 0: 712000000 Hz` on t24).
 
+## t88 (2026-10-18 21:47): kmscube on the GPU, on the panel
+
+The lead booted silicon-8 as t88 with `apple_t6031_display.enable=1`: handoff admitted, PMP DISP acknowledged,
+warm RTKit adoption, IOMFB startup (267 callbacks), `card2` apple-drm with `eDP-1` 3456x2234@120; Hyprland runs on
+it with the native Mesa. kmscube "ran 20 s with a dark panel": that was kmscube itself, not the driver. Without
+`-N` kmscube polls stdin and treats a readable stdin as a key press; over ssh without a tty stdin is at EOF, so it
+printed `user interrupted!` and left before its first present (`crtc-0/j514s`: presents unchanged, refused=0).
+With `-N`:
+
+    sudo systemctl stop sddm
+    sudo timeout -k 3 25 env LD_LIBRARY_PATH=/opt/mesa-m3-g15c-native/lib \
+        GBM_BACKENDS_PATH=/opt/mesa-m3-g15c-native/lib/gbm LIBGL_DRIVERS_PATH=/opt/mesa-m3-g15c-native/lib/dri \
+        __EGL_VENDOR_LIBRARY_FILENAMES=/opt/mesa-m3-g15c-native/share/glvnd/egl_vendor.d/50_mesa.json \
+        ~/aurora-test/bin/kmscube -A -N -D /dev/dri/card2 -c 1200
+    sudo systemctl start sddm
+
+renders 1200 frames at 60.0 fps (renderer "Apple M3 Max (G15C B2)", GBM buffer imported through kmsro:
+`drm_gem_dma_prime_import_sg_table dma_addr=0x10ffc000000 size=30883840`, i.e. the display DART's scanout
+window), `presents` 1420 -> 2621, `refused=0`, and the cube is visible on the panel (Air camera,
+`~/m3-results/cam-t88-kmscube/`, private). So the GPU-to-panel pairing works with no kernel or Mesa change.
+Note: presents take 15-16 ms each (`swap_ns_last`), so a client is paced at 60 fps although the mode says 120 Hz;
+whether the firmware scans at 60 or the present round trip is the limit is a later question.
+
 ## Not done on purpose
 
 - No `boot.bin`, ESP or install step: the lead installs with `nofreeze.conf` (ESP 82 %, keep under 85 %) and boots.
