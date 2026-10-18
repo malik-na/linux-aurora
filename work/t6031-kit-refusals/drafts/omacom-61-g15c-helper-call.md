@@ -1,7 +1,6 @@
 # Draft: update for omacom/linux-aurora#61 (map tickets #50, #52)
 
-Status: DRAFT, not posted. Needs Naeem's approval of the exact text. Before posting, fill in the PR link if the PR
-is opened first, and check the test numbers against the fix52 build's run.
+Status: DRAFT, not posted. Needs Naeem's approval of the exact text. Before posting, fill in the PR link.
 
 ---
 
@@ -34,12 +33,12 @@ backing is needed any more, so the experimental USC window fill I mentioned stay
 Credit to Neo's `aurora-silicon/mesa` `agx3b`: reading its state-loader code against the kit's is what found the
 call.
 
+PR: <link> (`iconidentify/mesa-omacom` `m3max/g15c`, one commit, three files in `src/asahi/lib/`).
+
 Questions:
-1. **Chris:** may I open this as a PR against `iconidentify/mesa-omacom` `m3max/g15c`? The branch is
-   `<fork>/g15c-usc-helper-landing`, one commit, three files in `src/asahi/lib/`.
-2. Does anyone know what the profile prefix's helper call is for (the `SETPROFILECTL` in each terminal)? Dropping
+1. Does anyone know what the profile prefix's helper call is for (the `SETPROFILECTL` in each terminal)? Dropping
    the call entirely also gives correct results here, but I kept it so every core still runs it.
-3. On the M3 Pro or Air, are there parts whose per-core value could pass 27 too? If so, the same fill may be wanted
+2. On the M3 Pro or Air, are there parts whose per-core value could pass 27 too? If so, the same fill may be wanted
    beyond G15C.
 
 Records: `agent-docs` `work/t6031-kit-refusals/results/` (t83 profile-call, t84 render) on malik-na/linux-aurora;
