@@ -1,45 +1,49 @@
 # Draft: update for omacom/linux-aurora#61 (map tickets #50, #52)
 
-Status: DRAFT, not posted. Needs Naeem's approval of the exact text. Before posting, fill in the PR link.
+Status: DRAFT, not posted. Needs Naeem's approval of the exact text. Fill in the two PR links once they are open.
 
 ---
 
-## M3 Max (J516C / T6031): compute and render now give correct results, and the cause is in Mesa
+## M3 Max (J516C / T6031): the GPU runs on the G15 Rust driver, with compute and render right
 
-Following up on my 14 Oct update. The half-wrong output and the USC reads past object ends turned out to be one
-bug, and it is in the kit Mesa, not the kernel.
+Following up on my 14 Oct update, there are two results.
 
-**Cause.** When a program has any uniform range, its state-loader program runs the G17P "profile" prefix after
-LoadShader. The prefix ends in a computed helper call into the USC window base page: base + 0x100 + 16 × a
-per-core value. On the G15C that value is out of range for some cores: past the two ten-entry helper tables the
-lead block provides. Those calls land on filler and zeros and never return:
-- without anything mapped after the base page, they run into the guard page and fault (my "USC reads past the
-  object" report);
-- with that page backed, they run on through whatever comes next and skip or clobber the copies that load the
-  uniform registers, so the work on that half of the GPU sees no push constants or descriptors.
+**1. The half-wrong output was a Mesa bug, now fixed.** When a program has any uniform range, its state-loader program
+runs the "profile" prefix after LoadShader. The prefix ends in a computed helper call into the USC window base page:
+base + 0x100 + 16 x a per-core value. On the G15C that value is out of range for some cores, past the two ten-entry
+helper tables. Those calls never returned:
+- without the page after the base page mapped, they faulted there. This was the "USC reads past the object" I
+  reported.
+- with that page backed, they ran on and skipped the uniform loads. So half of every dispatch and draw had no push
+  constants or descriptors.
 
-This is the same signature as the G15S helper-table fix (six to ten slots, 38e10535).
+It has the same signature as the G15S six-to-ten-slot helper-table fix (38e10535). The fix puts a return at every slot
+after the tables, on G15C only. No kernel-side page backing is needed, so the experimental USC window fill stays out
+of the kernel. Credit to Neo's agx3b: reading its state-loader code against the kit's is what found the call.
 
-**Fix (G15C only).** Put the helper table's terminal record at every free 16-byte slot of the base page after the
-tables. The zero block-size dword at +0x340 that ends the container chain is left alone. Every out-of-table call
-then returns inside the page. G15S and every other chip build the same page as before. No kernel-side page
-backing is needed any more, so the experimental USC window fill I mentioned stays out of the kernel.
+**2. The M3 Max now runs on Eryk's stack.** I ported #358 (G15 Rust driver) and #23 (G15S native path) to the J516C as
+a T6031 row and a G15C admission, with the fix above:
+- kernel: <linux-link>, stacked on #358;
+- Mesa: <mesa-link>, stacked on #23.
 
-**Tested on the J516C (40 cores)**, with no kernel-side backing:
-- compute-check: 0 wrong (the kit: 4096 of 65536 words wrong);
-- vk-render-check and gl-render-check (zink): 0 wrong pixels (the kit: 2048 of 4096 wrong, every run);
-- ~2700–5700 runs per check, no fault or hang.
+With both, on the J516C (40 cores), the firmware reaches READY, and in 5 s each:
 
-Credit to Neo's `aurora-silicon/mesa` `agx3b`: reading its state-loader code against the kit's is what found the
-call.
+| check | runs | wrong |
+|---|---|---|
+| compute-check | 10750 | 0 |
+| vk-render-check | 8309 | 0 pixels |
+| gl-render-check, native GL | 10083 | 0 pixels |
+| gl-render-check, zink | 6418 | 0 pixels |
 
-PR: <link> (`iconidentify/mesa-omacom` `m3max/g15c`, one commit, three files in `src/asahi/lib/`).
+That is about twice the throughput of the omacom kernel with the kit Mesa. There was no fault or hang. The kernel PR
+lists its gaps: the J516C board data comes from a pinned firmware file for now, the 14.8.x firmware build still needs a
+pin, and the render register values are still G15S's.
 
 Questions:
-1. Does anyone know what the profile prefix's helper call is for (the `SETPROFILECTL` in each terminal)? Dropping
-   the call entirely also gives correct results here, but I kept it so every core still runs it.
+1. Does anyone know what the profile prefix's helper call is for (the SETPROFILECTL in each terminal)? Dropping the call
+   entirely also gives correct results here. I kept it so every core still runs it.
 2. On the M3 Pro or Air, are there parts whose per-core value could pass 27 too? If so, the same fill may be wanted
    beyond G15C.
 
-Records: `agent-docs` `work/t6031-kit-refusals/results/` (t83 profile-call, t84 render) on malik-na/linux-aurora;
-map malik-na/linux-aurora#18, tickets malik-na/linux-aurora#50 and #52.
+Records: agent-docs `work/t6031-kit-refusals/results/` (t83, t84, t87) on malik-na/linux-aurora; map
+malik-na/linux-aurora#18, tickets malik-na/linux-aurora#50 and #52.
