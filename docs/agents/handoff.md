@@ -147,3 +147,8 @@ apple_t6031_display.enable=1`; stock `linux-aurora` is the fallback entry. An or
 `~/m3-images/t35/boot.bin.gpu1-702` comes up with GPU READY, apple-drm on eDP-1 and Hyprland on the native Mesa, 0
 submit failures. Use gpu1-702 (not boot.bin.repro) for chainloads from now on. Open: 14.8.x firmware pin (replacing the
 prefix escape), board data from the DT instead of the private blob.
+
+**Update 2026-10-18 21:30: the 14.8 GPU firmware build is pinned.** Commit e30d702e (second J516C entry in
+`g15/hw/t6031.rs`, sha256 1bf2fd34…26cf), package silicon-10 installed; the default cmdline no longer carries
+`asahi.g15_accept_text_prefix`. An ordinary reboot logs "GPU firmware build: macOS 14.8 stub firmware, J516C", READY,
+display up, Hyprland, 0 submit failures. The commit is on fork branch t6031/silicon-dcp; not yet on PR #363's branch.
