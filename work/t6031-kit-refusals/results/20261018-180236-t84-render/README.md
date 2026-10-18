@@ -62,3 +62,13 @@ No GPU fault, halt or hang in any run (`dmesg`). The only fault-word line in the
 
 PR against iconidentify/mesa-omacom m3max/g15c (branch being prepared). A team post on omacom #61 needs Naeem's
 exact-text approval.
+
+## The #52 fix commit as committed (fix52, same boot, `usc_page=0`)
+
+`g15c-usc-helper-landing` 1e2cbea5 (applied on the M3 as 17715b18, the same tree), built as
+`/opt/mesa-m3-g15c-dev-fix52` (drm-shim smoke pass), no runtime switch. With no kernel fill:
+- compute-check PASS, 5693 runs, 0 wrong;
+- witness groups 0–15 n=0x400 meta=0x100100; wordmap N=1024 and 8192 GREEN; nouniform 2-D GREEN;
+- vk-render-check PASS, 3405 runs, 0 wrong pixels; gl-render-check PASS, 2726 runs, 0 wrong pixels.
+No GPU fault, halt or hang (the only fault-word lines in the boot are boot-time PCIe/watchdog/cmdline lines).
+`usc_page` set back to 6. Scripts now take `P=<prefix>` to choose the Mesa prefix.
