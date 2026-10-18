@@ -140,3 +140,10 @@ native Mesa) it renders 1200 frames at 60 fps on "Apple M3 Max (G15C B2)", GPU b
 presents; camera still (private, ~/m3-results/cam-t88-kmscube/). No kernel/Mesa change needed. Hyprland also runs on card2
 (scale 2; 3 is not a clean divisor of 2234). Open: presents take 15-16 ms (60 fps on a 120 Hz mode); DCP commits not yet
 in a PR (#363 GPU and mesa#25 open); legacy EBUSY; backlight/EDID; 14.8.x pin. Command and detail: `results/20261018-205047-t88-dcp/`.
+
+**Update 2026-10-18 21:10: the new kernel is the M3's default (Naeem).** `/etc/default/limine` puts `linux-aurora-dev`
+(the silicon kernel, PR aurora-silicon/linux#363 incl. display) first with `asahi.g15_accept_text_prefix=0x1bf2fd3476befe73
+apple_t6031_display.enable=1`; stock `linux-aurora` is the fallback entry. An ordinary reboot chainloaded with
+`~/m3-images/t35/boot.bin.gpu1-702` comes up with GPU READY, apple-drm on eDP-1 and Hyprland on the native Mesa, 0
+submit failures. Use gpu1-702 (not boot.bin.repro) for chainloads from now on. Open: 14.8.x firmware pin (replacing the
+prefix escape), board data from the DT instead of the private blob.
