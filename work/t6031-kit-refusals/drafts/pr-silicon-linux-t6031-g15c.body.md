@@ -49,7 +49,6 @@ With aurora-silicon/mesa #23 plus the G15C admission (PR https://github.com/auro
 - `asahi/t6031-j516c-board.bin` is not in this PR. It is per-machine board data for the J516C, and the commit pins its
   sha256. Building these records from the device tree is the follow-up.
 - Two J516C firmware builds are pinned (the 14.7 and 14.8 boot chains). `asahi.g15_accept_text_prefix=` remains for testing other builds.
-  still needs its own pin.
 - The render register values are still G15S's.
 - A desktop session on the system Mesa gets EINVAL and EOPNOTSUPP from submit. It needs a Mesa that speaks this UAPI.
 - Presents take 15–16 ms each, so clients are paced at 60 fps on the 120 Hz mode.
