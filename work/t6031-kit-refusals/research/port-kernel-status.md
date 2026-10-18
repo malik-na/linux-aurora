@@ -1,6 +1,6 @@
 # Port status: T6031 (J516C, G15C) on Eryk's Rust `drm/asahi/g15/` line
 
-Date: 2026-10-18. Branch `t6031/silicon-g15c`, head `9174c1e1e445` (fork `malik-na/linux-aurora`, worktree
+Date: 2026-10-18. Branch `t6031/silicon-g15c`, head `bfcfee0784b8` (fork `malik-na/linux-aurora`, worktree
 `~/Projects/linux-silicon-t6031` on the Air, `~/Projects/linux-silicon` on the M3), based on
 `silicon/j514s` = aurora-silicon/linux PR #358 head `79d6375f4b03` (`j514s/m3-pro-20261017`).
 Companion to `port-j514s-to-j516c-kernel.md` (the map). Nothing here has been booted.
@@ -20,6 +20,8 @@ Trailers: the four `drm/asahi: g15:` commits and the mailbox cherry-pick carry `
 (the team's `Assisted-by:` line is added before a PR, per ADR 0001). The dtsi cherry-pick keeps Chris Kearney's
 original message, including its `Co-Authored-By` trailer; it is the kit's commit, not ours to rewrite.
 
+| C7 `drm/asahi: g15: Admit and map UAT regions that are reserved System RAM` (`bfcfee0784b8`) | Fix for boot **t86** (`GPU region 0 (ttbs) [mem 0x10bfffb8000-0x10bfffbbfff] not admissible`): the T6031 UAT nodes have no `no-map`, so they are System RAM + reserved in `/proc/iomem`; #358's admission wanted carveouts outside RAM and mapped them WC. On the DT platform the four UAT regions may lie entirely in System RAM and are then mapped through the kernel's mapping (memremap WB) in `g15/uat.rs` (`Mapping::region`) and `mmu::Uat::map_physical`, as the shared driver and our fork do; fw-text/fw-data stay no-map/WC-checked. T6030 unchanged. | OBSERVED (t86 dmesg, `/proc/iomem` on the running M3) |
+
 Not ported on purpose: `t6031_usc_page` (Mesa-side fix), the fork's thermal controller (pstate cap 1 is baked into the blob), the fork's PMP stack (not needed for the GPU on J516C), display.
 
 ## Build
@@ -32,11 +34,12 @@ EXTRA_FIRMWARE_DIR=/build/out/firmware`, `LOCALVERSION=-silicon` (release `7.1.1
 bindgen 0.73.2 in the chroot gets wrong (`ns_common`, `user_namespace`), so the build passes
 `BINDGEN="bindgen --no-layout-tests"` (our fork carries the same workaround in `rust/Makefile`).
 
-BUILD-OK 2026-10-18 19:11 (build-04, head `9174c1e1e445`; no warnings from the new code; the one Rust
-warning in the log is #358's g17 kallsyms symbol-length note). Package on the M3:
+BUILD-OK 2026-10-18 19:36 (build-05, head `bfcfee0784b8`; no warnings from the new code; the one Rust
+warning in the log is #358's g17 kallsyms symbol-length note). Package on the M3 (silicon-4 = t86, refused at
+admission; silicon-6 = the fix):
 
-    ~/Projects/build-out/kernel-silicon/linux-aurora-dev-7.1.12_aurora_dev_silicon-4-aarch64.pkg.tar.xz
-    sha256 f40be49bc9b59690359d49bd2813870a29db40cf6bcb93ca4cde03366b955ab1
+    ~/Projects/build-out/kernel-silicon/linux-aurora-dev-7.1.12_aurora_dev_silicon-6-aarch64.pkg.tar.xz
+    sha256 b0e92c80bcbf1939fe9992bc76443bd73b2f60a33bd2fb928895faeec5518bcb
     (release 7.1.12-aurora-dev-silicon; carries dtb/apple/t6031-j516c.dtb with the GPU node and the
     blob built in; install with the usual nofreeze.conf `pacman -U`, keep the ESP under 85 %)
 
@@ -44,7 +47,12 @@ Rebuild: `~/aurora-test/silicon/build.sh > ~/aurora-test/silicon/build-NN.log` a
 ~/Projects/linux-silicon reset --hard <ref>` (the M3 worktree is on branch `t6031/silicon-g15c`; a push from the Air
 lands on `refs/heads/air/silicon-g15c` because the branch is checked out there).
 
-## First boot (the lead)
+## Boots so far
+
+- t86 (silicon-4, macOSTest chain, no asahi params): refused at region admission (C7 fixes it). Nothing
+  firmware-visible happened.
+
+## Next boot (the lead)
 
 Harness as before: `m3-testboot NAME --image ~/m3-images/t35/boot.bin.gpu1-702 -- <params>`, SOURCE_ENTRY
 `linux-aurora-dev` (the dev slot now holds the silicon kernel after `pacman -U`). `DRM_ASAHI=y`, so the G15 driver
