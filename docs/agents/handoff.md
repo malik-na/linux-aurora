@@ -152,3 +152,11 @@ prefix escape), board data from the DT instead of the private blob.
 `g15/hw/t6031.rs`, sha256 1bf2fd34…26cf), package silicon-10 installed; the default cmdline no longer carries
 `asahi.g15_accept_text_prefix`. An ordinary reboot logs "GPU firmware build: macOS 14.8 stub firmware, J516C", READY,
 display up, Hyprland, 0 submit failures. The commit is on fork branch t6031/silicon-dcp; not yet on PR #363's branch.
+
+**Update 2026-10-19: map #18 closed.** Hardware destination reached (kmscube on the built-in panel through the G15C,
+t88). Merging is tracked by the open PRs aurora-silicon/linux#363 and aurora-silicon/mesa#25, not by the map. Closed with
+it: #15, #25 (superseded), #36, #40, #50, #52 (done). Carried forward: #34 (EDID), #37 (HwData generator = board data
+from the DT, blocks other M3 Max owners), #38 (hardware-record tail). Next (Naeem's plan, from /ask-matt): `/compact`,
+then `/to-spec` "J516C port completion" → `/to-tickets` with blocking edges (board-data builder first); in parallel
+`/diagnosing-bugs` on 60→120 fps pacing and a GPU-clock-under-load measurement; ray tracing later as its own map.
+Status page: https://claude.ai/artifact/PoTUhrqVL6hqVmXRinRf6x
