@@ -46,4 +46,4 @@ Questions:
    beyond G15C.
 
 Records: agent-docs `work/t6031-kit-refusals/results/` (t83, t84, t87) on malik-na/linux-aurora; map
-malik-na/linux-aurora#18, tickets malik-na/linux-aurora#50 and #52.
+malik-na/linux-aurora#18, tickets malik-na/linux-aurora#50 and malik-na/linux-aurora#52.
