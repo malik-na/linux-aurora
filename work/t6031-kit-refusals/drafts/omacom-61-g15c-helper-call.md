@@ -1,6 +1,6 @@
 # Draft: update for omacom/linux-aurora#61 (map tickets #50, #52)
 
-Status: DRAFT, not posted. Needs Naeem's approval of the exact text. PR links filled in.
+Status: posted 2026-10-18 with Naeem's approval: https://github.com/omacom/linux-aurora/issues/61#issuecomment-6251214932
 
 ---
 
