@@ -125,3 +125,11 @@ m3-testboot only arms with at least one parameter), firmware reaches READY and c
 (6251214932). The M3 is reached over Tailscale (`ssh m3` = 100.97.83.111). Stock `linux-aurora` is still the default.
 Open: pin the 14.8.x firmware build; a device-tree builder for the board blob (the blob is private and off-tree);
 desktop/system Mesa on the new UAPI; display (kmscube) on the new kernel; the default-kernel switch (Naeem's call).
+
+**Update 2026-10-18 21:10: the J516C display (DCP) comes up on the new kernel.** Kernel branch `t6031/silicon-dcp`
+(malik-na/linux-aurora; 4 commits on `t6031/silicon-g15c`: dts, pmp-display T6031 entry, `t6031-display-handoff.c`
+enabled by `apple_t6031_display.enable=1`, drm/apple T6031 row on Eryk's DCP v14.7 code), package silicon-8. On t88
+DCP firmware 14.7.0 is admitted, IOMFB starts, `card2-eDP-1` is connected at 3456x2234, and Hyprland runs on card2 with
+the native Mesa (kernel-conditional `~/.config/uwsm/env` on the M3). kmscube atomic runs 10 s, rc 0; legacy mode gives
+page-flip EBUSY. Panel not yet seen. Records: `results/20261018-205047-t88-dcp/`. Not yet in PR #363.
+Open: visual confirmation; legacy EBUSY; backlight/EDID; DCP commits into a PR; 14.8.x pin; board-data DT builder.
