@@ -1,6 +1,6 @@
 # Draft: update for omacom/linux-aurora#61 (map tickets #50, #52)
 
-Status: DRAFT, not posted. Needs Naeem's approval of the exact text. Fill in the two PR links once they are open.
+Status: DRAFT, not posted. Needs Naeem's approval of the exact text. PR links filled in.
 
 ---
 
@@ -17,14 +17,14 @@ helper tables. Those calls never returned:
 - with that page backed, they ran on and skipped the uniform loads. So half of every dispatch and draw had no push
   constants or descriptors.
 
-It has the same signature as the G15S six-to-ten-slot helper-table fix (38e10535). The fix puts a return at every slot
+It has the same signature as the G15S six-to-ten-slot helper-table fix (kit Mesa commit 38e10535). The fix puts a return at every slot
 after the tables, on G15C only. No kernel-side page backing is needed, so the experimental USC window fill stays out
 of the kernel. Credit to Neo's agx3b: reading its state-loader code against the kit's is what found the call.
 
-**2. The M3 Max now runs on Eryk's stack.** I ported #358 (G15 Rust driver) and #23 (G15S native path) to the J516C as
+**2. The M3 Max now runs on Eryk's stack.** I ported aurora-silicon/linux#358 (G15 Rust driver) and aurora-silicon/mesa#23 (G15S native path) to the J516C as
 a T6031 row and a G15C admission, with the fix above:
-- kernel: <linux-link>, stacked on #358;
-- Mesa: <mesa-link>, stacked on #23.
+- kernel: https://github.com/aurora-silicon/linux/pull/363, stacked on aurora-silicon/linux#358;
+- Mesa: https://github.com/aurora-silicon/mesa/pull/25, stacked on aurora-silicon/mesa#23.
 
 With both, on the J516C (40 cores), the firmware reaches READY, and in 5 s each:
 
