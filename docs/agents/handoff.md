@@ -115,3 +115,13 @@ fault past object ends) and bug 2 (no uniform state) at once. The Mesa variant `
 Frontier: #52, the Mesa fix as a PR against m3max/g15c. Its form is Naeem's call: land / nocall / per-cluster
 tables / one fixed call as the J516C driver makes. Also: the held team post, and render on the G15C (the fragment
 programs carry the same prefix). The full hv trace is no longer needed for compute.
+
+**Update 2026-10-18 20:00: the M3 Max GPU runs on the team's Rust G15 driver.** Naeem: "it is rust now"; the port is
+on Eryk's stack. Kernel `t6031/silicon-g15c` (aurora-silicon/linux#358 + T6031 row) is PR aurora-silicon/linux#363.
+Mesa `g15c-native` (aurora-silicon/mesa#23 + G15C admission + #52 `land`) is PR aurora-silicon/mesa#25. On t87
+(package silicon-6 in the dev slot; boot params `printk.devkmsg=on asahi.g15_accept_text_prefix=0x1bf2fd3476befe73`;
+m3-testboot only arms with at least one parameter), firmware reaches READY and compute/vk/gl-native/gl-zink all pass,
+0 wrong, about 2x the old stack's throughput. Records: `results/20261018-193714-t87-silicon/`. Posted on omacom #61
+(6251214932). The M3 is reached over Tailscale (`ssh m3` = 100.97.83.111). Stock `linux-aurora` is still the default.
+Open: pin the 14.8.x firmware build; a device-tree builder for the board blob (the blob is private and off-tree);
+desktop/system Mesa on the new UAPI; display (kmscube) on the new kernel; the default-kernel switch (Naeem's call).
