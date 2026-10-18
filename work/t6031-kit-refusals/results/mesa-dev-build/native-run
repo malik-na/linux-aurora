@@ -1,0 +1,23 @@
+#!/bin/sh
+# native-run CMD [ARGS...]: run CMD against the native-AGX3 Mesa in
+# /opt/mesa-m3-g15c-native (Honeykrisp for Vulkan; Gallium asahi for GL, or
+# zink with MESA_LOADER_DRIVER_OVERRIDE=zink), under a time limit. Nothing
+# else on the system uses this prefix.
+#   NATIVE_TIMEOUT=SECS   time limit (default 120; 0 = none); SIGKILL 5 s
+#                         after SIGTERM
+#   NATIVE_PREFIX=DIR     another prefix (default /opt/mesa-m3-g15c-native)
+P="${NATIVE_PREFIX:-/opt/mesa-m3-g15c-native}"
+export LD_LIBRARY_PATH="$P/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LIBGL_DRIVERS_PATH="$P/lib/dri"
+export GBM_BACKENDS_PATH="$P/lib/gbm"
+export __EGL_VENDOR_LIBRARY_FILENAMES="$P/share/glvnd/egl_vendor.d/50_mesa.json"
+export VK_DRIVER_FILES="$P/share/vulkan/icd.d/asahi_icd.aarch64.json"
+export VK_ICD_FILENAMES="$VK_DRIVER_FILES"
+export VK_LOADER_LAYERS_DISABLE='~implicit~'
+export MESA_SHADER_CACHE_DISABLE=true
+limit="${NATIVE_TIMEOUT:-120}"
+case "$limit" in
+	''|*[!0-9]*) echo "native-run: NATIVE_TIMEOUT must be a number of seconds" >&2; exit 2 ;;
+esac
+[ "$limit" = 0 ] && exec "$@"
+exec timeout -k 5 "$limit" "$@"

@@ -1,0 +1,41 @@
+#!/bin/sh
+# native-checks OUTDIR [SECS]: the hardware checks for the native-AGX3 Mesa,
+# in order, SECS seconds each (default 5, 1..60):
+#   compute-check, vk-render-check, gl-render-check (Gallium asahi),
+#   gl-render-check-zink (MESA_LOADER_DRIVER_OVERRIDE=zink)
+# Each job runs under `timeout -k 5 120`. After a timeout no further job is
+# started (a stuck GPU job may need a reboot). Writes OUTDIR/<job>.log and
+# OUTDIR/summary.txt ("VERDICT <job> exit=<n> <class>", class pass, wrong,
+# error, hang or skipped). Exit 0 only if every job passed.
+P="${NATIVE_PREFIX:-/opt/mesa-m3-g15c-native}"
+OUT="$1"; SECS="${2:-5}"
+usage() { echo "usage: native-checks OUTDIR [SECS 1..60]" >&2; exit 2; }
+[ -n "$OUT" ] || usage
+case "$SECS" in ''|*[!0-9]*) usage ;; esac
+[ "$SECS" -ge 1 ] && [ "$SECS" -le 60 ] || usage
+mkdir -p "$OUT" || exit 2
+SUMMARY="$OUT/summary.txt"; : > "$SUMMARY" || exit 2
+hung=0 failed=0
+say() { echo "$*" | tee -a "$SUMMARY"; }
+job() {
+	name=$1; shift
+	log="$OUT/$name.log"
+	if [ "$hung" = 1 ]; then say "VERDICT $name exit=- skipped"; failed=1; return; fi
+	{ echo "# $name $(date -u +%Y-%m-%dT%H:%M:%SZ) kernel $(uname -r) prefix $P"
+	  echo "# cmd: $*"; } > "$log"
+	NATIVE_TIMEOUT=0 timeout -k 5 120 "$P/bin/native-run" "$@" >> "$log" 2>&1
+	rc=$?
+	case "$rc" in
+	0) class=pass ;;
+	124|137) class=hang; hung=1 ;;
+	*) if grep -q -E '^(MISMATCH|FAIL)' "$log"; then class=wrong; else class=error; fi ;;
+	esac
+	[ "$class" = pass ] || failed=1
+	say "VERDICT $name exit=$rc $class"
+}
+job compute-check "$P/bin/compute-check" "$SECS"
+job vk-render-check "$P/bin/vk-render-check" "$SECS"
+job gl-render-check env RENDER_CHECK_RENDERER=M3 "$P/bin/gl-render-check" "$SECS"
+job gl-render-check-zink env MESA_LOADER_DRIVER_OVERRIDE=zink "$P/bin/gl-render-check" "$SECS"
+grep -h -E '^(Device|Renderer):' "$OUT"/*.log | sort -u | sed 's/^/# /' | tee -a "$SUMMARY"
+exit "$failed"
