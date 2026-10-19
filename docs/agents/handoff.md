@@ -211,3 +211,12 @@ Spec malik-na/linux-aurora#53 (ready-for-agent). Tickets #54-#68, blocking edges
   The PR body's "Known gaps" list is now stale (EDID, 60 fps, backlight, board file partly) - updating it needs Naeem's ok.
   #69 cause found (subagent, research/deqp-hangs.md): compute dispatches of >10 workgroups of >~576 threads never
   complete on the G15C (10 = cores per cluster); Mesa knob HK_G15C_COPY_ROWS=2 fixes 102 of 129 VK hangs.
+- 22:10: Chris (iconidentify) reviewed #363: the swap timestamps were gated on main_display, which the J514S panel
+  also sets. Fixed in a08331e7 (flag in the 14.7 board profile, T6031 only; KUnit negatives for J514S, external role,
+  no profile). Found and fixed: the T6031 profile also matched apple,j514c with the J516C panel facts (45338523: J516C
+  only). Naeem: "just fix it, then push all". Pushed to `t6031/silicon-g15c` (PR head 45338523), PR body replaced
+  (current J516C state + gaps), reply comment 6272197633. Boot records 20261019-215224-swap-ts-scope and
+  20261019-220534-no-j514c (both PASS). Installed default: silicon-28 (= 45338523).
+- Open with Naeem: omacom/linux-aurora#148 (DJ) replaced #363 on omacom; our 13 follow-ups are not in it. 10 of the
+  GPU ones cherry-pick cleanly onto aurora-silicon:m3-pro-rebase; the 3-5 display ones need porting to integration's
+  display code. Chris says he is carrying the pieces into his 7.2.11 tree.
