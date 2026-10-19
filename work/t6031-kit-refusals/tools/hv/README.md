@@ -66,3 +66,8 @@ drained (`PB bulk: ... 0 queued`), then `p.reboot()` from the hv shell or
 ~/m3-images/t35/boot.bin.gpu1-702 240` after a reboot to return the M3 to Linux (`ssh m3 uname -r` =
 `*-aurora-dev-silicon`). A frozen guest with a live proxy: `p.reboot()` once; proxy gone: stop, Naeem's
 power button.
+Run twice on 2026-10-20 (runs 041433 and 042706, 11 and 28 min at the login screen, the guest slept
+itself at 28 min and the hv exited cleanly); results in `research/pb-macos-observation.md`. Known limits:
+the InitBM scan reaches only the last five ring entries of a kick (the real InitBM command was not among
+them in these runs; the login snapshot has it), and `cut` at the end of a `tail -f | grep` watch pipeline
+block-buffers (use `stdbuf -oL cut` or none).

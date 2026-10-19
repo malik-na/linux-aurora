@@ -55,6 +55,7 @@ PB_CHUNK = _env_int("AGX_PB_CHUNK", 0x40000, PAGE, 0x100000) & ~(PAGE - 1)
 PB_SEQ_SCAN = _env_int("AGX_PB_SEQ_SCAN", 1, 0, 1)   # scan every TA microsequence for InitBM
 MGR_IMAGE = 0x100
 MAX_L3_TABLES = 64                                   # L3 tables walked over one heap (2 GiB)
+PROBE_AGAIN = 3000                                   # kicks after a manager's records vanish: second probe
 
 # TA work: context +0xc, manager +0x24, sequence +0x770 (u64) and length +0x778 (u32).
 # FS work: manager +0x28. Pipe entry (0x18): queue +8, kind +0x10, head +0x14, event +0x16, new +0x17.
@@ -226,6 +227,7 @@ def capture_manager(ep, mgr, ctx, queue, tag):
         return
     heap = compact_va(bruns[0][0])
     m["heap"] = heap
+    m["blocks_at_capture"] = [r & 0xffffffff for r in brec[:blocks] if (compact_va(r & 0xffffffff) >> 25) == (heap >> 25)]
     span_posted = sum(c for _, c in bruns) * 4 * PB_PAGE
     span_max = d["max_b"] * PB_PAGE
     m["span_max"] = span_max
@@ -311,6 +313,11 @@ def bulk_step(ep):
 def refresh(ep, why):
     """Re-read the small records of every known manager and log changes."""
     for mgr, m in list(S.managers.items()):
+        if m.get("gone") is not None and why == "periodic":
+            if S.kicks - m["gone"] >= PROBE_AGAIN and not m.get("probed_again"):
+                m["probed_again"] = True
+                probe_gone(ep, mgr, m, f"{S.kicks - m['gone']} kicks later")
+            continue
         try:
             img, d, ctl, cnt = read_small(mgr)
             st = small_state(img, d, ctl, cnt)
@@ -324,8 +331,83 @@ def refresh(ep, why):
                        (" ".join(f"{k} {a}->{b}" for k, (a, b) in diff.items()) if diff else "unchanged") +
                        f" | blocks={st['blocks']} pages={st['pages']} ctl={st['ctl0']}/{st['ctl4']} requests={st['requests']}")
             m["state"] = st
+            if {"blocks", "pages", "ctl4"} & set(diff):
+                list_heads(ep, m, d, f"k{S.kicks}")
         except Exception as e:
-            ep.log(f"T6031 {now()} PB {m['tag']} ({why}): small records unreadable: {e!r}")
+            # The queue's PB records are going away: say so once, then probe what is left of the
+            # manager, its lists, its queue and the heap's mappings (again after PROBE_AGAIN kicks).
+            if m.get("gone") is None:
+                m["gone"] = S.kicks
+                ep.log(f"T6031 {now()} PB {m['tag']} ({why}, kick #{S.kicks}): small records unreadable: {e!r}")
+                probe_gone(ep, mgr, m, "at the first unreadable record")
+            elif S.kicks - m["gone"] >= PROBE_AGAIN and not m.get("probed_again"):
+                m["probed_again"] = True
+                probe_gone(ep, mgr, m, f"{S.kicks - m['gone']} kicks later")
+
+def probe_gone(ep, mgr, m, when):
+    """What of a manager's records and heap is still mapped (each read on its own, read-only)."""
+    out = []
+    try:
+        img = rd(mgr, MGR_IMAGE); d = decode_manager(img)
+        out.append(f"manager image mapped (w0 {u32(img, 0)} w10 {u32(img, 0x10):#x} blocks {d['blocks']} pages {d['pages']} requests {d['requests']})")
+    except Exception as e:
+        d = m.get("decoded"); out.append(f"manager image unmapped ({e!r})")
+    if d:
+        for name in ("block_ctl", "counter"):
+            try:
+                b = rd(d[name], 0x40); out.append(f"{name} mapped ({u32(b, 0)}/{u32(b, 4)})")
+            except Exception:
+                out.append(f"{name} unmapped")
+        for name, size in (("block_list", 8 * 64), ("page_list", 4 * 256)):
+            try:
+                b = cread(m["ctx"], d[name], size)
+                out.append(f"{name} head mapped ({sum(1 for i in range(0, size, 4) if u32(b, i))} nonzero words)")
+            except Exception:
+                out.append(f"{name} head unmapped")
+    for q in sorted(m.get("queues", ())):
+        try:
+            rd(q, 0x10); out.append(f"queue {q:#x} info mapped")
+        except Exception:
+            out.append(f"queue {q:#x} info unmapped")
+    heap = m.get("heap")
+    if heap:
+        try:
+            tbl = walk_table(m["ctx"], heap, 3)
+            if tbl is None:
+                out.append("heap L3 table gone")
+            else:
+                # The pages of the posted blocks as the block list named them at the capture.
+                bl = m.get("blocks_at_capture") or []
+                mapped = sum(1 for b in bl for k in range(8) if ((compact_va(b) >> 14) & 2047) + k < 2048
+                             and pte_valid(tbl[((compact_va(b) >> 14) & 2047) + k]))
+                out.append(f"heap block pages mapped {mapped} of {8 * len(bl)} (L3 total {sum(1 for v in tbl if pte_valid(v))})")
+        except Exception as e:
+            out.append(f"heap walk failed ({e!r})")
+    ep.log(f"T6031 {now()} PB {m['tag']} {when} (kick #{S.kicks}): " + "; ".join(out))
+
+def list_heads(ep, m, d, suffix):
+    """Re-read the heads of both lists after the posted counts changed, and summarize them."""
+    try:
+        blocks, pages = d["blocks"], d["pages"]
+        hb = cread(m["ctx"], d["block_list"], 8 * min(blocks + 16, 1024))
+        hp = cread(m["ctx"], d["page_list"], 4 * min(pages + 64, 4096))
+        wf(f"pb-{m['tag']}-blocklist-head-{suffix}.bin", hb); wf(f"pb-{m['tag']}-pagelist-head-{suffix}.bin", hp)
+        brec = [u64(hb, 8 * i) & 0xffffffff for i in range(len(hb) // 8)]
+        prec = [u32(hp, 4 * i) for i in range(len(hp) // 4)]
+        bset, pset = set(brec[:blocks]), set(prec[:pages])
+        bpages = {b + k for b in bset for k in range(4)}
+        ep.log(f"T6031 PB {m['tag']} lists at {suffix}: block list {blocks} records, {len(bset)} distinct, in {len(list_runs(brec[:blocks]))} runs, "
+               f"nonzero past the count {sum(1 for r in brec[blocks:] if r)}; page list {pages} records, {len(pset)} distinct, "
+               f"{len(pset & bpages)} of them pages of posted blocks, same first block as at the capture: "
+               f"{bool(m.get('blocks_at_capture')) and brec[0] == m['blocks_at_capture'][0]}")
+        if m.get("heap"):
+            tbl = walk_table(m["ctx"], m["heap"], 3)
+            if tbl is not None:
+                mapped = sum(1 for b in brec[:blocks] for k in range(8)
+                             if (compact_va(b) >> 25) == (m["heap"] >> 25) and pte_valid(tbl[((compact_va(b) >> 14) & 2047) + k]))
+                ep.log(f"T6031 PB {m['tag']} heap at {suffix}: {mapped} of {8 * blocks} pages of the posted blocks mapped (L3 total {sum(1 for v in tbl if pte_valid(v))})")
+    except Exception as e:
+        ep.log(f"T6031 PB {m['tag']} list heads at {suffix} failed: {e!r}")
 
 def note_manager(ep, mgr, ctx, queue, kind, cmd):
     if not is_fw(mgr):
@@ -349,6 +431,24 @@ def note_manager(ep, mgr, ctx, queue, kind, cmd):
             ep.log(f"T6031 {now()} PB {m['tag']}: also used by queue {queue:#x} ({len(m['queues'])} queues)")
     if ctx != m["ctx"]:
         ep.log(f"T6031 {now()} PB {m['tag']}: also used from context {ctx} (first {m['ctx']})")
+
+def scan_cmd_seq(ep, cmd, where):
+    """InitBM records in the microsequence of a command (any work type with a TA-shaped header)."""
+    try:
+        body = rd(cmd, 0x800)
+        seq, slen = u64(body, TA_SEQ), u32(body, TA_SEQ_LEN)
+        if not is_fw(seq) or not 0 < slen <= 0x1000:
+            return
+        sq = rd(seq, min(slen, 0x400))
+        for off in range(0, len(sq) - INITBM_SIZE + 1, 4):
+            if (u32(sq, off) == INITBM_OP and is_fw(u64(sq, off + 0x14)) and u32(sq, off + 4) < 64
+                    and 0 < u32(sq, off + 0x10) < 0x10000 and u64(sq, off + 0x14) & 0x3fff == 0):
+                mgr = u64(sq, off + 0x14)
+                S.initbm += 1
+                ep.log(f"T6031 {now()} PB InitBM #{S.initbm} at kick #{S.kicks} in {where} (work type {u32(body, 0)}): manager "
+                       f"{S.managers[mgr]['tag'] if mgr in S.managers else hex(mgr)} context {u32(sq, off + 4)} blocks {u32(sq, off + 0x10)} (sequence +{off:#x})")
+    except Exception as e:
+        ep.log(f"T6031 PB InitBM scan of {where} failed: {e!r}")
 
 def ta_kick(ep, cmd, queue, kind):
     body = rd(cmd, 0x800)
@@ -434,8 +534,16 @@ def pipe_entry(ep, index, e):
         ring = u64(info, 8)
         cap = u32(rd(u64(info, 0) + 0x50, 4), 0) or 0x500
         cmd = u64(rd(ring + ((head - 1) % cap) * 8, 8), 0)
+        before = len(S.managers)
         if is_fw(cmd):
             ta_kick(ep, cmd, queue, kind)
+        if len(S.managers) != before or S.kicks < 16:
+            # A manager appeared with this kick: the InitBM record is in its own command, so scan
+            # the sequences of the few ring entries before this one too.
+            for n in range(2, 6):
+                c = u64(rd(ring + ((head - n) % cap) * 8, 8), 0)
+                if is_fw(c):
+                    scan_cmd_seq(ep, c, f"ring[head-{n}]")
     except Exception:
         ep.log("T6031 PB pipe entry failed:\n" + traceback.format_exc())
 
