@@ -1,0 +1,217 @@
+diff --git a/src/asahi/lib/agx_device.c b/src/asahi/lib/agx_device.c
+index 814e65b3a73..a8ff0727c66 100644
+--- a/src/asahi/lib/agx_device.c
++++ b/src/asahi/lib/agx_device.c
+@@ -1366,7 +1366,17 @@ agx_open_device(void *memctx, struct agx_device *dev)
+     * rather than a blank page.
+     */
+    if (agx_chip_native_agx3(dev->chip)) {
+-      const size_t usc_base_size = AIL_PAGESIZE;
++      /* Experiment (malik-na/linux-aurora#69): HK_G15C_BASE_PAGES=N makes the
++       * base region N pages on G15C, all filled with helper returns. */
++      size_t usc_base_size = AIL_PAGESIZE;
++      if (dev->chip == AGX_CHIP_G15C) {
++         const char *pages = getenv("HK_G15C_BASE_PAGES");
++         int n = pages ? atoi(pages) : 1;
++         if (n > 1 && n <= 64) {
++            usc_base_size = (size_t)n * AIL_PAGESIZE;
++            fprintf(stderr, "[g15c-exp] USC window base region: %d pages\n", n);
++         }
++      }
+ 
+       simple_mtx_lock(&dev->vma_lock);
+       bool reserved = util_vma_heap_alloc_addr(&dev->usc_heap, dev->shader_base,
+diff --git a/src/asahi/lib/agx_ioto_program_core.c b/src/asahi/lib/agx_ioto_program_core.c
+index ff8037f2534..1e3355c5990 100644
+--- a/src/asahi/lib/agx_ioto_program_core.c
++++ b/src/asahi/lib/agx_ioto_program_core.c
+@@ -11,6 +11,8 @@
+ 
+ #include "util/u_debug.h"
+ 
++#include <stdio.h>
++#include <stdlib.h>
+ #include <string.h>
+ 
+ /* Exact fixed regions surrounding the runtime state tail in the SPDX-MIT
+@@ -61,6 +63,30 @@ static const uint8_t
+       0x02, 0x00, 0x04, 0x00, 0x00, 0x00, 0x0f, 0x12, 0x54, 0x00, 0x4c, 0x00,
+ };
+ 
++/* Experiment (malik-na/linux-aurora#69): the same prefix with its final computed CNDCALL (the
++ * last six bytes) replaced by three nops, chosen at run time by HK_G15C_PROFILE=nocall. */
++static const uint8_t
++   g17p_nocall_profile_prefix[AGX_IOTO_G17P_DEFAULT_PROFILE_PREFIX_SIZE] = {
++      0x1c, 0x80, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x81, 0x11, 0x06,
++      0x00, 0x00, 0x00, 0x00, 0x0c, 0x80, 0x02, 0x00, 0x04, 0x00, 0x00, 0x00,
++      0x9f, 0x11, 0x54, 0x00, 0x02, 0x00, 0x08, 0xa8, 0x10, 0x05, 0x1c, 0x80,
++      0x02, 0x00, 0x04, 0x00, 0x00, 0x00, 0x06, 0x00, 0x06, 0x00, 0x06, 0x00,
++};
++
++static const uint8_t *
++g17p_profile_prefix(void)
++{
++   static int nocall = -1;
++   if (nocall < 0) {
++      const char *mode = getenv("HK_G15C_PROFILE");
++      nocall = mode && !strcmp(mode, "nocall");
++      if (nocall)
++         fprintf(stderr, "[g15c-exp] profile prefix: CNDCALL replaced by nops\n");
++   }
++   return nocall ? g17p_nocall_profile_prefix : g17p_default_profile_prefix;
++}
++
++
+ static const uint8_t
+    g17p_default_profile_suffix[AGX_IOTO_G17P_DEFAULT_PROFILE_SUFFIX_SIZE] = {
+       0x03, 0x00, 0x07, 0x00, 0x02, 0x00, 0x00, 0x00, 0x60, 0x00,
+@@ -429,7 +455,7 @@ g17p_no_resource_program_compose(
+    size_t offset = 0;
+    memcpy(staged + offset, packed_tail->bytes, packed_tail->length);
+    offset += packed_tail->length;
+-   memcpy(staged + offset, g17p_default_profile_prefix,
++   memcpy(staged + offset, g17p_profile_prefix(),
+           sizeof(g17p_default_profile_prefix));
+    offset += sizeof(g17p_default_profile_prefix);
+    memcpy(staged + offset, g17p_default_profile_suffix,
+@@ -477,7 +503,7 @@ g17p_fragment_no_resource_program_compose(
+    size_t offset = 0;
+    memcpy(staged + offset, packed_tail->bytes, packed_tail->length);
+    offset += packed_tail->length;
+-   memcpy(staged + offset, g17p_default_profile_prefix,
++   memcpy(staged + offset, g17p_profile_prefix(),
+           sizeof(g17p_default_profile_prefix));
+    offset += sizeof(g17p_default_profile_prefix);
+    memcpy(staged + offset, pixrel, sizeof(pixrel));
+@@ -556,7 +582,7 @@ g17p_resource_program_compose(
+    } while (0)
+    APPEND_SPAN(pre_copy_body, pre_copy_body_size);
+    APPEND_SPAN(packed_tail->bytes, packed_tail->length);
+-   APPEND_SPAN(g17p_default_profile_prefix,
++   APPEND_SPAN(g17p_profile_prefix(),
+                sizeof(g17p_default_profile_prefix));
+    APPEND_SPAN(copies, copies_size);
+    APPEND_SPAN(terminal_protocol, terminal_protocol_size);
+@@ -693,7 +719,7 @@ g17p_external_setup_launcher_compose(
+    offset += root_prefix_size;
+    memcpy(staged + offset, packed_tail->bytes, packed_tail->length);
+    offset += packed_tail->length;
+-   memcpy(staged + offset, g17p_default_profile_prefix,
++   memcpy(staged + offset, g17p_profile_prefix(),
+           sizeof(g17p_default_profile_prefix));
+    offset += sizeof(g17p_default_profile_prefix);
+    memcpy(staged + offset, branch.bytes, branch.length);
+diff --git a/src/asahi/vulkan/hk_cmd_meta.c b/src/asahi/vulkan/hk_cmd_meta.c
+index b588f69517b..dae8e536792 100644
+--- a/src/asahi/vulkan/hk_cmd_meta.c
++++ b/src/asahi/vulkan/hk_cmd_meta.c
+@@ -12,6 +12,7 @@
+ #include "agx_pack.h"
+ #include "hk_buffer.h"
+ #include "hk_cmd_buffer.h"
++#include <stdlib.h>
+ #include "hk_device.h"
+ #include "hk_entrypoints.h"
+ #include "hk_g17p_meta_copy_core.h"
+@@ -1044,8 +1045,16 @@ build_image_copy_shader(const struct vk_meta_image_copy_key *key,
+       nir_builder_init_simple_shader(MESA_SHADER_COMPUTE, NULL, "hk-meta-copy");
+ 
+    nir_builder *b = &build;
++   /* Experiment (malik-na/linux-aurora#69): HK_G15C_COPY_ROWS=2 halves the
++    * workgroup to 32x16 threads, each thread copying two rows of the tile. */
++   unsigned rows = 1;
++   {
++      const char *env = getenv("HK_G15C_COPY_ROWS");
++      if (env && atoi(env) == 2)
++         rows = 2;
++   }
+    b->shader->info.workgroup_size[0] = TILE_WIDTH;
+-   b->shader->info.workgroup_size[1] = TILE_HEIGHT;
++   b->shader->info.workgroup_size[1] = TILE_HEIGHT / rows;
+ 
+    bool src_is_buf = key->type == BUF2IMG;
+    bool dst_is_buf = key->type == IMG2BUF;
+@@ -1086,10 +1095,10 @@ build_image_copy_shader(const struct vk_meta_image_copy_key *key,
+    nir_def *grid_2d_el = nir_load_push_constant(
+       b, 2, 32, nir_imm_int(b, offsetof(struct vk_meta_push_data, grid_el)));
+ 
+-   /* We're done setting up variables, do the copy */
+-   nir_def *coord = nir_load_global_invocation_id(b, 32);
+-
+-   /* The destination format is already canonical, convert to an ISA format */
++   nir_def *dst_coord_row0 = NULL;
++   nir_def *lid_row0 = NULL;
++   nir_def *image_deref = &nir_build_deref_var(b, image)->def;
++   nir_def *local_offset = nir_imm_int(b, 0);
+    enum pipe_format isa_format = PIPE_FORMAT_NONE;
+    if (key->block_based) {
+       enum pipe_format pipe = canonical_format_pipe(key->dst_format);
+@@ -1097,15 +1106,30 @@ build_image_copy_shader(const struct vk_meta_image_copy_key *key,
+       assert(isa_format != PIPE_FORMAT_NONE);
+    }
+ 
+-   nir_def *local_offset = nir_imm_int(b, 0);
++   for (unsigned row = 0; row < rows; ++row) {
++   /* We're done setting up variables, do the copy */
++   nir_def *coord = nir_load_global_invocation_id(b, 32);
++   if (rows > 1) {
++      nir_def *wg = nir_load_workgroup_id(b);
++      nir_def *lid0 = nir_load_local_invocation_id(b);
++      coord = nir_vec3(b, nir_channel(b, coord, 0),
++                       nir_iadd_imm(b, nir_iadd(b, nir_imul_imm(b, nir_channel(b, wg, 1), TILE_HEIGHT),
++                                                nir_channel(b, lid0, 1)),
++                                    row * (TILE_HEIGHT / rows)),
++                       nir_channel(b, coord, 2));
++   }
++
+    nir_def *lid = nir_trim_vector(b, nir_load_local_invocation_id(b), 2);
++   if (rows > 1)
++      lid = nir_vec2(b, nir_channel(b, lid, 0),
++                     nir_iadd_imm(b, nir_channel(b, lid, 1), row * (TILE_HEIGHT / rows)));
+    lid = nir_u2u16(b, lid);
++   if (row == 0)
++      lid_row0 = lid;
+ 
+    nir_def *src_coord = src_is_buf ? coord : nir_iadd(b, coord, src_offset_el);
+    nir_def *dst_coord = dst_is_buf ? coord : nir_iadd(b, coord, dst_offset_el);
+ 
+-   nir_def *image_deref = &nir_build_deref_var(b, image)->def;
+-
+    nir_def *coord_2d_el = nir_trim_vector(b, coord, 2);
+    nir_def *in_bounds;
+    if (key->block_based) {
+@@ -1135,6 +1159,8 @@ build_image_copy_shader(const struct vk_meta_image_copy_key *key,
+    } else if (src_is_buf) {
+       src_coord = linearize_coords(b, src_coord, key);
+    }
++   if (row == 0)
++      dst_coord_row0 = dst_coord;
+ 
+    for (unsigned s = 0; s < key->nr_samples; ++s) {
+       nir_def *ms_index = nir_imm_int(b, s);
+@@ -1192,21 +1218,22 @@ build_image_copy_shader(const struct vk_meta_image_copy_key *key,
+                                    .explicit_coord = true);
+       }
+    }
++   } /* rows */
+ 
+    if (key->block_based) {
+       assert(!dst_is_buf);
+ 
+       nir_barrier(b, .execution_scope = SCOPE_WORKGROUP);
+ 
+-      nir_push_if(b, nir_ball(b, nir_ieq_imm(b, lid, 0)));
++      nir_push_if(b, nir_ball(b, nir_ieq_imm(b, lid_row0, 0)));
+       {
+          nir_image_deref_store_block_agx(
+-            b, image_deref, local_offset, dst_coord, .format = isa_format,
++            b, image_deref, local_offset, dst_coord_row0, .format = isa_format,
+             .image_dim = dim_2d, .image_array = true, .explicit_coord = true);
+       }
+       nir_pop_if(b, NULL);
+       b->shader->info.cs.image_block_size_per_thread_agx =
+-         util_format_get_blocksize(key->dst_format);
++         util_format_get_blocksize(key->dst_format) * rows;
+    }
+ 
+    return b->shader;

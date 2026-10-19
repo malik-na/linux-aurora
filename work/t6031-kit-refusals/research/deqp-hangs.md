@@ -1,0 +1,199 @@
+# dEQP hangs on the G15C: compute dispatches with more than ten large workgroups (ticket #69)
+
+Diagnosis of the 145 deterministic dEQP hangs of the silicon-20 baseline (`deqp-failstop.md`, ticket #67/#69),
+2026-10-19. Kernel: Rust G15 driver, fork `t6031/board-hw-32` (origin 5131caff) for the reading and the
+installed `silicon-2` package (board-hw-32 + the #59 idle-standby change) for the GPU runs. Mesa:
+`/opt/mesa-m3-g15c-native` (aurora-silicon/mesa agx3b + G15C, aab698d2). Method, tools and raw numbers:
+`tools/deqp-shim/`, `results/20261019-deqp-hangs/`.
+
+## Summary
+
+- Every one of the hangs is a **compute command that never completes**; the render parts of the same prefixes
+  completed. The firmware times the command out after about 500 ms (`prefix FAILED ... fault=0x0`), the host
+  recovers. This is not a render-path problem and not the G15S render register values of #61.
+- The common factor of the hanging dispatches, measured with a controlled compute probe, is the **workgroup
+  size and count**: a dispatch of more than **ten** workgroups of **more than 576 threads** (measured: 640, 768,
+  992, 1014 and 1024 threads) never completes; ten or fewer complete; any count of workgroups of 576 threads or
+  fewer completes (tested to 1024 groups of 1, 2, 3, 16, 32, 64, 128, 256 threads and 80 groups of 512).
+- Most of the dEQP hangs are hk's **image readback / copy shader**, which runs one 32x32 = 1024-thread workgroup
+  per 32x32 tile: every test that reads back an image of more than ten tiles (a 128x128 render target is 16)
+  hung. Halving that workgroup to 32x16 (each thread copies two rows of the tile) removes the hang and the
+  results are right (see the experiment below). That is the proposed Mesa change.
+- Two smaller groups remain and are not explained by this rule: dispatches with workgroups of 1 thread that go
+  through hk's **indirect-dispatch** path (dEQP's `indirect_dispatch.upload_buffer.multiple_groups`, 30 groups,
+  hangs; its 6-group sibling passes), and the tessellation/geometry tests whose prepasses use indirect launches
+  (VK `multi_draw ... with_tess/tess_geom`, GLES31 tess/geometry stages), plus two 16-bit `image_clearing`
+  cases with small images. These need their own repro.
+- The hardware/firmware reason why the eleventh large workgroup never runs is not known. Ten is the number of
+  cores in one cluster of this GPU (four clusters of ten); the working hypothesis is that large workgroups are
+  placed one per core and that the cores past the first cluster do not execute them, while small workgroups
+  are scheduled onto cores that do. What delivers that limit (a per-command register value still shaped for
+  the two-cluster G15S, a firmware record, or the launch record) is the open question; candidates are listed
+  at the end.
+
+## 1. The hangs are compute commands (kernel log)
+
+The recovery report prints a `G15:   render: ...` line only when the failed prefix held a render. In the
+saved silicon-20 log (private; the last 135 of the 290 timeouts), every failed prefix has the **compute** stamp
+one step short of its target (`user`/`fw` = target - 0x100, `done` = `read` - 1 or - 2), i.e. one compute
+command consumed by the queue and never finished:
+
+| window | compute-only prefix | render + compute prefix (render stamps complete, compute not) |
+|---|---|---|
+| VK | 95 | 6 |
+| GLES3 | 2 | 0 |
+| GLES31 | 4 | 28 (the TA waits on the prefix's compute, so both are short) |
+
+Script: `tools/deqp-shim/classify_hangs.py <kernel log>`.
+
+## 2. What the hanging tests submit (drm-shim, no GPU)
+
+Mesa's drm-shim with the G15C identity (`ASAHI_SHIM_CHIP=g15c`, `ASAHI_SHIM_DUMP_SUBMIT=<dir>`, and
+`ASAHI_MESA_DEBUG=trace` for the agxdecode dump of every ioctl) records exactly what each test submits without
+touching the GPU. All 129 hanging VK cases and 140 passing VK cases of the same groups were run this way
+(`run_shim.sh`, `run_trace.sh`; one process per case).
+
+- The **kernel command shapes do not separate them**: `[CRC]` (compute, render, compute in one ioctl) is 18
+  hang / 30 pass, `[C] [R] [C]` 27 / 16, `[C]` alone 1 / 11 (`structure.py`).
+- The **compute launch shapes do** (`launches.py`, `features.py`): the launches present in hanging cases and
+  absent from every passing case are the 32x32-thread readback copies with more than ten workgroups
+  (128x128 = 16, 200x180 = 42, 256x256 = 64, 384x32 = 12, 32x32x16 = 16 groups) and the one application
+  dispatch of 16 groups of 1014 threads (`zero_initialize_workgroup_memory.max_workgroup_memory.16`). Passing
+  cases have 32x32-thread readbacks of at most 8 groups (64x64, 96x64, 256x32, 32x32x4) and any number of
+  32x1x1 or 8x8x1 groups (up to 2048).
+
+The readback copy is hk's `build_image_copy_shader` (`src/asahi/vulkan/hk_cmd_meta.c`, `TILE_WIDTH x TILE_HEIGHT`
+= 32x32 threads, one workgroup per destination tile; the block-based variant stores the tile from local pixel
+storage, so the workgroup must cover the whole tile). Every dEQP render test reads its result back through it,
+which is why whole groups (glsl.*, scissor, texture.mipmap, pipeline.monolithic.sampler, image_clearing,
+memory.pipeline_barrier.graphics) hung while sibling tests with 64x64 or 32x32 render targets passed
+(glsl.conversions and glsl.swizzles render 64x64).
+
+## 3. The rule, measured (GPU, `tools/g15c-wordmap`, one dispatch per run)
+
+`WM_LOCAL=<threads> ./g15c-wordmap <N> 16 1` with the stock native Mesa; GREEN = every word right, HANG = one
+`GPU timeout` + recovery:
+
+| threads per group | groups | result |
+|---|---|---|
+| 1024 | 8, 9, 10 | GREEN |
+| 1024 | 11, 12, 16 | HANG |
+| 1024 (2-D grid 4x4, and the no-uniform variant) | 16 | HANG |
+| 992, 768 | 16 | HANG |
+| 640 | 16 | HANG |
+| 576 | 20 | GREEN |
+| 544 | 16 | GREEN |
+| 512 | 16, 40, 80 | GREEN |
+| 256 | 32 | GREEN |
+| 128 | 64 | GREEN |
+| 64 | 1024 | GREEN |
+| 32 | 1024 | GREEN |
+| 16, 3, 2, 1 | 1024 | GREEN |
+| 1 | 8, 16, 32, 64, 256 | GREEN |
+
+The GREEN runs finish in about 1.1 to 1.3 ms. The same wordmap kernel with `WM_SPIN` on the ten working groups
+is GREEN, so it is not timing. The threshold is between 576 and 640 threads per group and between 10 and 11
+groups.
+
+## 4. What is ruled out
+
+| experiment (GPU, one case per run) | result |
+|---|---|
+| `ASAHI_MESA_DEBUG=nocompress` on the operator case | still hangs (not lossless compression) |
+| `ASAHI_MESA_DEBUG=sync` on a passing sibling | still passes |
+| profile prefix without its computed helper call (`HK_G15C_PROFILE=nocall`, the t83 form) | still hangs |
+| USC window base region of 4 pages, all helper returns (`HK_G15C_BASE_PAGES=4`) | still hangs |
+| wordmap `nouniform` variant (no descriptors or push constants) | still hangs at 16 x 1024 |
+
+So the #50/#52 helper-call run-off is not involved, nor uniform state, nor compression.
+
+## 5. The Mesa change (experiment build, validated)
+
+`results/20261019-deqp-hangs/mesa-exp-69.diff` on aab698d2 (`~/Projects/mesa-exp` on the M3, prefix
+`~/Projects/build-out/mesa-exp/opt`, built with `tools/deqp-shim/exp-build.sh` in the build-root-mesa
+chroot). Runtime knobs so one build is its own control:
+
+- `HK_G15C_COPY_ROWS=2`: `build_image_copy_shader` uses 32x16-thread workgroups; each thread handles two rows
+  of its 32x32 tile (coordinates from the workgroup id, local pixel stores at both rows, the tile store from
+  thread (0,0) and the dispatch grid unchanged, `image_block_size_per_thread_agx` doubled).
+- (Also in the diff, both negative: `HK_G15C_PROFILE=nocall`, `HK_G15C_BASE_PAGES=N`.)
+
+A first attempt that only set `TILE_HEIGHT` to 16 removed the hangs but produced wrong images: the block-based
+copy expands the grid to tile boundaries with `TILE_WIDTH`/`TILE_HEIGHT` and stores the tile from local pixel
+storage, so the workgroup has to keep covering 32 rows.
+
+With `HK_G15C_COPY_ROWS=2`, formerly hanging cases now pass with no `GPU timeout`:
+`glsl.operator...add_assign_effect.mediump_float_vertex`, `fragment_operations.scissor.lines.crossing`,
+`image_clearing...r32_sint_200x180_multiple_subresourcerange`, `texture.mipmap.2d.base_level.nearest_nearest`,
+`copy_and_blit...blit_image...3d.r16g16_sfloat...stripes_z`, `pipeline.monolithic.sampler...2d_array.r8g8b8a8_unorm...`,
+`image_clearing...clear_color_attachment...r32_uint_200x180_sample_count_4`,
+`glsl.texture_functions.textureprojoffset...sampler2dshadow_fragment`; passing controls still pass
+(`glsl.conversions...float_to_float_fragment`, a 2-D blit). `memory.pipeline_barrier.graphics.host_write_index_buffer.1048576`
+no longer hangs but fails its image comparison (to be looked at separately).
+
+Full run over the 129-case VK hang list with the knob: see section 7.
+
+For the real patch the knob becomes a chip condition (G15C only, or every G15 native chip: the G15S has the
+same cores per cluster) and the fallback to `rows = 1` goes away.
+
+## 6. What remains after the change
+
+- Application dispatches with more than ten workgroups of more than 576 threads
+  (`compute.pipeline.zero_initialize_workgroup_memory.max_workgroup_memory.16`: 16 x 1014) still hang. Only
+  the hardware limit's fix helps there; the Vulkan maximum workgroup size is 1024.
+- hk's indirect-dispatch path: `indirect_dispatch.upload_buffer.multiple_groups` (30 groups x 1 thread,
+  `vkCmdDispatchIndirect`) hangs while the 6-group `multiple_groups_multiple_invocations` passes and the wordmap
+  probe runs 1024 groups of 1 thread directly; the tessellation/geometry draws, whose prepasses launch
+  indirectly, are the same class (VK `multi_draw ... with_tess/tess_geom`, `shader_layer/viewport_index
+  .tessellation_shader_*`, `indirect_draw ... from_compute`; GLES31 `builtin_functions ... tess_eval/
+  tess_control/geometry`, `tessellation.*`, `primitive_bounding_box`). Candidate: the grid helper / indirect
+  launch form on G15 (`hk_g17p_append_indirect_launch`, `agx3_g17p_grid_helper_core`).
+- `image_clearing` of small 16-bit images (`r8g8_unorm_1x33`, `a1b5g5r5_unorm_pack16_64x11`): their launches
+  are 32x1x1 groups over a (1,33) and a (64,11) grid; not covered by the rule; own repro needed.
+
+## 7. Repro and acceptance runs
+
+Single-case repro (stock Mesa; one `GPU timeout` and a recovery):
+```
+cd ~/Projects/build-out/deqp/external/vulkancts/modules/vulkan
+LD_LIBRARY_PATH=/opt/mesa-m3-g15c-native/lib VK_ICD_FILENAMES=/opt/mesa-m3-g15c-native/share/vulkan/icd.d/asahi_icd.aarch64.json \
+  timeout 60 ./deqp-vk --deqp-case=dEQP-VK.glsl.operator.binary_operator.add_assign_effect.mediump_float_vertex
+```
+Probe: `cd ~/g15c-wordmap && WM_LOCAL=1024 <same env> ./g15c-wordmap 11264 16 1` hangs; `... 10240 16 1` is GREEN.
+
+Experiment build: `LD_LIBRARY_PATH=~/Projects/build-out/mesa-exp/opt/lib VK_ICD_FILENAMES=~/Projects/build-out/mesa-exp/opt/share/vulkan/icd.d/asahi_icd.aarch64.json HK_G15C_COPY_ROWS=2 ./deqp-vk --deqp-case=...`
+
+Run over the 129-case VK hang list (`tools/deqp-shim/run_gpu_list.sh hang.txt gpu-rows2 HK_G15C_COPY_ROWS=2`,
+one process per case, experiment build, results in `results/20261019-deqp-hangs/gpu-rows2-status.txt`):
+
+| outcome | cases |
+|---|---|
+| Pass, no `GPU timeout` | **102** (all of glsl.*, scissor, texture, pipeline.monolithic, copy_and_blit, 20 of 22 image_clearing, 2 of 4 pipeline_barrier.graphics, 2 draw) |
+| still hang (one timeout each) | 26: 20 draw tests with tessellation/geometry stages or `indirect_draw`, 2 `glsl.builtin ... tess_eval`, `max_workgroup_memory.16`, `image_clearing ... r8g8_unorm_1x33` and `a1b5g5r5 ... 64x11`, `pipeline_barrier.graphics.transfer_dst_storage_image.8192` |
+| Fail without hang | 1: `pipeline_barrier.graphics.host_write_index_buffer.1048576` (image comparison) |
+
+Indirect compute dispatches with few groups pass on the same build (`indirect_dispatch.upload_buffer.multi_dispatch`,
+`large_offset_multiple_invocations`); the 30-group `multiple_groups` hangs on stock Mesa (section 6). The three
+GLES31 cases tried (`sign.ivec4_mediump_tess_eval`, `frexp.float_highp_vertex`, `findlsb.uvec4_highp_fragment`)
+produced no result under the pbuffer surface in this harness and no timeout; they still need a run with the
+baseline script's GL setup.
+
+## 8. Open: where the ten-group limit comes from (kernel-side candidates, one per boot)
+
+Facts: the kernel encodes every compute command identically whatever the grid; the hang depends only on the
+launch's shape; the G15C compute register values in `g15/hw/t6031.rs` were taken from this machine's own
+driver (ticket #50), the render ones are still the G15S values (#61). Candidates, in the order to test:
+
+1. The compute work image words the T6030 and T6031 rows share: `0x154024201`, `0x10c08860`, `0xff0000`, and
+   the 32-bit `0xffffffff` at +0x7e0 (a 40-core part would need 40 bits if that word is a core mask; the SGX
+   enabled-core mask of this GPU is two words, `0xffffffff`/`0xff`).
+2. `ComputeRegs.fresh` (saved-state pointers and the two `0x1c` words zero in every command, as a queue's
+   first command); the J516C's later commands carry them.
+3. The firmware's per-cluster configuration from the board images (Globals/Power are the G15S templates with
+   this machine's device-tree words).
+4. The launch record: the J516C driver's launch differs in word 0 bit 23 and the word 1 payload (0x60)
+   (`results/20261014-063349-hv-launch-capture`); the word 3 layout was already shown not to matter (t83).
+
+A per-core activity readout (the old engine snapshot's per-core USC counters) would show directly whether
+the eleventh large group is placed on a core that never runs; the current debugfs (`asahi-g15/stats`,
+`pstate`) does not expose it.
