@@ -160,3 +160,7 @@ from the DT, blocks other M3 Max owners), #38 (hardware-record tail). Next (Naee
 then `/to-spec` "J516C port completion" → `/to-tickets` with blocking edges (board-data builder first); in parallel
 `/diagnosing-bugs` on 60→120 fps pacing and a GPU-clock-under-load measurement; ray tracing later as its own map.
 Status page: https://claude.ai/artifact/PoTUhrqVL6hqVmXRinRf6x
+
+## Update 2026-10-19: port-completion spec and tickets
+
+Spec malik-na/linux-aurora#53 (ready-for-agent). Tickets #54-#68, blocking edges as native GitHub dependencies. #54 (acceptance run) gates almost everything; board data chain #55 -> #56 -> #57 -> #68 (PRs review-ready). Unblocked now: #54, #60, #66. Ray tracing stays a separate later map.
