@@ -198,3 +198,11 @@ Spec malik-na/linux-aurora#53 (ready-for-agent). Tickets #54-#68, blocking edges
 - dEQP (#67) first run on silicon-20 drove the G15 driver to fail-stop after ~310 recoveries in the VK suite (kernel
   503 s); reboot restored it (record 20261019-181556 PASS). Analysis by a subagent: research/deqp-failstop.md (pending).
   Private kernel log on the M3: ~/m3-private/deqp-silicon20-dmesg.txt.
+- 19:25: #58 closed (readout 7c26fe10; GPU reaches 1380 MHz under gpu-heat; the checks are too light to boost).
+  #56: fork `t6031/board-hw-32` 5131caff (on 6c6a2705): record from the DT, 32 words from the file, 42 shown unneeded
+  (boots 20261019-191209 zero-38, 20261019-191324 zero-hwdatab; combined 20261019-192145 PASS, 60 s at 1380 MHz).
+  Installed default now: that package (`..._silicon-12` from the agent's out dir ~/Projects/build-out/kernel-board-dt);
+  known-good fallbacks in ~/aurora-backups (silicon-26 = board-hw-on-pstate). Still open on #56: the sensor rows need an
+  m1n1 export of aon-ptd (Naeem's call); remaining file words: max power + relative powers (power model), MTR masks.
+  Kernel stack for the #363 batch, in order: 65cd19c0, fd3c8adf, 87ab56de, e3dad1b5, 46588efc, b78b7585, 7c26fe10,
+  b3fb1bb8, 6c6a2705, 5131caff.
