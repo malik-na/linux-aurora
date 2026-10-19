@@ -37,3 +37,32 @@ Air's `~/m3-images/t22/run-trace.sh` is the same script; nothing needs copying, 
 Dumps land in `~/m3-results/hv-t22-<time>/initdata/` and stay on the Air.
 
 Guest kernel, ADT dumps, hv logs and camera stills stay on the Air (per-device data).
+
+## PB observation (`trace_agx_pb.py`, PB memory research, 2026-10-20)
+
+How the J516C driver manages the parameter buffer, watched from outside: the same channel location as
+the job/render tracers, then per TA kick the command's PB manager pointer (+0x24), context (+0xc) and
+queue, and the microsequence scanned for InitBM records; for the first `AGX_PB_MANAGERS` (default 4)
+distinct managers the manager image, block_ctl, counter, the heads of the block and page lists, the L2
+table over the heap and the L3 table of the first block at once, the whole lists and the L3 tables up to
+the manager's maximum queued (`AGX_PB_CHUNK`, default 256 KiB, per later pong/kick); every firmware
+event of type 7 and every host DEVCTL 7 logged with words, timestamp and latency, the small records
+re-read after each and every `AGX_PB_REFRESH` kicks (default 400), changes logged. Read-only,
+RAM-checked, bounded; a failure is logged and never stops the guest. Dumps `pb-<tag>-*.bin` land in the
+run's `initdata/` and stay on the Air. Dry-checked offline 2026-10-20 (compiles, imports against the
+proxyclient with `AGX_GPU=G15X`, decoders verified on our own layout and on the 2026-10-13 login
+snapshot). Run from here, with the M3 at the m1n1 proxy and the cable on the M3's right-hand port:
+
+    TRACER=$HOME/Projects/linux-aurora-agent-docs/work/t6031-kit-refusals/tools/hv/trace_agx_pb.py \
+        HV_EXTRA='-C 4' ./run-trace.sh
+    # then: R=$(cat ~/m3-results/hv-t22.current); grep -E 'T6031.*(PB|Traceback)' $R/run.log
+
+Procedure (at most 3 guest boots): `ssh m3 sudo -n systemctl reboot` (the M3 stops at its stage-1
+m1n1 proxy; `/dev/ttyACM0` appears on the Air within ~1 min), run the line above, wait for MSG_INIT
+(~30 s after guest entry), the first `PB: new manager` lines (login screen, ~1 min), then leave the guest
+at the login screen for 2 minutes (WindowServer renders ~1000 TA kicks/min), check the bulk queue has
+drained (`PB bulk: ... 0 queued`), then `p.reboot()` from the hv shell or
+`sudo ~/m1n1-venv/bin/python3 <agent-docs>/work/t6031-kit-refusals/tools/watch-chainload.py
+~/m3-images/t35/boot.bin.gpu1-702 240` after a reboot to return the M3 to Linux (`ssh m3 uname -r` =
+`*-aurora-dev-silicon`). A frozen guest with a live proxy: `p.reboot()` once; proxy gone: stop, Naeem's
+power button.
