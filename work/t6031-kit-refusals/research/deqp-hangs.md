@@ -365,3 +365,34 @@ are not what stops the asynchronous requests).
   1338 (baseline: 578 Pass with 129 hang cases excluded). At the end of VK ctx 51 grew 1544 -> 2048 in 0.34 s
   (requests 51-103), 2 refusals, left unanswered, fail-stop 7 s later; the run's fail-stop guard stopped before GLES.
   Stats: pb: blocks 1024/2048/1536/2048 requests 106 grown 1024 refused 2 bad 1.
+
+### 9.4 pb-soft-max (8424e318) results and the heap question
+
+Repro at `g15_pb_max_blocks=1024`: 45 requests, +450 blocks granted past the firmware maximum, 0 refused, the
+test ended in 2 s (Fail, image comparison), no fail-stop: the headroom serves the synchronous requests.
+Full unfiltered dEQP (-j2, default 1536): the whole VK suite ran (705 Pass, 1 Fail, 2 Flake, 630 Skip of 1338),
+but at its end context 51 grew the PB 1544 -> 2048 in 0.34 s (requests 51..103, +10 each), two refusals, "left
+unanswered", fail-stop 7 s later; final stats `pb: blocks 1024/2048/1536/2048 requests 106 grown 1024 refused 2
+bad 1`. The dmesg of that boot was not kept.
+
+Large scene or runaway? Not decidable from what was kept: the kept lines carry no TA positions after the first
+two requests. A runaway would show the same position request after request; a large scene advancing positions.
+52 requests in 0.34 s is 6.5 ms per +1.25 MiB, i.e. about 190 MB/s of tile data, which a 262144-index draw
+over a large target can produce. On G13 the public driver's maximum is 822 MiB (274 MiB without memoryless
+targets), so macOS-sized scenes of up to that size are expected to run without a partial render there.
+
+Sharing: the G15 driver has **one PB heap and one growth ledger for every context** (PB slot 0; the public
+driver keeps one buffer per VM/queue, 127 slots). With -j2 both processes draw from the same 2048 blocks and
+posted blocks are never taken back (grown pages return to the free pool when a scene ends, the heap stays at
+its posted size), so a budget exhausted by one scene is exhausted for both; the refusal, however, is about one
+scene's live demand exceeding the heap.
+
+The change (fork `t6031/pb-heap-512`, one commit on `pb-soft-max`): map 512 MiB (4096 blocks; the block list
+of K = 4096 records and the page list of 40960 records already hold them), block list moved to 0x70f0000000,
+at most 4095 blocks posted (the producer never wraps to 0), initial 1024, firmware maximum 3072 by default
+(1023 blocks = 102 synchronous requests of headroom), and every answer past the firmware maximum logged with
+its TA position. Memory cost: 512 MiB populated at start (was 256 MiB). Verdict rules for the next full run:
+no refusal = the scene was large and fits; refusals with the same position repeating in the logged answers =
+a runaway (then the fix is on the firmware-interaction side, e.g. the position/counter check, not the heap);
+refusals with advancing positions = the scene needs more than 512 MiB (then a per-scene cap and a partial
+render through userspace, or a still bigger heap).
