@@ -52,9 +52,49 @@ pub(crate) struct ComputeSlot {
     pub(crate) work: Arc<FwObject>,
     pub(crate) tail: Arc<FwObject>,
     pub(crate) seq: Arc<FwObject>,
-    pub(crate) scratch: KVec<Arc<FwObject>>,
+    /// The start record's block-manager buffer (+0x174).
+    pub(crate) scratch: Arc<FwObject>,
+    /// The start record's four page-manager buffers (+0x184, +0x18c, +0x194, +0x19c), one
+    /// object laid out by [`PageManagerLayout`].
+    pub(crate) pmgr: Arc<FwObject>,
+    pub(crate) pmgr_offsets: [u64; 4],
     /// Mixed prefix: the wait on the previous render's FS or the previous compute.
     pub(crate) barrier: Arc<FwObject>,
+}
+
+/// Layout of a compute slot's four page-manager buffers. Each core owns 0x1800 bytes of the
+/// first two buffers and each cluster 0x40 bytes of them and 0x800 bytes of the third; the
+/// buffers follow each other. A 64 KiB first buffer covers ten cores: a dispatch whose
+/// eleventh large workgroup (more than ~576 threads) lands on an eleventh core never completes
+/// (firmware timeout, no fault; ticket #69). Measured on a J516C (40 cores, 4 clusters:
+/// 0x3c400, 0x3c400, 0x2000 apart) and a J613 (10 cores, 1 cluster: 0xf400, 0xf400, 0x800).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PageManagerLayout {
+    /// Bytes of the first and second buffer.
+    pub(crate) a: u64,
+    /// Bytes of the third buffer.
+    pub(crate) b: u64,
+    /// Bytes of the fourth buffer (its extent was not measured; the previous 64 KiB).
+    pub(crate) d: u64,
+}
+
+impl PageManagerLayout {
+    pub(crate) const fn new(clusters: u32, cores: u32) -> Self {
+        let a = (cores as u64 * 0x1800 + ((clusters as u64) << 6) + 0x3ff) & !0x3ff;
+        Self {
+            a,
+            b: (clusters as u64) << 11,
+            d: 0x10000,
+        }
+    }
+
+    pub(crate) const fn offsets(&self) -> [u64; 4] {
+        [0, self.a, 2 * self.a, 2 * self.a + self.b]
+    }
+
+    pub(crate) const fn total(&self) -> usize {
+        (2 * self.a + self.b + self.d) as usize
+    }
 }
 
 /// A compute slot's objects before its barrier exists (the barriers are allocated after the
@@ -66,12 +106,14 @@ struct ComputeParts {
     work: Arc<FwObject>,
     tail: Arc<FwObject>,
     seq: Arc<FwObject>,
-    scratch: KVec<Arc<FwObject>>,
+    scratch: Arc<FwObject>,
+    pmgr: Arc<FwObject>,
+    pmgr_offsets: [u64; 4],
 }
 
 impl ComputeParts {
     /// Allocates compute slot `k`'s objects.
-    fn new(o: &mut Objects, k: u64) -> Result<Self> {
+    fn new(o: &mut Objects, k: u64, pm: &PageManagerLayout) -> Result<Self> {
         let sh = Class::Shared;
         let its = alloc(o, 16, sh, None, 0, false)?;
         let uts = alloc(o, 16, Class::Fw, None, 0, false)?;
@@ -93,10 +135,8 @@ impl ComputeParts {
         )?;
         let tail = alloc(o, 0x10000, sh, None, 0, false)?;
         let seq = alloc(o, compute::SEQ_OBJECT, cmd_fw(), None, 0, false)?;
-        let mut scratch = KVec::with_capacity(5, GFP_KERNEL)?;
-        for _ in 0..5 {
-            scratch.push(alloc(o, 0x10000, sh, None, 0, false)?, GFP_KERNEL)?;
-        }
+        let scratch = alloc(o, 0x10000, sh, None, 0, false)?;
+        let pmgr = alloc(o, pm.total(), sh, None, 0, false)?;
         Ok(Self {
             its,
             uts,
@@ -105,6 +145,8 @@ impl ComputeParts {
             tail,
             seq,
             scratch,
+            pmgr,
+            pmgr_offsets: pm.offsets(),
         })
     }
 
@@ -117,6 +159,8 @@ impl ComputeParts {
             tail: self.tail,
             seq: self.seq,
             scratch: self.scratch,
+            pmgr: self.pmgr,
+            pmgr_offsets: self.pmgr_offsets,
             barrier,
         }
     }
@@ -128,9 +172,8 @@ impl ComputeSlot {
     fn scrub(&self) -> Result {
         self.its.fill(0, 0, 16)?;
         self.tail.fill(0, 0, 0x10000)?;
-        for s in self.scratch.iter() {
-            s.fill(0, 0, 0x10000)?;
-        }
+        self.scratch.fill(0, 0, 0x10000)?;
+        self.pmgr.fill(0, 0, self.pmgr.size)?;
         self.preempt.fill(0, 0xcc, 0x10000)
     }
 }
@@ -569,9 +612,11 @@ impl Slots {
         lap.lap(&mut self.stats.flush_ns);
     }
 
-    /// Allocates the compute slots, the pass slots, the compute slots' barriers, the clustering
+    /// Allocates the compute slots (their page-manager buffers sized for `clusters` clusters of
+    /// `cores` cores in all), the pass slots, the compute slots' barriers, the clustering
     /// buffers and the scrub workqueue.
-    pub(crate) fn new(objects: &mut Objects) -> Result<Self> {
+    pub(crate) fn new(objects: &mut Objects, clusters: u32, cores: u32) -> Result<Self> {
+        let pm = PageManagerLayout::new(clusters, cores);
         // Clustered tiling needs three records in each preemption buffer (two per-cluster plus
         // an aggregate), each buffer then spanning two pages from the same payload offset.
         let pre_records = if tuning::VERTEX_CLUSTERING { 3 } else { 2 };
@@ -583,7 +628,7 @@ impl Slots {
         // and the clustering buffers.
         let mut parts = KVec::with_capacity(sizes::COMPUTE_SLOTS, GFP_KERNEL)?;
         for k in 0..sizes::COMPUTE_SLOTS as u64 {
-            parts.push(ComputeParts::new(objects, k)?, GFP_KERNEL)?;
+            parts.push(ComputeParts::new(objects, k, &pm)?, GFP_KERNEL)?;
         }
         for i in 0..sizes::RENDER_SLOTS as u64 {
             passes.push(PassSlot::new(objects, i, pre_records)?, GFP_KERNEL)?;

@@ -465,7 +465,11 @@ impl Firmware {
         };
         let backend = (|| -> Result<_> {
             let graph = graph::Graphs::new(dev, &mut objects)?;
-            let slots = slots::Slots::new(&mut objects)?;
+            let slots = slots::Slots::new(
+                &mut objects,
+                cfg.num_clusters,
+                cfg.num_clusters * cfg.num_cores_per_cluster,
+            )?;
             let pools = pools::Pools::new(dev, &mut objects)?;
             let slot = KBox::<Firmware>::new_uninit(GFP_KERNEL)?;
             Ok((graph, slots, pools, slot))

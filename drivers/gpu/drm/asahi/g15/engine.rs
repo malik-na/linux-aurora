@@ -1102,11 +1102,11 @@ impl Firmware {
             its: s.its.va,
             tail: s.tail.va,
             scratch: [
-                s.scratch[0].va,
-                s.scratch[1].va,
-                s.scratch[2].va,
-                s.scratch[3].va,
-                s.scratch[4].va,
+                s.scratch.va,
+                s.pmgr.va + s.pmgr_offsets[0],
+                s.pmgr.va + s.pmgr_offsets[1],
+                s.pmgr.va + s.pmgr_offsets[2],
+                s.pmgr.va + s.pmgr_offsets[3],
             ],
         };
         let scratch = self.engine.scratch.as_deref_mut().ok_or(ENOMEM)?;
