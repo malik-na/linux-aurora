@@ -111,6 +111,24 @@ macOS on the M3 (hv facts, earlier private captures): each PB starts at **64 blo
 TA register 0x1c9a8 = 0x5c. So the G15 driver's 1024-block start is sixteen times macOS's, and its two maximum
 words are equal where macOS's differ by a factor of three.
 
+### 1.6 The native driver observed live (`pb-macos-observation.md`, 2026-10-20 hv runs, facts only)
+
+- **Backing is lazy and non-contiguous on this very GPU:** the 64 initial blocks are 64 separate 0x20000-byte
+  objects 0x28000 apart (a guard page each); over the 822 MiB maximum there is one 32 MiB L3 table and no
+  other page table. RAM behind the PB at start is the posted 8 MiB plus the lists. This settles §1.3 (b).
+- **No growth at the login screen:** 24,000 and 46,000 renders of a 3456x2234 desktop in 64 blocks, no type-7
+  event, no DEVCTL 7, request counters 0.
+- **Reclaim is replacement, not shrinking:** the live queue's manager is replaced by a fresh one (counter 1,
+  request counter 0, same block_ctl and block-list addresses, new counter and page list), preceded within
+  70 ms by a pair of DEVCTL 0x11 records and sometimes 0x1b pool registrations; the old image is unmapped or
+  zeroed within 7-17 s and part of the old heap pages unmapped. The new block list re-posts the old blocks
+  and **repeats records of consumed blocks**: re-posting a block the firmware already used is a legal way to
+  hand it back. A queue's whole PB is freed with the queue. Never seen: a decrease of a live manager's count,
+  a producer rewind, a refusal.
+- Two interface facts to carry: TA register 0x1c9a8 (our #33) is 0x5c in every native command, not 4 x
+  blocks (we derive it from the initial size); maximum A (+0x70) is three times maximum B (+0x74) where we
+  write 4 x max to both. Neither is changed by this design (one trial value per boot); both are follow-ups.
+
 ## 2. Measurements (M3, kernel 7.1.12-aurora-dev-silicon = 027bd762 stack, boot of 2026-10-20 02:34)
 
 Sampler: `/sys/kernel/debug/asahi-g15/stats` `pb:` line, MemAvailable and the render count every ~165 ms
@@ -206,6 +224,16 @@ allocation (§1.4) and may do its allocation after the reply.
    reachable only by a single run's live demand.
 5. **Stats.** `pb:` line keeps its keys and appends `backed <blocks> chunks <n> waits <n> refills <n>
    reclaims <n> freed <blocks>`.
+
+How §1.6 bears on D: item 2's lazy chunks are the native shape (native: one object per block with a guard
+page; ours: 16 MiB chunks at fixed GVAs so the existing records and the K = 4096 block list stay as they
+are); item 3's re-initialization is the host-side analogue of the native manager replacement of a live
+queue, which shows the firmware accepts a fresh manager for a running queue without a halt, the one point
+§1.2 had as unproven. The native swap is preceded by DEVCTL 0x11 pairs whose meaning we do not know; our
+re-initialization sends none (it does not after a recovery either), which the boot's item 3 tests. The
+native driver re-posts consumed blocks rather than mapping new ones; with one shared manager the host
+cannot know which blocks are consumed, so D frees and re-grows instead; a per-queue PB (the native shape)
+is the design after this one and D's chunked backing serves it unchanged.
 
 Why this is better than both A and a straight M1/M2 port, from the measurements: RAM is 32 MiB instead of
 512 MiB at every point of §2.1 except inside the dEQP run, and returns there after the run (A never returns;
