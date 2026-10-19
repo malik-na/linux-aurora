@@ -190,3 +190,11 @@ Spec malik-na/linux-aurora#53 (ready-for-agent). Tickets #54-#68, blocking edges
   120 in timestamps 0/1/6 gives kmscube 120.0 fps, 119.6 presents/s, swap 4.8 ms (silicon-20, record
   20261019-180619, PASS). Clean commit e3dad1b5 on fork `t6031/present-120` (on 87ab56de, EDID). Installed: silicon-20
   (= that tree). #65 closed (s2idle works, 8.2 W awake). Next batch for #363: 65cd19c0, fd3c8adf, 87ab56de, e3dad1b5.
+- 18:25: #55 green on hardware: silicon-22 = fork `t6031/board-dt-on-120` (46588efc, b78b7585 on e3dad1b5): "Globals and
+  Power from the device tree (match the file)", acceptance PASS (record 20261019-182104). Opus review: safe; optional
+  before a PR: checked zone subtraction (words.rs wrapping_sub), #[ignore] for the fixture test, soften the commit
+  claim about other J516Cs. m3-accept now redacts board readings (mV values, mW maximum power) from the kernel lines;
+  older records redacted in the tree, still in git history (rewrite = Naeem's call).
+- dEQP (#67) first run on silicon-20 drove the G15 driver to fail-stop after ~310 recoveries in the VK suite (kernel
+  503 s); reboot restored it (record 20261019-181556 PASS). Analysis by a subagent: research/deqp-failstop.md (pending).
+  Private kernel log on the M3: ~/m3-private/deqp-silicon20-dmesg.txt.

@@ -43,15 +43,15 @@ m3-oneshot: /boot/efi/limine.conf: has the air-test entry ()
 [    0.076116] asahi 40a400000.gpu: M3 G15C start: HwDataB unit masks +0x17c0 0x70000000f, +0x17c8 0x7
 [    0.076118] asahi 40a400000.gpu: M3: MTR sensor masks: fast-die 0x402a002b, alarm 0x0
 [    0.076122] asahi 40a400000.gpu: M3: 17 HwData and 1 Globals words set from the T6031 table
-[    0.076126] asahi 40a400000.gpu: M3: device-tree InitData: 8 performance states in two voltage-sorted tables from 13 device-tree states, top 1380 MHz at 955 mV, SRAM floor 815 mV, maximum power 30000 mW
-[    0.076128] asahi 40a400000.gpu: M3: performance state 1: primary dt 1 338 MHz core 605 mV SRAM 815 mV; secondary dt 1 338 MHz; third 338 MHz core 605 mV SRAM 815 mV (columns differ)
-[    0.076129] asahi 40a400000.gpu: M3: performance state 2: primary dt 2 618 MHz core 680 mV SRAM 815 mV; secondary dt 2 618 MHz; third 618 MHz core 680 mV SRAM 815 mV (columns differ)
-[    0.076130] asahi 40a400000.gpu: M3: performance state 3: primary dt 3 796 MHz core 730 mV SRAM 815 mV; secondary dt 3 796 MHz; third 796 MHz core 730 mV SRAM 815 mV (columns differ)
-[    0.076131] asahi 40a400000.gpu: M3: performance state 4: primary dt 5 924 MHz core 770 mV SRAM 815 mV; secondary dt 4 832 MHz; third 832 MHz core 770 mV SRAM 815 mV (columns differ)
-[    0.076132] asahi 40a400000.gpu: M3: performance state 5: primary dt 7 1056 MHz core 800 mV SRAM 815 mV; secondary dt 6 952 MHz; third 952 MHz core 800 mV SRAM 815 mV (columns differ)
-[    0.076133] asahi 40a400000.gpu: M3: performance state 6: primary dt 9 1182 MHz core 855 mV SRAM 855 mV; secondary dt 8 1064 MHz; third 1064 MHz core 855 mV SRAM 855 mV (columns differ)
-[    0.076134] asahi 40a400000.gpu: M3: performance state 7: primary dt 11 1312 MHz core 915 mV SRAM 915 mV; secondary dt 10 1182 MHz; third 1182 MHz core 915 mV SRAM 915 mV (columns differ)
-[    0.076135] asahi 40a400000.gpu: M3: performance state 8: primary dt 13 1380 MHz core 940 mV SRAM 940 mV; secondary dt 12 1242 MHz; third 1242 MHz core 940 mV SRAM 940 mV (columns differ)
+[    0.076126] asahi 40a400000.gpu: M3: device-tree InitData: 8 performance states in two voltage-sorted tables from 13 device-tree states, top 1380 MHz at <board value> mV, SRAM floor <board value> mV, maximum power 30000 mW
+[    0.076128] asahi 40a400000.gpu: M3: performance state 1: primary dt 1 338 MHz core <board value> mV SRAM <board value> mV; secondary dt 1 338 MHz; third 338 MHz core <board value> mV SRAM <board value> mV (columns differ)
+[    0.076129] asahi 40a400000.gpu: M3: performance state 2: primary dt 2 618 MHz core <board value> mV SRAM <board value> mV; secondary dt 2 618 MHz; third 618 MHz core <board value> mV SRAM <board value> mV (columns differ)
+[    0.076130] asahi 40a400000.gpu: M3: performance state 3: primary dt 3 796 MHz core <board value> mV SRAM <board value> mV; secondary dt 3 796 MHz; third 796 MHz core <board value> mV SRAM <board value> mV (columns differ)
+[    0.076131] asahi 40a400000.gpu: M3: performance state 4: primary dt 5 924 MHz core <board value> mV SRAM <board value> mV; secondary dt 4 832 MHz; third 832 MHz core <board value> mV SRAM <board value> mV (columns differ)
+[    0.076132] asahi 40a400000.gpu: M3: performance state 5: primary dt 7 1056 MHz core <board value> mV SRAM <board value> mV; secondary dt 6 952 MHz; third 952 MHz core <board value> mV SRAM <board value> mV (columns differ)
+[    0.076133] asahi 40a400000.gpu: M3: performance state 6: primary dt 9 1182 MHz core <board value> mV SRAM <board value> mV; secondary dt 8 1064 MHz; third 1064 MHz core <board value> mV SRAM <board value> mV (columns differ)
+[    0.076134] asahi 40a400000.gpu: M3: performance state 7: primary dt 11 1312 MHz core <board value> mV SRAM <board value> mV; secondary dt 10 1182 MHz; third 1182 MHz core <board value> mV SRAM <board value> mV (columns differ)
+[    0.076135] asahi 40a400000.gpu: M3: performance state 8: primary dt 13 1380 MHz core <board value> mV SRAM <board value> mV; secondary dt 12 1242 MHz; third 1242 MHz core <board value> mV SRAM <board value> mV (columns differ)
 [    0.076139] asahi 40a400000.gpu: M3 G15G start: performance cap 8 lowered to 1 (asahi.t8122_pstate_cap)
 [    0.076150] asahi 40a400000.gpu: M3: InitData contents: generated from the device tree (asahi.m3_initdata=auto); performance states 1..=8, cap 1 (338 MHz), boot request 1 (338 MHz); thermal limit on, firmware highest state 1 (338 MHz)
 [    0.076154] asahi 40a400000.gpu: M3: ASC aperture mapped
