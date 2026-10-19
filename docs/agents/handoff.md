@@ -206,3 +206,8 @@ Spec malik-na/linux-aurora#53 (ready-for-agent). Tickets #54-#68, blocking edges
   m1n1 export of aon-ptd (Naeem's call); remaining file words: max power + relative powers (power model), MTR masks.
   Kernel stack for the #363 batch, in order: 65cd19c0, fd3c8adf, 87ab56de, e3dad1b5, 46588efc, b78b7585, 7c26fe10,
   b3fb1bb8, 6c6a2705, 5131caff.
+- 20:35: Naeem asked for the regression test and the #363 push. Done: 11 commits (65cd19c0..2e21853a) pushed to
+  `t6031/silicon-g15c` (PR head 2e21853a), comment 6270223356; regression record 20261019-202146-regress-11-accept.
+  The PR body's "Known gaps" list is now stale (EDID, 60 fps, backlight, board file partly) - updating it needs Naeem's ok.
+  #69 cause found (subagent, research/deqp-hangs.md): compute dispatches of >10 workgroups of >~576 threads never
+  complete on the G15C (10 = cores per cluster); Mesa knob HK_G15C_COPY_ROWS=2 fixes 102 of 129 VK hangs.
