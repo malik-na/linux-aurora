@@ -178,7 +178,39 @@ GLES31 cases tried (`sign.ivec4_mediump_tess_eval`, `frexp.float_highp_vertex`, 
 produced no result under the pbuffer surface in this harness and no timeout; they still need a run with the
 baseline script's GL setup.
 
-## 8. Open: where the ten-group limit comes from (kernel-side candidates, one per boot)
+## 8. The limit's source: the compute command's page-manager buffers (2026-10-19, second pass)
+
+Two more probe runs narrowed where the eleventh large workgroup goes:
+
+- **It waits across dispatches, hangs within one.** Process A: 10 x 1024 threads spinning (661 ms alone);
+  process B started 0.3 s later with 1 x 1024: B took 449 ms and finished when A did, i.e. the eleventh
+  large group from another dispatch queued for one of the same ten slots. Only the eleventh group *of one
+  dispatch* never completes.
+- **Capacity scaling.** 512-thread groups spinning 4e6 rounds: 20 and 40 groups take 99 ms, 80 take 204 ms,
+  160 take 354 ms. Forty 512-thread groups run at once; large groups have ten slots.
+
+Reading the J516C driver's own compute commands (private hv capture `hv-t22-20261013-130203`, 38 commands) against
+ours (`~/m3-results/analysis/compute-path-clusters-20261013.md`, F2): the start record's four page-manager
+buffer pointers (+0x184, +0x18c, +0x194, +0x19c; "pmgr buf1..4" in the Asahi tracer's naming for G15) are, on the
+J516C, **0x3c400, 0x3c400, 0x2000 apart**, and on a J613 0xf400, 0xf400, 0x800: A = round_up(cores x 0x1800 +
+clusters x 0x40, 0x400), B = clusters x 0x800. Each core owns 0x1800 bytes of the first two buffers. Our
+driver gives each of the four a separate **64 KiB** object (`g15/slots.rs`, `ComputeParts::new`), which holds
+**ten** cores' 0x1800-byte slots. The eleventh large workgroup is the first that needs an eleventh core's slot
+and runs off the buffer (into unmapped firmware VA; compute faults are masked, so no fault is reported, and the
+group never completes). Small groups do not touch these buffers, which is why they run on all forty cores.
+
+**The change** (fork branch `t6031/compute-pmgr`, one commit on `t6031/silicon-g15c` 45338523): allocate the four
+buffers as one object sized from the configuration (A, A, B, 64 KiB at offsets 0, A, 2A, 2A + B), i.e.
+0x3c400/0x3c400/0x2000 for the J516C; the T6030 gets 0x1e400/0x1e400/0x1000 instead of 64 KiB x 3. Package
+built on the M3 as `linux-aurora-dev-7.1.12_aurora_dev_silicon-69` (`~/Projects/build-out/kernel-pmgr`), not
+installed; to be booted by Naeem. Success criterion: the probe's 1024 x 11 and 1024 x 16 complete GREEN, the
+129-case list runs without timeouts (except the indirect/tess class if it is separate), the checks still pass.
+
+BOOT_RESULTS_PLACEHOLDER
+
+## 9. Earlier candidate list (superseded by section 8 unless the boot says otherwise)
+
+## 9 (continued). Where the ten-group limit comes from (kernel-side candidates, one per boot)
 
 Facts: the kernel encodes every compute command identically whatever the grid; the hang depends only on the
 launch's shape; the G15C compute register values in `g15/hw/t6031.rs` were taken from this machine's own
