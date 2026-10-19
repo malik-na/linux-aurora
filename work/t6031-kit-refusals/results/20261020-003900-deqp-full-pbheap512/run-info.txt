@@ -1,0 +1,14 @@
+kernel: 7.1.12-aurora-dev-silicon
+Tue Oct 20 00:39:35 IST 2026
+deqp: vulkan-cts-1.4.7.0
+jobs=2 timeout=30 suites=vk gles3 gles31
+   957 /home/naeem/Projects/build-out/deqp-results/pbheap-full/lists/gles3.txt
+   804 /home/naeem/Projects/build-out/deqp-results/pbheap-full/lists/gles31.txt
+  1338 /home/naeem/Projects/build-out/deqp-results/pbheap-full/lists/vk.txt
+  3099 total
+=== vk start 00:39:35
+=== vk end 00:39:44
+=== gles3 start 00:39:44
+=== gles3 end 00:39:54
+=== gles31 start 00:39:54
+=== gles31 end 00:40:18
