@@ -207,7 +207,15 @@ built on the M3 (BUILD-OK 22:52): `~/Projects/build-out/kernel-pmgr/linux-aurora
 mark), not installed; to be booted by Naeem. Success criterion: the probe's 1024 x 11 and 1024 x 16 complete GREEN, the
 129-case list runs without timeouts (except the indirect/tess class if it is separate), the checks still pass.
 
-BOOT_RESULTS_PLACEHOLDER
+**Boot result (kernel-pmgr, 22:51 build, acceptance PASS): not fixed.** Probe: 1024 x 8 GREEN; 1024 x 11, 1024 x 16,
+640 x 16 and 1024 x 40 each still hang (one timeout and recovery each, no fail-stop). The page-manager buffer
+size is therefore not the ten-slot limit; the change is harmless (the buffers now match the J516C spacing) but
+not the fix. Next candidate: the "fresh" compute encoding (`ComputeRegs.fresh`), which zeroes the four
+per-cluster saved-state pointers (preemption buffer + 0x2980 + 8 i, 0x2980 = 0xd80 + 0x700 x 4 clusters) and
+the two 0x1c words in every command; ten large groups are exactly the first cluster's cores, the eleventh is
+the first on a second cluster. Prepared as fork branch `t6031/compute-fresh` (one commit on silicon-g15c,
+`fresh: false` for T6031), build dir `~/Projects/build-out/kernel-pmgr2`. Second candidate: the 32-bit
+`0xffffffff` word at compute work +0x7e0.
 
 ## 9. Earlier candidate list (superseded by section 8 unless the boot says otherwise)
 
