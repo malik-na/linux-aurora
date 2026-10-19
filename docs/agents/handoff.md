@@ -185,3 +185,8 @@ Spec malik-na/linux-aurora#53 (ready-for-agent). Tickets #54-#68, blocking edges
 - 17:35: #63 done: fork `t6031/panel-edid-silicon` (fd3c8adf, 87ab56de on 65cd19c0, by a subagent; KUnit 6/6),
   installed silicon-16 in the dev slot (silicon-14 kept in `~/aurora-backups`), acceptance PASS, Hyprland shows Apple /
   J516 / 346x223 mm. Part of the next #363 batch. The M3's build checkout `~/Projects/linux-silicon` is on that branch.
+- 18:10: #62 cause found and fixed (diagnosis: `research/present-pacing.md`). The 14.7 present path zeroed the swap
+  timestamps; counter values (1 GHz on T6031) hang the DCP (silicon-18, record 20261019-174445, crashed=1); the constant
+  120 in timestamps 0/1/6 gives kmscube 120.0 fps, 119.6 presents/s, swap 4.8 ms (silicon-20, record
+  20261019-180619, PASS). Clean commit e3dad1b5 on fork `t6031/present-120` (on 87ab56de, EDID). Installed: silicon-20
+  (= that tree). #65 closed (s2idle works, 8.2 W awake). Next batch for #363: 65cd19c0, fd3c8adf, 87ab56de, e3dad1b5.
