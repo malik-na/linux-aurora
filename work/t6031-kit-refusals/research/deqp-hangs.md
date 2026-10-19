@@ -213,8 +213,12 @@ size is therefore not the ten-slot limit; the change is harmless (the buffers no
 not the fix. Next candidate: the "fresh" compute encoding (`ComputeRegs.fresh`), which zeroes the four
 per-cluster saved-state pointers (preemption buffer + 0x2980 + 8 i, 0x2980 = 0xd80 + 0x700 x 4 clusters) and
 the two 0x1c words in every command; ten large groups are exactly the first cluster's cores, the eleventh is
-the first on a second cluster. Prepared as fork branch `t6031/compute-fresh` (one commit on silicon-g15c,
-`fresh: false` for T6031), build dir `~/Projects/build-out/kernel-pmgr2`. Second candidate: the 32-bit
+the first on a second cluster. Prepared as fork branch `t6031/compute-fresh-off` (b3665a0c, one commit on silicon-g15c
+45338523, `fresh: false` for T6031, no pmgr change), build dir `~/Projects/build-out/kernel-pmgr2`. History: the
+J516C values with non-zero saved-state pointers were booted only in t47-t50, on the stack with the USC-window
+bug, where every compute job halted 8-11 ms after the kick (recovery packet, info 0x27, no fault bank); t76
+showed that early halt persisted with the pointers zero, so it was the window bug; the runtime test of
+fresh = false on the working stack (t82 run 7) was never run. Second candidate: the 32-bit
 `0xffffffff` word at compute work +0x7e0.
 
 ## 9. Earlier candidate list (superseded by section 8 unless the boot says otherwise)
