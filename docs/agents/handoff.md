@@ -164,3 +164,19 @@ Status page: https://claude.ai/artifact/PoTUhrqVL6hqVmXRinRf6x
 ## Update 2026-10-19: port-completion spec and tickets
 
 Spec malik-na/linux-aurora#53 (ready-for-agent). Tickets #54-#68, blocking edges as native GitHub dependencies. #54 (acceptance run) gates almost everything; board data chain #55 -> #56 -> #57 -> #68 (PRs review-ready). Unblocked now: #54, #60, #66. Ray tracing stays a separate later map.
+
+## Update 2026-10-19 17:15: acceptance run (#54), firmware hint (#60), external displays (#66)
+
+- `work/t6031-kit-refusals/tools/m3-accept NAME [--no-boot] [--secs N] [-- PARAM...]` is the done-check for every #53
+  ticket: plain reboot into the dev slot (default entry) with a gpu1-702 chainload, native checks, kmscube on the panel,
+  record under `results/<time>-NAME-accept/` with the verdict on top (collect.txt only on PASS). With PARAMs the
+  kit's one-shot drops the dev entry's `apple_t6031_display.enable=1`, so eDP-1 fails; use no PARAMs for normal runs.
+- Baseline `results/20261019-170009-baseline-accept`: PASS on silicon-10 (#363 head e30d702e) + Mesa aab698d2
+  (mesa#25 is **merged**). 59.9 presents/s on the 120 Hz mode (#62's red number); GPU clock not exposed (#58).
+- #60: fork `t6031/silicon-dcp` 65cd19c0 (refusal line ends with a report hint; lookup in core-only
+  `g15/identity/lookup.rs`, 10 host tests). Installed silicon-14 in the dev slot (silicon-10 package kept in
+  `~/aurora-backups` on the M3); `results/20261019-170902-silicon14-pins-accept` PASS. Not on PR #363's branch
+  (`t6031/silicon-g15c`) yet: updating the team PR is Naeem's call.
+- #66: `research/external-displays.md`, decision "later".
+- In flight (subagents, hardware-free, own worktrees and M3 build dirs): #55 board data from DT (branch
+  `t6031/board-dt`), #63 panel EDID (branch `t6031/panel-edid-silicon`). Boots stay with the lead session.
