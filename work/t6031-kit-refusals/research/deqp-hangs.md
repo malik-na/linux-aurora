@@ -236,6 +236,13 @@ timeout. Branch `t6031/compute-pool-seed` (one commit on silicon-g15c): seed all
 Prediction before the boot: the limit moves from 10 to about 28 groups of 1024 threads (11 and 16 GREEN, 40
 still hangs); unchanged = hypothesis wrong. If it moves, the fix proper sizes the pools for all forty cores.
 
+**Boot result (kernel-pmgr3, poolseed, acceptance PASS): fixed.** Probe: 1024 x 8, 11, 16, 40 and 640 x 16 all
+GREEN, 0 timeouts. The limit moved past 40 large groups (my prediction of ~28 was too low: the per-group
+footprint is below 3 MiB, or pages recycle within a dispatch). The cause of the ten-group limit was the compute
+UMA freelist holding only the first 8 of 22 pools (32 MiB). List and checks: below.
+
+LIST_PLACEHOLDER
+
 ## 9. Earlier candidate list (superseded by section 8 unless the boot says otherwise)
 
 ## 9 (continued). Where the ten-group limit comes from (kernel-side candidates, one per boot)
