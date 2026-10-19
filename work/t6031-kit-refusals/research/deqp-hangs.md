@@ -356,3 +356,12 @@ test ends (Fail, image comparison) with `PB growth request ... +10 blocks (1034 
 no refusal, no hang request, stats `pb: blocks 1024/<posted>/1024/2048 ... refused 0`. Failure: refusals and
 the fail-stop as in 9.1 (then: bigger heap), or no growth lines at all with a hang (then: the maximum words
 are not what stops the asynchronous requests).
+
+## Lead's run log, 2026-10-20 00:22-00:28 (pb-soft-max 8424e318)
+
+- Boot with asahi.g15_pb_max_blocks=1024: the index-buffer repro grew 45 x +10 blocks past the firmware maximum
+  (1024 -> 1474), refused 0, ended in 2 s (Fail: image comparison), no fail-stop.
+- Normal boot (default 1536), full unfiltered dEQP lists, -j2: VK complete - 705 Pass, 1 Fail, 2 Flake, 630 Skip of
+  1338 (baseline: 578 Pass with 129 hang cases excluded). At the end of VK ctx 51 grew 1544 -> 2048 in 0.34 s
+  (requests 51-103), 2 refusals, left unanswered, fail-stop 7 s later; the run's fail-stop guard stopped before GLES.
+  Stats: pb: blocks 1024/2048/1536/2048 requests 106 grown 1024 refused 2 bad 1.
