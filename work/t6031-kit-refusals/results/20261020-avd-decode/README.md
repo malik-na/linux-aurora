@@ -44,3 +44,19 @@ Not tested: interlaced/field H.264, multi-slice, 4:2:2/4:4:4, VP9 profile 2, AV1
 [    3.663770] avd 2cd080000.avd: booting hw version: 40000
 ```
 No further avd lines were logged before, during or after the test runs.
+
+## mpv playback (2026-10-20 03:10-03:25, lead)
+
+mpv 0.41.0 + FFmpeg 9.0.2 have no v4l2request hwaccel; the path is VA-API through Omarchy's `libva-v4l2_request-avd`
+(already installed; libva loads `/usr/lib/dri/asahi_drv_video.so` for the render node and reports "decoding <codec>
+via /dev/video0 [avd]", CAPTURE NV12).
+
+- Over SSH (no display) mpv needs `--vaapi-device=/dev/dri/renderD128`; in the desktop session it finds VA-API itself.
+- `mpv --hwdec=vaapi-copy --vaapi-device=/dev/dri/renderD128 --vf=format=yuv420p --o=out.yuv --of=rawvideo
+  --ovc=rawvideo`: H.264 High, H.264 Baseline, HEVC Main, VP9, AV1 at 1920x1080 - "Using hardware decoding
+  (vaapi-copy)", ~128 AVD interrupts per 64 frames, output MD5 identical to FFmpeg software decode for all five.
+- Desktop playback (Hyprland session, native Mesa env from ~/.config/uwsm/env, `--hwdec=vaapi --fs`, zero-copy):
+  10 s 1080p60 H.264 and HEVC (600 frames each) - "Using hardware decoding (vaapi)", VO gpu-next, ~1200 AVD
+  interrupts each, decoder drops 0, VO drops 1 (H.264) / 0 (HEVC).
+- Not confirmed: what the panel showed during zero-copy playback (camera was not facing the M3; the still was
+  deleted). A wrong dmabuf format/modifier in zero-copy would not show in these counters.
