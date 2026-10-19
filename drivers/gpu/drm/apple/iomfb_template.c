@@ -3176,26 +3176,21 @@ void iomfb_present_backlight_v14_7(struct apple_dcp *dcp)
 }
 
 /*
- * Swap timestamps for the built-in panel, by the rule iomfb_flush() applies
- * to its ProMotion panels: now, the previous accepted swap, now.  Run after
- * the request is encoded, since the encoder zeroes the whole request.
+ * Swap timestamps for the built-in panel.  iomfb_flush() fills them from the
+ * counter for its ProMotion panels; on this SoC the counter runs at 1 GHz and
+ * such values hang the 14.7 firmware's swap.  Use the constant 120 in the
+ * same three slots, a time that is never in the future.  Run after the
+ * request is encoded, since the encoder zeroes the whole request.
  */
 static void iomfb_swap_timestamps_v14_7(struct apple_dcp *dcp,
 					struct dcp_swap_submit_req_v14_7 *req)
 {
-	u64 timestamp, submit_timestamp;
-
 	if (!dcp->main_display)
 		return;
 
-	timestamp = arch_timer_read_counter();
-	submit_timestamp = dcp->swap_submit_timestamp;
-	if (!submit_timestamp)
-		submit_timestamp = timestamp;
-
-	req->swap.timestamp[0] = timestamp;
-	req->swap.timestamp[1] = submit_timestamp;
-	req->swap.timestamp[6] = timestamp;
+	req->swap.timestamp[0] = 120;
+	req->swap.timestamp[1] = 120;
+	req->swap.timestamp[6] = 120;
 }
 
 /*
