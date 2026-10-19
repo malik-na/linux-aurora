@@ -1,0 +1,666 @@
+== drm
+card2-eDP-1 connected 3456x2234 edid=128
+== checks
+VERDICT compute-check exit=0 pass
+VERDICT vk-render-check exit=0 pass
+VERDICT gl-render-check exit=0 pass
+VERDICT gl-render-check-zink exit=0 pass
+compute-check.log: PASS: 8607 runs in 5.0 s, 0 with wrong results
+gl-render-check-zink.log: PASS: 5040 runs in 5.0 s, 0 with wrong pixels
+gl-render-check.log: PASS: 7843 runs in 5.0 s, 0 with wrong pixels
+vk-render-check.log: PASS: 7279 runs in 5.0 s, 0 with wrong pixels
+info: Device: Apple M3 Max (G15C B2) (deviceID 0x6031)
+info: Renderer: Apple M3 Max (G15C B2)
+info: Renderer: zink Vulkan 1.4(Apple M3 Max (G15C B2) (MESA_HONEYKRISP))
+== load
+heat 16424 frames in 10.0 s (1641.0 fps); centre pixel 22 50 81 255
+busy_pct 77.6
+freq_source stats
+freq_khz_samples 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 
+pstate_samples 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 
+== kmscube
+Rendered 482 frames in 4.014949 sec (120.051350 fps)
+Rendered 723 frames in 6.023274 sec (120.034381 fps)
+Rendered 964 frames in 8.031583 sec (120.026154 fps)
+Rendered 1199 frames in 9.989919 sec (120.020998 fps)
+== crtc
+crashed=0 stopped=0 paused=0 queued=0 active=1 pending=1 accepted=1
+presents=1361 brightness_presents=1 blank_presents=1 nits_presents=4 refused=0
+last_swap_id=1396 swap_ns_last=8292651 swap_ns_max=8340049
+presents_before=160 window_ns=10051073156
+== engine
+compute: count 20927 prefixes 13648 busy_us 4755502 max_us 1485 first_us 4667510 last_us 4667510
+render: count 25468 prefixes 18189 busy_us 17740610 max_us 6369 first_us 8586526 last_us 17605571
+mixed: count 14558 prefixes 7279 busy_us 4295865 max_us 1215 first_us 3797421 last_us 4248307
+gaps 0 gap_us 0 yields 0 overlaps 0
+jobs 39116 job_cmds 46395 job_max 2 early 0 recoveries 0 hang_kills 0 clustered 25468
+ct_sync 0 slot_sync 0 starved_us 16995374 prep_us 208996 grouped 0 pass_sync 0
+type0: fs2c 0 c2ta 0
+horizon: 13648 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 stop 13648/0/0/0 behind 0 hold 0/0/0 ahead 0
+pb: blocks 1024/1024/2048 requests 0 grown 0 refused 0 bad 0
+stage: ta_us 440651 fs_us 7772303 cdm_us 1262530 span_us 9775229
+prof: prefixes 0 select_us 0 encode_us 0 claim_us 0 write_us 0 post_us 0 polls 0 drain_us 0 retire_us 0 poll_us 0 flushes 0 flush_us 0
+== dmesg
+[    0.011010] apple-t6031-display: handoff: DCP firmware 14.7.0 F493F03E-CC40-3D89-9A08-5F259BA2B246, 8 memory regions
+[    0.011459] apple-t6031-display: enabled /soc/iommu@38530c000, /soc/iommu@385304000, /soc/mailbox@386c08000, /soc/dcp@386c00000 and /soc/display-subsystem
+[    0.011467] apple-t6031-display: added the PMP, its DART and mailbox with 74 of this Mac's values; pmp and pms_sram kept on
+[    0.076637] asahi-g15 40a400000.gpu: G15: probing (T6031 G15C)
+[    0.077052] asahi-g15 40a400000.gpu: GPU firmware build: macOS 14.8 stub firmware, J516C
+[    0.077054] asahi-g15 40a400000.gpu: M3: firmware identity accepted
+[    0.077057] asahi-g15 40a400000.gpu: T6031 G15C admitted, ASC=0x0
+[    0.077075] asahi-g15 40a400000.gpu: T6031 G15C: power acknowledged, version=0x7041100 counts=0x21040a core-mask=0xffffffffff
+[    0.077077] asahi-g15 40a400000.gpu: T6031 G15C: cores enabled per cluster: [10, 10, 10, 10]
+[    0.077133] asahi-g15 40a400000.gpu: G15: UAT leaf self-check passed (9 classes)
+[    0.077805] asahi-g15 40a400000.gpu: RTKit: Initializing (protocol version 12)
+[    0.077882] asahi-g15 40a400000.gpu: mapped firmware crash storage 0x10001d08000/0x4000
+[    0.078065] asahi-g15 40a400000.gpu: MMU: initialized, root[0..2]=0x10bfff7c403 0x10bfff84403 0x10bfff74003
+[    0.078718] asahi-g15 40a400000.gpu: MMU: IO map: 0x408d00000:0x144000 -> 0xfffffc2068000000
+[    0.078727] asahi-g15 40a400000.gpu: MMU: IO map: 0x20e100000:0x4000 -> 0xfffffc2068148000
+[    0.078733] asahi-g15 40a400000.gpu: MMU: IO map: 0x292414000:0x4000 -> 0xfffffc2068150000
+[    0.078739] asahi-g15 40a400000.gpu: MMU: IO map: 0x408000000:0x20000 -> 0xfffffc2068158000
+[    0.078746] asahi-g15 40a400000.gpu: MMU: IO map: 0x290444000:0x4000 -> 0xfffffc206817c000
+[    0.078752] asahi-g15 40a400000.gpu: MMU: IO map: 0x408e08000:0x8000 -> 0xfffffc2068184000
+[    0.078758] asahi-g15 40a400000.gpu: MMU: IO map: 0x220000000:0x6c0000 -> 0xfffffc2068190000
+[    0.078767] asahi-g15 40a400000.gpu: MMU: IO map: 0x29244c000:0x4000 -> 0xfffffc2068854000
+[    0.078773] asahi-g15 40a400000.gpu: MMU: IO map: 0x2903d0000:0x4000 -> 0xfffffc206885c000
+[    0.078780] asahi-g15 40a400000.gpu: MMU: IO map: 0x2903c0000:0x4000 -> 0xfffffc2068864000
+[    0.078787] asahi-g15 40a400000.gpu: MMU: IO map: 0x2903d8000:0x4000 -> 0xfffffc206886c000
+[    0.078793] asahi-g15 40a400000.gpu: MMU: IO map: 0x408eb4000:0x4000 -> 0xfffffc2068874000
+[    0.078799] asahi-g15 40a400000.gpu: MMU: IO map: 0x409000000:0x8000 -> 0xfffffc206887c000
+[    0.078805] asahi-g15 40a400000.gpu: MMU: IO map: 0x3c945c000:0x4000 -> 0xfffffc2068888000
+[    0.078811] asahi-g15 40a400000.gpu: MMU: IO map: 0x290400000:0x8000 -> 0xfffffc2068890000
+[    0.078817] asahi-g15 40a400000.gpu: MMU: IO map: 0x2a4dc0000:0x24000 -> 0xfffffc206889c000
+[    0.078824] asahi-g15 40a400000.gpu: MMU: IO map: 0x408e1c000:0x4000 -> 0xfffffc20688c4000
+[    0.078912] asahi-g15 40a400000.gpu: board images asahi/t6031-j516c-board.bin: sha256 4e03f29fa447dcebfd4d1c225a647bfa31b363458f2833823a5ca8a10edff3fc accepted
+[    0.079056] asahi-g15 40a400000.gpu: board data: T6031 G15C images from the device tree match asahi/t6031-j516c-board.bin (61 record words from the file, 13 zeroed by experiment zero-38), <board value> mW maximum power, 1380 MHz top operating point
+[    0.079064] asahi-g15 40a400000.gpu: M3: publishing owned initdata root 0xfffffc204062ff40 (77 pages, 5 L3)
+[    0.081490] asahi-g15 40a400000.gpu: M3 firmware readiness: magic=0xabcdabcd flags=1
+[    0.082747] asahi-g15 40a400000.gpu: M3: firmware accepted owned initdata and device controls
+[    0.082748] asahi-g15 40a400000.gpu: G15: firmware at READY, starting the backend
+[    0.147431] asahi-g15 40a400000.gpu: G15: compute graph: work 0xfffffc2d05e37760/0x7021003760 pools 0x7000000000 freelist 0x7005858000 table 0x7005c5f000
+[    0.148703] asahi-g15 40a400000.gpu: preemption divisor Globals+0x9b0=0: 0
+[    0.148776] [drm] Initialized asahi 0.0.0 for 40a400000.gpu on minor 0
+[    0.176325] watchdog: NMI not fully supported
+[    0.176325] watchdog: Hard watchdog permanently disabled
+[    0.609555] apple_pmp 290700000.pmp: J516C display domain 0x200 held: 0xff
+[    0.609556] apple_pmp 290700000.pmp: J516C display domain 0x200 minimum not latched
+[    0.609560] apple_pmp 290700000.pmp: J516C display domain 0x298 held: 0xff
+[    0.609561] apple_pmp 290700000.pmp: J516C display domain 0x298 minimum not latched
+[    0.609565] apple_pmp 290700000.pmp: J516C display domain 0x2a0 held: 0xf0f00ff
+[    0.609569] apple_pmp 290700000.pmp: J516C display held, PTD seeded DISP|ANS: req=0x200010000
+[    0.610103] apple_pmp 290700000.pmp: RTKit: Initializing (protocol version 12)
+[    0.853928] apple_pmp 290700000.pmp: RTKit: syslog message: io.cpp:41: PMP started
+[    1.379475] apple-dcp 386c00000.dcp: J516C DCP firmware 14.7.0 handoff admitted
+[    1.382192] apple-dcp 386c00000.dcp: PMP DISP acknowledged; starting warm RTKit adoption (no reset)
+[    1.382420] apple-dcp 386c00000.dcp: RTKit: Initializing (protocol version 12)
+[    1.382517] apple-dcp 386c00000.dcp: RTKit borrowed 16384 bytes at 0x0000010080251000 -> 0x0000010bd12d9000
+[    1.382532] apple-dcp 386c00000.dcp: RTKit allocated 16384 bytes at 0x0000010fffffc000
+[    1.383516] apple-dcp 386c00000.dcp: RTKit allocated 12288 bytes at 0x0000010fffff8000
+[    1.383642] apple-dcp 386c00000.dcp: RTKit borrowed 24568 bytes at 0x000001008025d000 -> 0x0000010bd12e5000
+[    1.383651] apple-dcp 386c00000.dcp: RTKit: syslog message: _logging_common.cpp:418: [AFK]binary_log_infrastructure_late_init coalescer initialized
+[    1.383675] apple-drm soc:display-subsystem: bound 386c00000.dcp (ops dcp_comp_ops [appledrm])
+[    1.384000] apple-dcp 386c00000.dcp: RTKit: syslog message: ck_PCC2DBlm_v5.cpp:2730: IOMFB LACS_ERROR: DCP took too long to respond to LAS stats
+[    1.384030] apple-dcp 386c00000.dcp: RTKit: syslog message: ck_PCC2DBlm_v5.cpp:2772: IOMFB: BLM LTS data hasn't been read in more than 10 secs
+[    1.384607] apple-dcp 386c00000.dcp: IOMFB INIT 0x10fffe000000040 (arena 0x0000010fffe00000, 0x100000 bytes)
+[    1.384686] apple-dcp 386c00000.dcp: RTKit: syslog message: ap_link.c:308: shared memory dva: 0x10fffe00000 0xffffffff004f0000
+[    1.384722] apple-dcp 386c00000.dcp: RTKit: syslog message: ap_link.c:285: ap_link: IOMFB: DCP heap size: 0x1030000 [iBoot:0x1030000] [LinkService:0x0]
+[    1.384726] apple-dcp 386c00000.dcp: IOMFB READY 0x0000000000400101; client open A401 -> A455
+[    1.385896] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:5404: IOMFB: Could not find Backlight service
+[    1.385937] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:5412: IOMFB: Could not find nvram service
+[    1.385939] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:2312: virtual bool UnifiedPipeline::start_ios_gated(): Created AP Services
+[    1.385941] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:2339: start_ios_gated: trigger pending HPD notification
+[    1.385959] apple-dcp 386c00000.dcp: RTKit: syslog message: FramebufferDCP.cpp:3441: virtual void IOMobileFramebuffer::hotPlug_notify(uint64_t)
+[    1.389025] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:2346: virtual bool UnifiedPipeline::start_ios_gated(): Flushed RTPs
+[    1.389090] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:1775: set_device_enabled_gated: current state: 1, requested state: 1
+[    1.389480] apple-dcp 386c00000.dcp: RTKit: syslog message: ableCompensator.cpp:903: IOMFB setup_table: Could not find table 'display-backlight-compensation-v1' in registry. Using default table.
+[    1.389693] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:13827: IOMFB updateFrequencies: minimum-frequency property not found, using getClockFrequency(0) instead.
+[    1.389777] apple-dcp 386c00000.dcp: RTKit: syslog message: UPPipe.cpp:5607: IOMFB: vid-clock-to-disp-clock-factor read failed, using default
+[    1.389968] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:14223: bool IOMFB::UPPipeDCP_H13P::init_m3_timing_parameters(): Int entry for init_m3_timing tunable target is 4
+[    1.390775] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:13827: IOMFB updateFrequencies: minimum-frequency property not found, using getClockFrequency(0) instead.
+[    1.391081] apple-dcp 386c00000.dcp: RTKit: syslog message: UPPipeDCP_H13P.cpp:1775: virtual bool IOMFB::UPPipeDCP_H13P::late_init_ios(bool): Realtime Bandwidth setup failed
+[    1.391087] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:13159: set_run_mode_safe: deferring: 2 -> 4
+[    1.391104] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:13064: virtual IOMFBStatus IOMFB::UPPipeDCP_H13P::ready_for_run_mode_change(AppleRegisterStream *): initiating deferred run mode chang
+[    1.436874] apple-dcp 386c00000.dcp: RTKit: syslog message: M3Hal_v1.cpp:246: IOMFB: load APT M3 IMem : size 0x8b20
+[    1.437012] apple-dcp 386c00000.dcp: RTKit: syslog message: M3Hal_v1.cpp:246: IOMFB: load APT M3 DMem : size 0x71f4
+[    1.437106] apple-dcp 386c00000.dcp: RTKit: syslog message: CAHandler.cpp:190: IOMFB load_ca_data: Unrecognized data version 0 (expected 1 or 2)
+[    1.438032] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:17797: IOMFB: initialize_SDP: DPTX Generic SDP base index is 0xa
+[    1.438037] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:17824: initialize_SDP: Base SDP Index = 10 : Number of SDPs available = 1
+[    1.438089] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:17419: IOMFB Int RTBandwidth: DISABLED
+[    1.439566] apple-dcp 386c00000.dcp: RTKit: syslog message: UPTSQManager.cpp:134: IOMFB: clearing M3 reset
+[    1.439591] apple-dcp 386c00000.dcp: RTKit: syslog message: UPTSQ_Hal_v1.cpp:343: IOMFB: timebase_offset = 4
+[    1.450690] apple-dcp 386c00000.dcp: RTKit: syslog message: UPTSQManager.cpp:106: IOMFB: switch to normal mode succeeded
+[    1.451119] apple-dcp 386c00000.dcp: RTKit: syslog message: FramebufferDCP.cpp:2488: IOMFB:create_default_fb_surface: Creating default FB surface failed - width = 3456, height = 2234
+[    1.453148] apple-dcp 386c00000.dcp: preferred timing 2 colour 1: "3456x2234": 120 1042130 3456 3464 3496 3536 2234 2352 2360 2456 0x48 0x0
+[    1.454347] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:12911: IOMFB: panel charge parity violation [0xfbd7fea]
+[    1.454418] apple-dcp 386c00000.dcp: RTKit: syslog message: ck_PCC2DBlm_v5.cpp:2730: IOMFB LACS_ERROR: DCP took too long to respond to LAS stats
+[    1.454424] apple-dcp 386c00000.dcp: DCP booted (A401)
+[    1.455325] apple-dcp 386c00000.dcp: A455 first_client_open done
+[    1.455332] apple-dcp 386c00000.dcp: IOMFB startup complete: 267 callbacks, 17 buffers; no modeset
+[    1.455343] apple-dcp 386c00000.dcp: dcp_hotplug() connected:1 valid_mode:0 nr_modes:1
+[    1.567721] apple-dcp 386c00000.dcp: set_digital_out_mode(color:1 timing:2) "3456x2234": 120 1042130 3456 3464 3496 3536 2234 2352 2360 2456 0x48 0x0
+[    1.567726] apple-dcp 386c00000.dcp: set_digital_out_mode() color mode depth:8 format:0 colorimetry:16 eotf:0 range:0 vrr:0
+[    1.567737] apple-dcp 386c00000.dcp: set_digital_out_mode finished:8500
+[    1.568112] apple-dcp 386c00000.dcp: RTKit: syslog message: UPPipeDCP_H13P.cpp:2564: brightness_changed: brightness value: 9175040
+[    1.572887] apple-drm soc:display-subsystem: [drm] fb0: appledrmfb frame buffer device
+[    3.613541] apple-dcp 386c00000.dcp: RTKit: syslog message: UPPipeDCP_H13P.cpp:2564: brightness_changed: brightness value: 13107200
+[    7.135324] asahi-g15 40a400000.gpu: [File 9 Queue 1]: IOCTL: submit failed! (submission ID: 2 err: EINVAL)
+[    7.137255] asahi-g15 40a400000.gpu: [File 9 Queue 1]: IOCTL: submit failed! (submission ID: 3 err: EINVAL)
+[    7.139063] asahi-g15 40a400000.gpu: [File 9 Queue 1]: IOCTL: submit failed! (submission ID: 4 err: EINVAL)
+[    7.156238] asahi: G15: rejecting CDM record at 0x11ffe170000: 00001212 00000000 00000000 00000000
+[    7.156259] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 5 err: EINVAL)
+[    7.161340] asahi: G15: rejecting CDM record at 0x11ffe170000: 00001212 00000000 00000000 00000000
+[    7.161355] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 6 err: EINVAL)
+[    7.166320] asahi: G15: rejecting CDM record at 0x11ffe170000: 00001212 00000000 00000000 00000000
+[    7.166328] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 7 err: EINVAL)
+[    7.171130] asahi: G15: rejecting CDM record at 0x11ffe170000: 00001212 00000000 00000000 00000000
+[    7.171141] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 8 err: EINVAL)
+[    7.235440] asahi: G15: rejecting CDM record at 0x11fec838000: 00001212 00000000 00000000 00000000
+[    7.235452] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 9 err: EINVAL)
+[    7.248336] asahi: G15: rejecting CDM record at 0x11fec838000: 00001212 00000000 00000000 00000000
+[    7.248344] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 10 err: EINVAL)
+[    7.248459] asahi: G15: rejecting CDM record at 0x11fec838000: 00001212 00000000 00000000 00000000
+[    7.248461] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 11 err: EINVAL)
+[    7.251531] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 12 err: EOPNOTSUPP)
+[    7.251628] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 13 err: EINVAL)
+[    7.268453] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 14 err: EOPNOTSUPP)
+[    7.268495] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 15 err: EINVAL)
+[    7.271949] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 16 err: EOPNOTSUPP)
+[    7.271968] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 17 err: EINVAL)
+[    7.280162] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 18 err: EOPNOTSUPP)
+[    7.280195] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 19 err: EINVAL)
+[    7.288478] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 20 err: EOPNOTSUPP)
+[    7.288518] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 21 err: EINVAL)
+[    7.296804] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 22 err: EOPNOTSUPP)
+[    7.296832] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 23 err: EINVAL)
+[    7.305077] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 24 err: EOPNOTSUPP)
+[    7.305103] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 25 err: EINVAL)
+[    7.313390] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 26 err: EOPNOTSUPP)
+[    7.313414] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 27 err: EINVAL)
+[    7.316688] asahi: G15: rejecting CDM record at 0x11fffdf0000: 00001212 00000000 00000000 00000000
+[    7.316694] asahi-g15 40a400000.gpu: [File 11 Queue 1]: IOCTL: submit failed! (submission ID: 28 err: EINVAL)
+[    7.321753] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 29 err: EOPNOTSUPP)
+[    7.321777] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 30 err: EINVAL)
+[    7.329997] asahi: G15: rejecting CDM record at 0x11fffdf0000: 00001212 00000000 00000000 00000000
+[    7.330006] asahi-g15 40a400000.gpu: [File 11 Queue 1]: IOCTL: submit failed! (submission ID: 31 err: EINVAL)
+[    7.330173] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 32 err: EOPNOTSUPP)
+[    7.330202] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 33 err: EINVAL)
+[    7.330579] asahi: G15: rejecting CDM record at 0x11fffdf0000: 00001212 00000000 00000000 00000000
+[    7.330583] asahi-g15 40a400000.gpu: [File 11 Queue 1]: IOCTL: submit failed! (submission ID: 34 err: EINVAL)
+[    7.338435] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 35 err: EOPNOTSUPP)
+[    7.338458] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 36 err: EINVAL)
+[    7.346758] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 37 err: EOPNOTSUPP)
+[    7.346779] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 38 err: EINVAL)
+[    7.355093] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 39 err: EOPNOTSUPP)
+[    7.355121] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 40 err: EINVAL)
+[    7.363434] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 41 err: EOPNOTSUPP)
+[    7.363458] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 42 err: EINVAL)
+[    7.371815] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 43 err: EOPNOTSUPP)
+[    7.371844] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 44 err: EINVAL)
+[    7.380132] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 45 err: EOPNOTSUPP)
+[    7.380163] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 46 err: EINVAL)
+[    7.388421] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 47 err: EOPNOTSUPP)
+[    7.388445] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 48 err: EINVAL)
+[    7.396769] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 49 err: EOPNOTSUPP)
+[    7.396792] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 50 err: EINVAL)
+[    7.405153] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 51 err: EOPNOTSUPP)
+[    7.405178] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 52 err: EINVAL)
+[    7.413481] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 53 err: EOPNOTSUPP)
+[    7.413518] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 54 err: EINVAL)
+[    7.422181] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 55 err: EOPNOTSUPP)
+[    7.422290] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 56 err: EINVAL)
+[    7.430431] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 57 err: EOPNOTSUPP)
+[    7.430511] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 58 err: EINVAL)
+[    7.438763] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 59 err: EOPNOTSUPP)
+[    7.438846] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 60 err: EINVAL)
+[    7.447161] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 61 err: EOPNOTSUPP)
+[    7.447250] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 62 err: EINVAL)
+[    7.455345] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 63 err: EOPNOTSUPP)
+[    7.455405] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 64 err: EINVAL)
+[    7.463847] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 65 err: EOPNOTSUPP)
+[    7.463946] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 66 err: EINVAL)
+[    7.472075] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 67 err: EOPNOTSUPP)
+[    7.472140] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 68 err: EINVAL)
+[    7.480286] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 69 err: EOPNOTSUPP)
+[    7.480347] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 70 err: EINVAL)
+[    7.488798] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 71 err: EOPNOTSUPP)
+[    7.488860] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 72 err: EINVAL)
+[    7.496939] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 73 err: EOPNOTSUPP)
+[    7.496991] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 74 err: EINVAL)
+[    7.505241] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 75 err: EOPNOTSUPP)
+[    7.505286] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 76 err: EINVAL)
+[    7.513572] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 77 err: EOPNOTSUPP)
+[    7.513613] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 78 err: EINVAL)
+[    7.521972] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 79 err: EOPNOTSUPP)
+[    7.522046] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 80 err: EINVAL)
+[    7.530344] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 81 err: EOPNOTSUPP)
+[    7.530403] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 82 err: EINVAL)
+[    7.538644] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 83 err: EOPNOTSUPP)
+[    7.538699] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 84 err: EINVAL)
+[    7.546709] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 85 err: EOPNOTSUPP)
+[    7.546985] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 86 err: EOPNOTSUPP)
+[    7.547034] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 87 err: EINVAL)
+[    7.548113] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 88 err: EOPNOTSUPP)
+[    7.551606] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 89 err: EOPNOTSUPP)
+[    7.555294] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 90 err: EOPNOTSUPP)
+[    7.555334] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 91 err: EINVAL)
+[    7.556364] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 92 err: EOPNOTSUPP)
+[    7.563638] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 93 err: EOPNOTSUPP)
+[    7.563668] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 94 err: EINVAL)
+[    7.563902] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 95 err: EOPNOTSUPP)
+[    7.571746] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 96 err: EOPNOTSUPP)
+[    7.571766] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 97 err: EINVAL)
+[    7.572100] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 98 err: EOPNOTSUPP)
+[    7.580061] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 99 err: EOPNOTSUPP)
+[    7.580077] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 100 err: EINVAL)
+[    7.588420] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 101 err: EOPNOTSUPP)
+[    7.588440] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 102 err: EINVAL)
+[    7.596731] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 103 err: EOPNOTSUPP)
+[    7.596750] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 104 err: EINVAL)
+[    7.605052] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 105 err: EOPNOTSUPP)
+[    7.605069] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 106 err: EINVAL)
+[    7.613453] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 107 err: EOPNOTSUPP)
+[    7.613482] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 108 err: EINVAL)
+[    7.621808] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 109 err: EOPNOTSUPP)
+[    7.621840] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 110 err: EINVAL)
+[    7.630119] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 111 err: EOPNOTSUPP)
+[    7.630145] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 112 err: EINVAL)
+[    7.638420] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 113 err: EOPNOTSUPP)
+[    7.638445] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 114 err: EINVAL)
+[    7.646736] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 115 err: EOPNOTSUPP)
+[    7.646756] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 116 err: EINVAL)
+[    7.655407] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 117 err: EOPNOTSUPP)
+[    7.655510] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 118 err: EINVAL)
+[    7.663746] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 119 err: EOPNOTSUPP)
+[    7.663833] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 120 err: EINVAL)
+[    7.671985] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 121 err: EOPNOTSUPP)
+[    7.672084] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 122 err: EINVAL)
+[    7.680287] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 123 err: EOPNOTSUPP)
+[    7.680385] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 124 err: EINVAL)
+[    7.682669] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 125 err: EOPNOTSUPP)
+[    7.688608] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 126 err: EOPNOTSUPP)
+[    7.688663] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 127 err: EINVAL)
+[    7.696961] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 128 err: EOPNOTSUPP)
+[    7.697047] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 129 err: EINVAL)
+[    7.705229] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 130 err: EOPNOTSUPP)
+[    7.705279] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 131 err: EINVAL)
+[    7.713447] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 132 err: EOPNOTSUPP)
+[    7.713479] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 133 err: EINVAL)
+[    7.721742] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 134 err: EOPNOTSUPP)
+[    7.721767] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 135 err: EINVAL)
+[    7.730070] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 136 err: EOPNOTSUPP)
+[    7.730093] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 137 err: EINVAL)
+[    7.738454] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 138 err: EOPNOTSUPP)
+[    7.738482] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 139 err: EINVAL)
+[    7.746775] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 140 err: EOPNOTSUPP)
+[    7.746803] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 141 err: EINVAL)
+[    7.755094] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 142 err: EOPNOTSUPP)
+[    7.755120] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 143 err: EINVAL)
+[    7.763440] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 144 err: EOPNOTSUPP)
+[    7.763464] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 145 err: EINVAL)
+[    7.771771] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 146 err: EOPNOTSUPP)
+[    7.771796] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 147 err: EINVAL)
+[    7.780256] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 148 err: EOPNOTSUPP)
+[    7.780304] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 149 err: EINVAL)
+[    7.788515] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 150 err: EOPNOTSUPP)
+[    7.788549] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 151 err: EINVAL)
+[    7.796801] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 152 err: EOPNOTSUPP)
+[    7.796828] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 153 err: EINVAL)
+[    7.805184] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 154 err: EOPNOTSUPP)
+[    7.805224] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 155 err: EINVAL)
+[    7.813438] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 156 err: EOPNOTSUPP)
+[    7.813462] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 157 err: EINVAL)
+[    7.821760] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 158 err: EOPNOTSUPP)
+[    7.821784] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 159 err: EINVAL)
+[    7.830170] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 160 err: EOPNOTSUPP)
+[    7.830221] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 161 err: EINVAL)
+[    7.838511] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 162 err: EOPNOTSUPP)
+[    7.838549] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 163 err: EINVAL)
+[    7.842107] asahi: G15: rejecting CDM record at 0x11fffca0000: 00002212 00000000 00000000 00000000
+[    7.842117] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 164 err: EINVAL)
+[    7.842282] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842285] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 165 err: EINVAL)
+[    7.842330] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842332] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 166 err: EINVAL)
+[    7.842347] asahi: G15: rejecting CDM record at 0x11fffca0000: 00002212 00000000 00000000 00000000
+[    7.842349] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 167 err: EINVAL)
+[    7.842357] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842358] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 168 err: EINVAL)
+[    7.842365] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842367] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 169 err: EINVAL)
+[    7.842374] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842375] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 170 err: EINVAL)
+[    7.842402] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842403] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 171 err: EINVAL)
+[    7.842410] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842411] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 172 err: EINVAL)
+[    7.842419] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842420] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 173 err: EINVAL)
+[    7.842427] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842429] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 174 err: EINVAL)
+[    7.842435] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842436] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 175 err: EINVAL)
+[    7.842443] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842444] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 176 err: EINVAL)
+[    7.842452] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842453] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 177 err: EINVAL)
+[    7.842460] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842461] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 178 err: EINVAL)
+[    7.842475] asahi: G15: rejecting CDM record at 0x11fffca0000: 00002212 00000000 00000000 00000000
+[    7.842476] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 179 err: EINVAL)
+[    7.842483] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842484] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 180 err: EINVAL)
+[    7.842498] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842500] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 181 err: EINVAL)
+[    7.842506] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842508] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 182 err: EINVAL)
+[    7.842514] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842515] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 183 err: EINVAL)
+[    7.842522] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842523] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 184 err: EINVAL)
+[    7.842529] asahi: G15: rejecting CDM record at 0x11fffca0000: 00001212 00000000 00000000 00000000
+[    7.842530] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 185 err: EINVAL)
+[    7.842537] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 186 err: EINVAL)
+[    7.842544] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 187 err: EINVAL)
+[    7.842552] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 188 err: EINVAL)
+[    7.842558] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 189 err: EINVAL)
+[    7.842565] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 190 err: EINVAL)
+[    7.842572] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 191 err: EINVAL)
+[    7.842585] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 192 err: EINVAL)
+[    7.842593] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 193 err: EINVAL)
+[    7.842600] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 194 err: EINVAL)
+[    7.842606] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 195 err: EINVAL)
+[    7.842613] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 196 err: EINVAL)
+[    7.842619] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 197 err: EINVAL)
+[    7.842626] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 198 err: EINVAL)
+[    7.842632] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 199 err: EINVAL)
+[    7.842645] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 200 err: EINVAL)
+[    7.842652] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 201 err: EINVAL)
+[    7.842660] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 202 err: EINVAL)
+[    7.842686] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 203 err: EINVAL)
+[    7.842693] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 204 err: EINVAL)
+[    7.842700] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 205 err: EINVAL)
+[    7.842707] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 206 err: EINVAL)
+[    7.842715] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 207 err: EINVAL)
+[    7.842722] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 208 err: EINVAL)
+[    7.842765] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 209 err: EINVAL)
+[    7.842774] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 210 err: EINVAL)
+[    7.843172] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 211 err: EOPNOTSUPP)
+[    7.847017] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 212 err: EOPNOTSUPP)
+[    7.847087] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 213 err: EINVAL)
+[    7.854820] asahi-g15 40a400000.gpu: [File 12 Queue 3]: IOCTL: submit failed! (submission ID: 214 err: EOPNOTSUPP)
+[    7.855529] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 215 err: EOPNOTSUPP)
+[    7.855593] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 216 err: EINVAL)
+[    7.857839] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 217 err: EOPNOTSUPP)
+[    7.863538] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 218 err: EOPNOTSUPP)
+[    7.863577] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 219 err: EINVAL)
+[    7.871908] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 220 err: EOPNOTSUPP)
+[    7.871948] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 221 err: EINVAL)
+[    7.880179] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 222 err: EOPNOTSUPP)
+[    7.880211] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 223 err: EINVAL)
+[    7.881827] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 224 err: EINVAL)
+[    7.881872] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 225 err: EINVAL)
+[    7.881889] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 226 err: EINVAL)
+[    7.881901] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 227 err: EINVAL)
+[    7.881912] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 228 err: EINVAL)
+[    7.882076] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 229 err: EOPNOTSUPP)
+[    7.885233] asahi-g15 40a400000.gpu: [File 12 Queue 3]: IOCTL: submit failed! (submission ID: 230 err: EOPNOTSUPP)
+[    7.888700] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 231 err: EOPNOTSUPP)
+[    7.888746] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 232 err: EINVAL)
+[    7.897154] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 233 err: EOPNOTSUPP)
+[    7.897242] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 234 err: EINVAL)
+[    7.905482] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 235 err: EOPNOTSUPP)
+[    7.905600] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 236 err: EINVAL)
+[    7.913844] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 237 err: EOPNOTSUPP)
+[    7.913933] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 238 err: EINVAL)
+[    7.922018] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 239 err: EOPNOTSUPP)
+[    7.922079] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 240 err: EINVAL)
+[    7.928799] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 241 err: EINVAL)
+[    7.928839] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 242 err: EINVAL)
+[    7.929024] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 243 err: EOPNOTSUPP)
+[    7.930639] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 244 err: EOPNOTSUPP)
+[    7.930697] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 245 err: EINVAL)
+[    7.938603] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 246 err: EOPNOTSUPP)
+[    7.938645] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 247 err: EINVAL)
+[    7.947122] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 248 err: EOPNOTSUPP)
+[    7.947176] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 249 err: EINVAL)
+[    7.955202] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 250 err: EOPNOTSUPP)
+[    7.955236] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 251 err: EINVAL)
+[    7.963450] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 252 err: EOPNOTSUPP)
+[    7.963479] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 253 err: EINVAL)
+[    7.964789] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 254 err: EINVAL)
+[    7.964828] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 255 err: EINVAL)
+[    7.964971] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 256 err: EINVAL)
+[    7.965058] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 257 err: EINVAL)
+[    7.965071] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 258 err: EINVAL)
+[    7.965082] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 259 err: EINVAL)
+[    7.965094] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 260 err: EINVAL)
+[    7.965103] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 261 err: EINVAL)
+[    7.965114] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 262 err: EINVAL)
+[    7.965124] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 263 err: EINVAL)
+[    7.965134] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 264 err: EINVAL)
+[    7.965143] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 265 err: EINVAL)
+[    7.965155] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 266 err: EINVAL)
+[    7.965164] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 267 err: EINVAL)
+[    7.965175] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 268 err: EINVAL)
+[    7.965184] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 269 err: EINVAL)
+[    7.965194] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 270 err: EINVAL)
+[    7.965204] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 271 err: EINVAL)
+[    7.965215] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 272 err: EINVAL)
+[    7.965229] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 273 err: EINVAL)
+[    7.965239] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 274 err: EINVAL)
+[    7.965248] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 275 err: EINVAL)
+[    7.965263] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 276 err: EINVAL)
+[    7.965310] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 277 err: EINVAL)
+[    7.965320] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 278 err: EINVAL)
+[    7.965330] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 279 err: EINVAL)
+[    7.965341] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 280 err: EINVAL)
+[    7.965351] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 281 err: EINVAL)
+[    7.965362] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 282 err: EINVAL)
+[    7.965371] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 283 err: EINVAL)
+[    7.965381] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 284 err: EINVAL)
+[    7.965389] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 285 err: EINVAL)
+[    7.965400] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 286 err: EINVAL)
+[    7.965408] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 287 err: EINVAL)
+[    7.965420] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 288 err: EINVAL)
+[    7.965429] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 289 err: EINVAL)
+[    7.965438] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 290 err: EINVAL)
+[    7.965448] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 291 err: EINVAL)
+[    7.965459] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 292 err: EINVAL)
+[    7.965473] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 293 err: EINVAL)
+[    7.965484] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 294 err: EINVAL)
+[    7.967253] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 295 err: EOPNOTSUPP)
+[    7.967838] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 296 err: EINVAL)
+[    7.967873] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 297 err: EINVAL)
+[    7.967889] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 298 err: EINVAL)
+[    7.967899] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 299 err: EINVAL)
+[    7.967968] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 300 err: EOPNOTSUPP)
+[    7.971845] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 301 err: EOPNOTSUPP)
+[    7.971878] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 302 err: EINVAL)
+[    7.975568] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 303 err: EINVAL)
+[    7.975685] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 304 err: EOPNOTSUPP)
+[    7.980437] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 305 err: EOPNOTSUPP)
+[    7.980499] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 306 err: EINVAL)
+[    7.981742] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 307 err: EOPNOTSUPP)
+[    7.985124] asahi-g15 40a400000.gpu: [File 12 Queue 3]: IOCTL: submit failed! (submission ID: 308 err: EINVAL)
+[    7.988647] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 309 err: EOPNOTSUPP)
+[    7.988688] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 310 err: EINVAL)
+[    7.989466] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 312 err: EOPNOTSUPP)
+[    7.989474] asahi-g15 40a400000.gpu: [File 12 Queue 3]: IOCTL: submit failed! (submission ID: 311 err: EOPNOTSUPP)
+[    7.996947] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 313 err: EOPNOTSUPP)
+[    7.997007] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 314 err: EINVAL)
+[    7.997339] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 315 err: EOPNOTSUPP)
+[    8.005199] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 316 err: EOPNOTSUPP)
+[    8.005246] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 317 err: EINVAL)
+[    8.005469] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 318 err: EOPNOTSUPP)
+[    8.013525] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 319 err: EOPNOTSUPP)
+[    8.013562] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 320 err: EINVAL)
+[    8.013780] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 321 err: EOPNOTSUPP)
+[    8.021788] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 322 err: EOPNOTSUPP)
+[    8.021814] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 323 err: EINVAL)
+[    8.022069] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 324 err: EOPNOTSUPP)
+[    8.030158] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 325 err: EOPNOTSUPP)
+[    8.030193] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 326 err: EINVAL)
+[    8.030418] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 327 err: EOPNOTSUPP)
+[    8.038431] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 328 err: EOPNOTSUPP)
+[    8.038457] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 329 err: EINVAL)
+[    8.038591] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 330 err: EOPNOTSUPP)
+[    8.046776] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 331 err: EOPNOTSUPP)
+[    8.046806] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 332 err: EINVAL)
+[    8.046978] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 333 err: EOPNOTSUPP)
+[    8.055106] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 334 err: EOPNOTSUPP)
+[    8.055128] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 335 err: EINVAL)
+[    8.055712] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 336 err: EOPNOTSUPP)
+[    8.063740] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 337 err: EOPNOTSUPP)
+[    8.063839] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 338 err: EINVAL)
+[    8.064311] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 339 err: EOPNOTSUPP)
+[    8.071945] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 340 err: EOPNOTSUPP)
+[    8.072023] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 341 err: EINVAL)
+[    8.072440] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 342 err: EOPNOTSUPP)
+[    8.080398] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 343 err: EOPNOTSUPP)
+[    8.080453] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 344 err: EINVAL)
+[    8.081101] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 345 err: EOPNOTSUPP)
+[    8.088605] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 346 err: EOPNOTSUPP)
+[    8.088649] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 347 err: EINVAL)
+[    8.089298] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 348 err: EOPNOTSUPP)
+[    8.096880] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 349 err: EOPNOTSUPP)
+[    8.096918] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 350 err: EINVAL)
+[    8.097235] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 351 err: EOPNOTSUPP)
+[    8.105356] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 352 err: EOPNOTSUPP)
+[    8.105443] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 353 err: EINVAL)
+[    8.106036] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 354 err: EOPNOTSUPP)
+[    8.113565] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 355 err: EOPNOTSUPP)
+[    8.113614] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 356 err: EINVAL)
+[    8.114158] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 357 err: EOPNOTSUPP)
+[    8.121940] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 358 err: EOPNOTSUPP)
+[    8.121996] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 359 err: EINVAL)
+[    8.122330] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 360 err: EOPNOTSUPP)
+[    8.130165] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 361 err: EOPNOTSUPP)
+[    8.130198] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 362 err: EINVAL)
+[    8.130474] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 363 err: EOPNOTSUPP)
+[    8.138434] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 364 err: EOPNOTSUPP)
+[    8.138456] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 365 err: EINVAL)
+[    8.138700] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 366 err: EOPNOTSUPP)
+[    8.146830] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 367 err: EOPNOTSUPP)
+[    8.146885] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 368 err: EINVAL)
+[    8.147189] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 369 err: EOPNOTSUPP)
+[    8.155144] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 370 err: EOPNOTSUPP)
+[    8.155186] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 371 err: EINVAL)
+[    8.163445] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 372 err: EOPNOTSUPP)
+[    8.163484] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 373 err: EINVAL)
+[    8.171781] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 374 err: EOPNOTSUPP)
+[    8.171816] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 375 err: EINVAL)
+[    8.180093] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 376 err: EOPNOTSUPP)
+[    8.180116] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 377 err: EINVAL)
+[    8.188427] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 378 err: EOPNOTSUPP)
+[    8.188445] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 379 err: EINVAL)
+[    8.196791] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 380 err: EOPNOTSUPP)
+[    8.196822] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 381 err: EINVAL)
+[    8.204410] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 382 err: EOPNOTSUPP)
+[    8.205103] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 383 err: EOPNOTSUPP)
+[    8.205126] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 384 err: EINVAL)
+[    8.213421] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 385 err: EOPNOTSUPP)
+[    8.213444] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 386 err: EINVAL)
+[    8.221755] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 387 err: EOPNOTSUPP)
+[    8.221774] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 388 err: EINVAL)
+[    8.230175] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 389 err: EOPNOTSUPP)
+[    8.230226] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 390 err: EINVAL)
+[    8.238501] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 391 err: EOPNOTSUPP)
+[    8.238551] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 392 err: EINVAL)
+[    8.246818] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 393 err: EOPNOTSUPP)
+[    8.246869] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 394 err: EINVAL)
+[    8.255096] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 395 err: EOPNOTSUPP)
+[    8.255144] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 396 err: EINVAL)
+[    8.263458] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 397 err: EOPNOTSUPP)
+[    8.263511] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 398 err: EINVAL)
+[    8.271797] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 399 err: EOPNOTSUPP)
+[    8.271844] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 400 err: EINVAL)
+[    8.280133] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 401 err: EOPNOTSUPP)
+[    8.280168] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 402 err: EINVAL)
+[    8.288476] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 403 err: EOPNOTSUPP)
+[    8.288523] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 404 err: EINVAL)
+[    8.296773] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 405 err: EOPNOTSUPP)
+[    8.296801] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 406 err: EINVAL)
+[    8.305099] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 407 err: EOPNOTSUPP)
+[    8.305121] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 408 err: EINVAL)
+[    9.130578] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 409 err: EINVAL)
+[    9.131043] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 410 err: EOPNOTSUPP)
+[    9.131562] asahi-g15 40a400000.gpu: [File 12 Queue 3]: IOCTL: submit failed! (submission ID: 411 err: EOPNOTSUPP)
+[    9.131590] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 412 err: EOPNOTSUPP)
+[    9.131642] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 413 err: EOPNOTSUPP)
+[    9.131656] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 414 err: EINVAL)
+[    9.133931] asahi-g15 40a400000.gpu: [File 12 Queue 5]: IOCTL: submit failed! (submission ID: 415 err: EOPNOTSUPP)
+[    9.134449] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 416 err: EOPNOTSUPP)
+[    9.134471] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 417 err: EINVAL)
+[    9.139223] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 418 err: EOPNOTSUPP)
+[    9.142611] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 419 err: EOPNOTSUPP)
+[    9.142640] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 420 err: EINVAL)
+[    9.147125] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 421 err: EOPNOTSUPP)
+[    9.150935] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 422 err: EOPNOTSUPP)
+[    9.150962] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 423 err: EINVAL)
+[    9.154455] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 424 err: EOPNOTSUPP)
+[    9.162828] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 425 err: EOPNOTSUPP)
+[    9.162858] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 426 err: EINVAL)
+[    9.163146] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 427 err: EOPNOTSUPP)
+[    9.163165] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 428 err: EINVAL)
+[    9.163408] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 429 err: EOPNOTSUPP)
+[    9.167635] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 430 err: EOPNOTSUPP)
+[    9.167675] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 431 err: EINVAL)
+[    9.171268] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 432 err: EOPNOTSUPP)
+[    9.175954] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 433 err: EOPNOTSUPP)
+[    9.176009] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 434 err: EINVAL)
+[    9.178551] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 435 err: EOPNOTSUPP)
+[    9.184459] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 436 err: EOPNOTSUPP)
+[    9.184508] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 437 err: EINVAL)
+[    9.186950] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 438 err: EOPNOTSUPP)
+[    9.192678] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 439 err: EOPNOTSUPP)
+[    9.192728] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 440 err: EINVAL)
+[    9.195187] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 441 err: EOPNOTSUPP)
+[    9.200920] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 442 err: EOPNOTSUPP)
+[    9.200947] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 443 err: EINVAL)
+[    9.202332] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 444 err: EOPNOTSUPP)
+[    9.209326] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 445 err: EOPNOTSUPP)
+[    9.209376] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 446 err: EINVAL)
+[    9.210769] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 447 err: EOPNOTSUPP)
+[    9.217670] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 448 err: EOPNOTSUPP)
+[    9.217706] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 449 err: EINVAL)
+[    9.219184] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 450 err: EOPNOTSUPP)
+[    9.226012] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 451 err: EOPNOTSUPP)
+[    9.226048] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 452 err: EINVAL)
+[    9.226515] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 453 err: EOPNOTSUPP)
+[    9.234327] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 454 err: EOPNOTSUPP)
+[    9.234364] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 455 err: EINVAL)
+[    9.239400] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 456 err: EOPNOTSUPP)
+[    9.242615] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 457 err: EOPNOTSUPP)
+[    9.242646] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 458 err: EINVAL)
+[    9.242941] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 459 err: EOPNOTSUPP)
+[    9.251032] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 460 err: EOPNOTSUPP)
+[    9.251090] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 461 err: EINVAL)
+[    9.251437] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 462 err: EOPNOTSUPP)
+[    9.259345] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 463 err: EOPNOTSUPP)
+[    9.259396] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 464 err: EINVAL)
+[    9.259767] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 465 err: EOPNOTSUPP)
+[    9.267654] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 466 err: EOPNOTSUPP)
+[    9.267704] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 467 err: EINVAL)
+[    9.268016] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 468 err: EOPNOTSUPP)
+[    9.275977] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 469 err: EOPNOTSUPP)
+[    9.276028] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 470 err: EINVAL)
+[    9.727748] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 471 err: EINVAL)
+[    9.728031] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 472 err: EOPNOTSUPP)
+[    9.728472] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 473 err: EOPNOTSUPP)
+[    9.728543] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 474 err: EINVAL)
+[   52.087468] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 475 err: EINVAL)
+[   52.091576] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 476 err: EINVAL)
+[   52.092126] asahi-g15 40a400000.gpu: [File 12 Queue 1]: IOCTL: submit failed! (submission ID: 477 err: EOPNOTSUPP)
+[   52.098030] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 478 err: EOPNOTSUPP)
+[   52.098133] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 479 err: EINVAL)
+[   92.714684] asahi-g15 40a400000.gpu: [File 9 Queue 2]: IOCTL: submit failed! (submission ID: 38396 err: EINVAL)
+[   92.747276] apple-dcp 386c00000.dcp: RTKit: syslog message: UPPipeDCP_H13P.cpp:2564: brightness_changed: brightness value: 0
+[   92.751952] apple-dcp 386c00000.dcp: set_digital_out_mode(color:1 timing:2) "3456x2234": 120 1042130 3456 3464 3496 3536 2234 2352 2360 2456 0x48 0x0
+[   92.751956] apple-dcp 386c00000.dcp: set_digital_out_mode() color mode depth:8 format:0 colorimetry:16 eotf:0 range:0 vrr:0
+[   92.751959] apple-dcp 386c00000.dcp: set_digital_out_mode finished:8500
+[   92.752188] apple-dcp 386c00000.dcp: RTKit: syslog message: UPPipeDCP_H13P.cpp:2564: brightness_changed: brightness value: 13107200
+== head
+uname 7.1.12-aurora-dev-board-dt
+package linux-aurora-dev 7.1.12_aurora_dev_board_dt-8
+params apple_t6031_display.enable=1 
+mesa Version: OpenGL ES 3.2 Mesa 26.3.0-devel (git-aab698d2ef)

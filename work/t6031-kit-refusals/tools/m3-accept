@@ -10,7 +10,7 @@
 # entry has the default cmdline, not the dev entry's, and m3-oneshot refuses the dev entry's own
 # parameters, so such a boot runs without apple_t6031_display.enable=1. With --no-boot nothing is
 # booted and the running boot is measured. Either way the run refuses a kernel that is not the
-# dev kernel (*-aurora-dev-silicon).
+# dev kernel (*-aurora-dev-*: the dev slot).
 # Then, on the M3: the native checks (N s each, default 5) with the GPU busy time around them
 # then the GPU's performance state (asahi-g15/pstate's first line) sampled every 100 ms during a
 # 10 s gpu-heat load,
@@ -52,7 +52,7 @@ if ((boot)); then
 fi
 
 kernel=$("${SSH[@]}" uname -r) || die "no SSH to the M3"
-[[ $kernel == *-aurora-dev-silicon ]] || die "the M3 runs $kernel, not the dev kernel"
+[[ $kernel == *-aurora-dev-* ]] || die "the M3 runs $kernel, not the dev kernel"
 
 "${SSH[@]}" "sudo -n bash -s $secs" >"$priv/collect.txt" 2>"$priv/collect.err" <<'EOF_M3' || die "collection failed: $(tail -3 "$priv/collect.err")"
 set -u
