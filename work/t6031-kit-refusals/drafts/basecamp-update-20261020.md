@@ -18,6 +18,11 @@ The GPU and display port on the G15 stack is in good shape. The tested reference
   - Two further bugs sat behind it, both fixed: a parameter-buffer livelock and a too-small parameter-buffer heap.
   - The full dEQP subset now runs with nothing excluded. No fail-stop, no recoveries.
 
+- **Hardware video decode (AVD):**
+  - The existing avd driver works on the J516C as-is.
+  - 8-bit H.264, HEVC, VP9 and AV1 decode **bit-exact** against software, at 640x360 and 1080p.
+  - HEVC Main10 comes out as 8-bit, because the driver offers no P010 capture format yet (malik-na/linux-aurora#71).
+
 **dEQP subset (VK-GL-CTS 1.4.7.0, J516C)**
 
 | Suite | Pass | Fail | Crash |
