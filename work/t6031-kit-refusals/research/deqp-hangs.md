@@ -275,3 +275,42 @@ driver (ticket #50), the render ones are still the G15S values (#61). Candidates
 A per-core activity readout (the old engine snapshot's per-core USC counters) would show directly whether
 the eleventh large group is placed on a core that never runs; the current debugfs (`asahi-g15/stats`,
 `pstate`) does not expose it.
+
+## 9. The full-run deadlock at the PB maximum (poolseed kernel, -j2 full baseline)
+
+Naeem's full dEQP run (nothing excluded, -j2) on the poolseed kernel deadlocked the driver about 10 s into VK
+(private log `~/m3-private/poolseed-deadlock-dmesg.txt`; no fail-stop, so the fail-stop check does not catch
+it). Driver lines: PB growth requests 0 and 1 answered at 264 s (+10 blocks each), request 103 at 363.76 s
+answered with the refusal at the maximum (`+0 blocks (2048 of 2048), DEVCTL 7: 0`), then nothing more from the
+driver; from 492 s the hung-task reports: the Shared poll work (`events_highpri`) in `channel::devctl_submit`
+(sampled in its 1 ms sleep) holding the device lock, `SchedJob::run`, `Gpu::new_vm`, a file close (drop
+Scheduler/Queue) and the debugfs stats read all blocked on that lock.
+
+Reading (code, `g15/pools.rs` `answer_growth`/`answer_request`, `pools/growth.rs`, `channel.rs`):
+- `devctl_submit` is bounded (2 s, ETIMEDOUT) and a failed reply is logged at info; none was logged. So the
+  replies succeeded and the poll pass kept making them: `answer_growth` loops `while !grow.is_empty()`, each
+  reply's wait calls `drain_rings`, which queues the firmware's next growth request (type-7 events), the
+  ledger admits any request whose counter is not below the next expected one and answers the refusal again
+  (logged only at dev_dbg after the first). A firmware that keeps asking at the maximum, instead of finishing
+  the scene with partial renders as the refusal design assumes, is answered forever under the device lock:
+  a livelock inside one poll pass, not an unanswered DEVCTL. Why this firmware keeps asking is open: the
+  manager's maximum (P+0x70/+0x74 = 4 x 2048 pages) did not stop it from asking at 2048 of 2048, and whether
+  the refusal word is what makes it partial-render was never observed on this GPU. The 2048-block (256 MiB)
+  maximum is the mapped heap's size; the J516C driver's 120-128-chunk pools are its page-manager (UMA) pools,
+  a different allocator, so they say nothing about its PB size.
+- Robustness: the poll pass must not depend on the firmware giving up. Change (fork branch
+  `t6031/pb-refusal-bound`, one commit on `t6031/compute-pool-seed`): the ledger answers at most two refusals
+  per PB initialization and then admits nothing (`exhausted()`), so the requests go unanswered (one warning),
+  the TA stalls and the existing host deadline (`g15_deadline_ms`, 5 s) takes the kill/recovery path, which
+  fails the client with ETIMEDOUT instead of deadlocking the driver; `answer_growth` answers only the requests
+  queued before the pass (those drained during a reply's wait wait for the next pass, with the lock released);
+  `g15_pb_max_blocks` (default 2048) lets a repro reach the maximum at once. Host test added to the ledger.
+- Repro for Naeem (one test, after booting the new package with `asahi.g15_pb_max_blocks=64` so the first
+  growth requests hit the maximum): `cd ~/Projects/build-out/deqp/external/vulkancts/modules/vulkan && timeout 60
+  env LD_LIBRARY_PATH=/opt/mesa-m3-g15c-native/lib VK_ICD_FILENAMES=/opt/mesa-m3-g15c-native/share/vulkan/icd.d/asahi_icd.aarch64.json
+  ./deqp-vk --deqp-case=dEQP-VK.memory.pipeline_barrier.graphics.host_write_index_buffer.1048576`. Success: the
+  test ends within the timeout (Pass, or DeviceLost after a logged `PB growth request ... left unanswered: 2
+  refusals at the maximum (64 blocks)` followed by the deadline's hang request and a `recovered:` line), and
+  `sudo -n cat /sys/kernel/debug/asahi-g15/stats` answers afterwards. Failure: the process hangs past the
+  timeout and the stats read blocks (reboot needed). With the default 2048 the single test may not reach the
+  maximum at all.
