@@ -314,3 +314,45 @@ Reading (code, `g15/pools.rs` `answer_growth`/`answer_request`, `pools/growth.rs
   `sudo -n cat /sys/kernel/debug/asahi-g15/stats` answers afterwards. Failure: the process hangs past the
   timeout and the stats read blocks (reboot needed). With the default 2048 the single test may not reach the
   maximum at all.
+
+### 9.1 Boot of the refusal bound (4ce31a06): livelock gone, fail-stop instead
+
+With `asahi.g15_pb_max_blocks=64` (clamped to the initial 1024): two refusals answered, the third request left
+unanswered with the warning, the process ended in 9 s, the stats stayed readable (`pb: requests 3 grown 0 refused
+2 bad 1`). 7 s later: `hang request Globals+0x24=1: 0` (the fragment kill), no event within the kill budget,
+`prefix FAILED ... 7000ms` with the TA one stamp short (`ta 0x7a00d600/0x7a00d500/0x7a00d500`) and the FS too,
+then `G15: fail-stop (ETIMEDOUT)` (recovery's "deadline without event and no effective kill"). At the default
+maximum the test alone grows the PB to 1044 of 2048 and ends in 2 s with Fail (SubmitRenderPass image
+comparison): a render correctness bug of its own, to be looked at with #61.
+
+### 9.2 Why the firmware does not partial-render at the maximum, and why the kill cannot end it
+
+The public G13/G17 driver in this tree (`drivers/gpu/drm/asahi/buffer.rs`, module comment) describes the
+mechanism: when the buffer runs out of pages the vertex pass stops and a partial fragment pass spills the
+intermediate tile state to RAM; for that spill the GPU/firmware borrows pages from the same buffer, and when
+none are left it needs **synchronous growth** from the host (its `sync_grow`: +10 blocks, "This might
+deadlock" if it cannot). The type-7 request at the maximum is that synchronous request: refusing it leaves the
+TA stopped mid-scene with nothing to spill into. That driver never refuses below its maximum, which is
+"the typical max numbers on macOS": 862,322,688 bytes (about 6578 blocks; a third without memoryless targets),
+and the T8140 row maps 0xd1a block slots (about 419 MiB). Ours: a 256 MiB heap and a firmware maximum equal to
+it, so the first synchronous request at 2048 is refused. The refusal reply form is not the problem; the
+missing pages are. The fragment kill (+0x24) ends fragment work; a TA stalled waiting for pages has no kill
+divisor in our records (`globals::COMPUTE_KILL` 0x1c, `FRAGMENT_KILL` 0x24 only), so the deadline fail-stops.
+
+### 9.3 The change (fork `t6031/pb-soft-max`, one commit on `pb-refusal-bound`)
+
+Give the firmware a growth maximum below the mapped heap: `g15_pb_max_blocks` becomes the maximum written to
+the PB manager (default 1536 blocks = 192 MiB, clamped to initial..2048), the ledger's hard maximum stays the
+mapped 2048, and every request is answered from the blocks above the firmware's maximum (512 blocks = 51
+synchronous requests); the two-refusal bound stays as the backstop at the heap's end. The stats line shows
+`initial/posted/firmware-max/max`; the first answer past the firmware maximum is logged at info. If the
+firmware's asynchronous growth does not stop at its maximum, the heap still fills to 2048 and the bound fires:
+then the next change is a bigger heap (the block list and page list hold 4096 and 10240 blocks).
+
+Repro for Naeem (one test): boot the package with `asahi.g15_pb_max_blocks=1024` (firmware maximum = the
+initial size, so every request past it is a synchronous one served from the headroom), then the single
+`dEQP-VK.memory.pipeline_barrier.graphics.host_write_index_buffer.1048576` run under `timeout 60`. Success: the
+test ends (Fail, image comparison) with `PB growth request ... +10 blocks (1034 of 2048 ...)` lines past 1024,
+no refusal, no hang request, stats `pb: blocks 1024/<posted>/1024/2048 ... refused 0`. Failure: refusals and
+the fail-stop as in 9.1 (then: bigger heap), or no growth lines at all with a hang (then: the maximum words
+are not what stops the asynchronous requests).
