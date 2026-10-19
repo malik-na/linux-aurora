@@ -220,3 +220,7 @@ Spec malik-na/linux-aurora#53 (ready-for-agent). Tickets #54-#68, blocking edges
 - Open with Naeem: omacom/linux-aurora#148 (DJ) replaced #363 on omacom; our 13 follow-ups are not in it. 10 of the
   GPU ones cherry-pick cleanly onto aurora-silicon:m3-pro-rebase; the 3-5 display ones need porting to integration's
   display code. Chris says he is carrying the pieces into his 7.2.11 tree.
+- 00:40 (Oct 20): Chris chose option 1 on #363: he carries our commits into his 7.2.11 tree (first batch merged in
+  iconidentify/siliconforest-linux#12; pstate and board-record changes next). Keep #363 open as the tested J516C
+  reference; no rebase onto omacom#148 by us. #69 work in progress (forks t6031/compute-pool-seed 7ef6475c ->
+  pb-refusal-bound 4ce31a06 -> pb-soft-max 8424e318 -> pb-heap-512 4a0f6292); none of it is on #363 yet.
