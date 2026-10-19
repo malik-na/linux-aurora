@@ -784,12 +784,60 @@ fn tail(out: &mut [u8]) -> R<()> {
     Ok(())
 }
 
-/// Copies the [`FROM_FILE`] words of `file` (the board file's record) into `out`.
+/// An experiment: words of [`FROM_FILE`] this build leaves zero instead of copying from the file,
+/// to show whether the firmware needs them. `zero-38`: the tail's thirteen readings (#38), the
+/// single at HardwareDataA +0x6d34 and the twelve singles after +0x6d80.
+pub(crate) const EXPERIMENT: (&str, &[usize]) = (
+    "zero-38",
+    &[
+        HWDATA_A + 0x6d34,
+        HWDATA_A + 0x6d8c,
+        HWDATA_A + 0x6d90,
+        HWDATA_A + 0x6d94,
+        HWDATA_A + 0x6d98,
+        HWDATA_A + 0x6dcc,
+        HWDATA_A + 0x6dd0,
+        HWDATA_A + 0x6dd4,
+        HWDATA_A + 0x6dd8,
+        HWDATA_A + 0x6dec,
+        HWDATA_A + 0x6df4,
+        HWDATA_A + 0x6dfc,
+        HWDATA_A + 0x6e04,
+    ],
+);
+
+fn zeroed_by_experiment(at: usize) -> bool {
+    EXPERIMENT.1.contains(&at)
+}
+
+/// Copies the [`FROM_FILE`] words of `file` (the board file's record) into `out`, except the
+/// [`EXPERIMENT`]'s, which stay zero.
 pub(crate) fn from_file(out: &mut [u8], file: &[u8]) -> R<()> {
     for &at in FROM_FILE.iter() {
-        put32(out, at, get32(file, at)?)?;
+        let v = if zeroed_by_experiment(at) {
+            0
+        } else {
+            get32(file, at)?
+        };
+        put32(out, at, v)?;
     }
     Ok(())
+}
+
+/// The first word at which the built record differs from the file's, except the
+/// [`EXPERIMENT`]'s words, which may differ as long as the built word is zero.
+pub(crate) fn cross_check(built: &[u8], file: &[u8]) -> Option<(usize, u32, u32)> {
+    let word = |s: &[u8], at: usize| -> u32 {
+        let mut w = [0u8; 4];
+        for (i, out) in w.iter_mut().enumerate() {
+            *out = s.get(at + i).copied().unwrap_or(0);
+        }
+        u32::from_le_bytes(w)
+    };
+    (0..built.len().max(file.len()))
+        .step_by(4)
+        .map(|at| (at, word(built, at), word(file, at)))
+        .find(|&(at, b, f)| b != f && !(b == 0 && zeroed_by_experiment(at)))
 }
 
 /// Builds the record into `out` (zeroed first) from the device-tree inputs; the [`FROM_FILE`]
@@ -916,6 +964,42 @@ mod tests {
         assert_eq!(complement(313).unwrap(), (312.0f32 / 313.0).to_bits());
         assert_eq!(inv(9).unwrap(), (1.0f32 / 9.0).to_bits());
         assert!(inv(0).is_err());
+    }
+
+    #[test]
+    fn experiment() {
+        // Every experiment word is a FROM_FILE word; from_file leaves it zero; the cross-check
+        // tolerates the file's value there and nothing else.
+        assert!(EXPERIMENT.1.iter().all(|at| FROM_FILE.contains(at)));
+        let mut file = vec![0u8; SIZE];
+        for (k, &at) in FROM_FILE.iter().enumerate() {
+            put32(&mut file, at, 0x1000 + k as u32).unwrap();
+        }
+        let mut out = vec![0u8; SIZE];
+        from_file(&mut out, &file).unwrap();
+        for &at in FROM_FILE.iter() {
+            let expect = if EXPERIMENT.1.contains(&at) {
+                0
+            } else {
+                get(&file, at)
+            };
+            assert_eq!(get(&out, at), expect, "+{at:#x}");
+        }
+        let mut built = file.clone();
+        for &at in EXPERIMENT.1 {
+            put32(&mut built, at, 0).unwrap();
+        }
+        assert_eq!(cross_check(&built, &file), None);
+        put32(&mut built, EXPERIMENT.1[0], 1).unwrap();
+        assert_eq!(
+            cross_check(&built, &file),
+            Some((EXPERIMENT.1[0], 1, get(&file, EXPERIMENT.1[0])))
+        );
+        let mut built = file.clone();
+        put32(&mut built, 0x10, 0).unwrap();
+        assert_eq!(cross_check(&built, &file), None);
+        put32(&mut built, 0x10, 5).unwrap();
+        assert_eq!(cross_check(&built, &file), Some((0x10, 5, 0)));
     }
 
     #[test]
@@ -1279,10 +1363,9 @@ mod tests {
         let mut built = vec![0u8; SIZE];
         from_file(&mut built, file).unwrap();
         build(&mut built, &i).unwrap();
-        let diff = (0..SIZE)
-            .step_by(4)
-            .find(|&o| get(&built, o) != get(file, o))
-            .map(|o| (o, get(&built, o), get(file, o)));
-        assert_eq!(diff, None, "(offset, built, file)");
+        assert_eq!(cross_check(&built, file), None, "(offset, built, file)");
+        for &at in EXPERIMENT.1 {
+            assert_eq!(get(&built, at), 0);
+        }
     }
 }
