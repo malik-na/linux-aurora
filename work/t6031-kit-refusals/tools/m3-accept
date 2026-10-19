@@ -12,8 +12,8 @@
 # booted and the running boot is measured. Either way the run refuses a kernel that is not the
 # dev kernel (*-aurora-dev-silicon).
 # Then, on the M3: the native checks (N s each, default 5) with the GPU busy time around them
-# and the GPU's performance state (asahi-g15/pstate's first line) sampled every 100 ms during
-# them,
+# then the GPU's performance state (asahi-g15/pstate's first line) sampled every 100 ms during a
+# 10 s gpu-heat load,
 # kmscube on the panel (sddm stopped for it, restarted after) with the crtc present counters
 # around it, the G15/DCP kernel lines, the connectors and the engine statistics.
 # accept_verdict.py judges the collected text; the record goes to agent-docs
@@ -75,16 +75,22 @@ done
 
 echo "== checks"
 out=$(sudo -u naeem mktemp -d)
-samples=$out/pstate-samples sampler=
-if [ -r "$pstate" ]; then
-  # `pstate <index> freq_khz <kHz|unknown> source <stats|hwdata>`, one line per sample
-  ( while :; do head -1 "$pstate"; sleep 0.1; done ) >"$samples" 2>/dev/null &
-  sampler=$!
-fi
 b0=$(busy); t0=$(date +%s%N)
 sudo -u naeem "$P/bin/native-checks" "$out" "$secs" >/dev/null 2>&1
 t1=$(date +%s%N); b1=$(busy)
-if [ -n "$sampler" ]; then kill "$sampler"; wait "$sampler" 2>/dev/null; fi
+# The checks are many short jobs, too light for the firmware's DVFS to leave state 1: sample the
+# GPU's performance state during a 10 s sustained load (gpu-heat on zink) instead.
+samples=$out/pstate-samples sampler=
+if [ -r "$pstate" ] && [ -x "$P/bin/gpu-heat" ]; then
+  ( while :; do head -1 "$pstate"; sleep 0.1; done ) >"$samples" 2>/dev/null &
+  sampler=$!
+  sleep 0.5
+  heat=$(sudo -u naeem env MESA_LOADER_DRIVER_OVERRIDE=zink NATIVE_TIMEOUT=0 timeout -k 5 40 "$P/bin/native-run" "$P/bin/gpu-heat" 10 2048 2048 64 2>&1 | grep '^DONE' | tail -1)
+  kill "$sampler"; wait "$sampler" 2>/dev/null
+  # keep the samples taken while the load ran: drop leading and trailing idle (state 0) samples
+  awk '$1 == "pstate"' "$samples" | awk '{ l[NR] = $0; s[NR] = $2 } END { a = 1; while (a <= NR && s[a] == 0) a++; b = NR; while (b >= a && s[b] == 0) b--; for (i = a; i <= b; i++) print l[i] }' >"$samples.load"
+  mv "$samples.load" "$samples"
+fi
 grep '^VERDICT' "$out/summary.txt"
 for f in "$out"/*.log; do
   l=$(grep -E '^(PASS|FAIL):' "$f" | tail -1); [ -n "$l" ] && echo "$(basename "$f"): $l"
@@ -92,6 +98,7 @@ done
 grep -h '^# \(Device\|Renderer\)' "$out/summary.txt" | sed 's/^# /info: /'
 
 echo "== load"
+[ -n "${heat:-}" ] && echo "heat ${heat#DONE: }"
 awk -v b="$((b1 - b0))" -v t="$((t1 - t0))" 'BEGIN { printf "busy_pct %.1f\n", t ? 100 * b * 1000 / t : 0 }'
 if [ -n "$sampler" ] && grep -q '^pstate ' "$samples"; then
   echo "freq_source $(awk '$1 == "pstate" { print $6 }' "$samples" | sort | uniq -c | sort -rn | awk 'NR == 1 { print $2 }')"
