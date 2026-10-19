@@ -241,7 +241,18 @@ GREEN, 0 timeouts. The limit moved past 40 large groups (my prediction of ~28 wa
 footprint is below 3 MiB, or pages recycle within a dispatch). The cause of the ten-group limit was the compute
 UMA freelist holding only the first 8 of 22 pools (32 MiB). List and checks: below.
 
-LIST_PLACEHOLDER
+Larger probes: 1024 x 64, 128 and 256 groups GREEN (1.2-1.4 ms each): no limit left up to 256 large groups.
+**The 129-case VK hang list with stock Mesa: 129 Pass, 0 timeouts** (`results/20261019-deqp-hangs/gpu-poolseed-status.txt`),
+including the tessellation/geometry/indirect draws, `max_workgroup_memory.16`, the two small 16-bit
+`image_clearing` cases and `pipeline_barrier.graphics.transfer_dst_storage_image`, so the "indirect class" was the
+same cause (the tess prepass and indirect launches allocate from the same pool). native-checks: compute-check,
+vk-render-check, gl-render-check, gl-render-check-zink all pass; fail-stop 0 throughout.
+
+Fix proper and follow-ups: the commit on `t6031/compute-pool-seed` (7ef6475c) is the fix (every pool seeded;
+88 MiB). Open: whether the firmware or hardware can ask for more when 88 MiB is not enough (the J516C driver's
+pools grow); the Mesa 32x16 copy workaround is not needed; the `compute-pmgr` sizing (harmless, matches the
+J516C spacing) and `compute-fresh-off` are not part of the fix. GLES31 tess cases are expected to be the same
+cause and should be rerun with the baseline script.
 
 ## 9. Earlier candidate list (superseded by section 8 unless the boot says otherwise)
 
