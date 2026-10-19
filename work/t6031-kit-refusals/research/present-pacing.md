@@ -125,3 +125,79 @@ counter passed in. Also drop the forced `use_timestamps = false` comments
 (`:2478-2480`, `iomfb_v14_7.c:1322-1324`) for the internal role. The external
 role stays as it is. This reuses the timestamp rule that is already in the
 tree (`:2663-2681`), so no new firmware facts are needed.
+
+## Update 2026-10-19: fix test C hangs the DCP (silicon-18)
+
+What happened: with commit 0e0044eb (`origin/t6031/present-timestamps`),
+the first present at boot never completes. The 10 s queue watchdog
+(`iomfb.c:315-336`) fired at 11.745 s, so the swap went out at about 1.7 s.
+The watchdog line reads `cmd=0 oob=0 present=1 accepted=1 swap=5`: A407 was
+answered and accepted, no call is pending, and there is no RTKit crash. The
+firmware is alive, took the request, and never sends the D589 for it.
+
+### Facts that bear on why
+
+1. **The M3's counter runs at 1 GHz, not 24 MHz.** The M3 boot log says
+   `arch_timer: cp15 timer running at 1000.00MHz (phys)` and
+   `CPU: All CPU(s) started at EL2`. The timestamp rule in
+   `iomfb_flush()` (`iomfb_template.c:2663-2681`, from commit 38c14f61) was
+   worked out on M1/M2 with 12.x/13.x firmware. There the architected
+   counter is 24 MHz, the same tick as macOS mach time. `arch_timer_read_counter()`
+   reads that counter, and `swap_submit_timestamp` holds that counter at the
+   last A407 reply (`:2317`). On the M3 both values are 1 GHz ticks. If the DCP
+   reads `timestamp[*]` in 24 MHz mach ticks, every value lands about 41.7
+   times later than the current time, so the swap is held for a target
+   time far in the future. That matches "accepted, never completed, no
+   crash" exactly.
+2. **The values themselves did not matter before.** Commit 8bc015be (the
+   first 120 Hz fix) filled `ts1`/`ts2`/`ts3` (= `timestamp[0]`, `[1]`, `[6]`)
+   with the constant 120 and noted the DCP "does not seem to care ... as long
+   as they are non zero". On 13.x, small values in the past were enough to get
+   120 Hz.
+3. **Every working timestamp path also sent adaptive sync first.** The
+   non-14.7 power-on sends `set_parameter_dcp(IOMFBPARAM_ADAPTIVE_SYNC, 0)`
+   (`iomfb_template.c:1804-1817`), and the VRR modeset sends it plus a mode
+   reselect (`:2414-2431`). The 14.7 internal session sends neither: A440 is
+   not in its method table (`iomfb_v14_7.c:38-43`). No path has ever sent
+   timestamps without A440.
+4. **Offsets are not verified for 14.7.** `iomfb_v14_7.h:28-39` asserts
+   `flags1` at 0x40 and `swap_id` at 0x98, but nothing confirms that the 14.7
+   prefix still holds `timestamp[0..6]` at 0x00-0x37. The 0x48-byte gap is
+   modelled as opaque. A wrong offset would mean writing a counter into some
+   other field.
+5. Smaller point: 0e0044eb also stamps blank and brightness-only presents.
+   `iomfb_flush()` stamps only presents that have a surface. This cannot
+   explain the hang on the very first (fbcon) present.
+
+### Re-ranked
+
+- **H1' (leading): timestamps are what unlock 120 Hz, but the 14.7 DCP reads
+  them as mach-time targets, and the M3's 1 GHz counter puts them in the
+  future.** This explains both the hang and the old "any nonzero value"
+  result.
+- **H2' (next): 14.7 needs A440 adaptive sync (value 0) before it accepts
+  timestamped swaps.** If constant timestamps also hang, this is the
+  combination every working path used.
+- H1 as first stated (counter values, no A440) is falsified as a fix.
+- "14.7 needs zero timestamps" is weakened. A field the firmware ignored
+  could not stop it from completing, so the firmware does read these bytes.
+  Wrong offsets (fact 4) are still possible, and the next test checks for
+  them too.
+
+### Next single-change test (D): constant timestamps
+
+On top of 0e0044eb, change `iomfb_swap_timestamps_v14_7()` to write the
+constant 120 into `timestamp[0]`, `[1]` and `[6]` (the 8bc015be rule) and
+nothing else. Values in the past are safe in any clock domain.
+
+- Green (kmscube ~120 fps, `swap_ns_last` 8.4 ms or less): H1' confirmed. The
+  follow-up is the right domain, for example
+  `mult_frac(cnt, 24000000, arch_timer_get_cntfrq())`, tested as a separate
+  change (E).
+- Present completes but still 60: the fields are read but don't control
+  pacing. Go to H2' (A440 plus a mode reselect).
+- Hang again: the offsets are wrong (fact 4), or H2' is needed before any
+  nonzero value. Run E with all-zero timestamps plus A440 to separate the two.
+
+Measurement B (tracefs, above) is still worth running on silicon-16 before D.
+It costs no boot, and it shows whether the panel scans at 120 or at 60.

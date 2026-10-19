@@ -102,7 +102,10 @@ echo "== engine"
 cat "$stats"
 
 echo "== dmesg"
-dmesg | grep -E 'G15|GPU firmware|asahi|apple-dcp|apple-drm|apple_pmp|t6031-display|Kernel panic|watchdog' | grep -vi 'command line'
+# the kernel log of this boot: dmesg while it still holds the boot start, else the journal's
+# copy (its timestamps run later than the kernel's)
+klog() { if dmesg | grep -q 'G15: probing'; then dmesg; else journalctl -k -b -o short-monotonic --no-pager | sed "s/^\(\[ *[0-9.]*\]\) [^ ]* kernel: /\1 /"; fi; }
+klog | grep -E 'G15|GPU firmware|asahi|apple-dcp|apple-drm|apple_pmp|t6031-display|Kernel panic|watchdog' | grep -vi 'command line'
 echo "== head"
 echo "uname $(uname -r)"
 echo "package $(pacman -Q linux-aurora-dev)"
