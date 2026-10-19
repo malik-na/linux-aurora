@@ -202,8 +202,9 @@ group never completes). Small groups do not touch these buffers, which is why th
 **The change** (fork branch `t6031/compute-pmgr`, one commit on `t6031/silicon-g15c` 45338523): allocate the four
 buffers as one object sized from the configuration (A, A, B, 64 KiB at offsets 0, A, 2A, 2A + B), i.e.
 0x3c400/0x3c400/0x2000 for the J516C; the T6030 gets 0x1e400/0x1e400/0x1000 instead of 64 KiB x 3. Package
-built on the M3 as `linux-aurora-dev-7.1.12_aurora_dev_silicon-69` (`~/Projects/build-out/kernel-pmgr`), not
-installed; to be booted by Naeem. Success criterion: the probe's 1024 x 11 and 1024 x 16 complete GREEN, the
+built on the M3 (BUILD-OK 22:52): `~/Projects/build-out/kernel-pmgr/linux-aurora-dev-7.1.12_aurora_dev_silicon-2-pmgr69-aarch64.pkg.tar.xz`
+(pacman-pkg ignored KBUILD_REVISION, so its pkgver equals the installed silicon-2's; the file name carries the
+mark), not installed; to be booted by Naeem. Success criterion: the probe's 1024 x 11 and 1024 x 16 complete GREEN, the
 129-case list runs without timeouts (except the indirect/tess class if it is separate), the checks still pass.
 
 BOOT_RESULTS_PLACEHOLDER
