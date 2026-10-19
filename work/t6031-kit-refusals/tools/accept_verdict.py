@@ -17,6 +17,10 @@ check, any GPU fault/recovery line, eDP-1 missing, a refused present. Everything
 (fps, swap time, throughput, busy, clock) is recorded, never judged.
 """
 import re
+import sys
+
+MEASURED_KEYS = ("edp_mode", "edid_bytes", "kmscube_fps", "presents_per_s", "presents", "swap_ms_last",
+                 "swap_ms_max", "gpu_busy_pct", "gpu_freq_khz")
 
 CHECKS = ("compute-check", "vk-render-check", "gl-render-check", "gl-render-check-zink")
 
@@ -53,7 +57,7 @@ def sections(text):
     return out
 
 
-def kv(text):
+def key_values(text):
     return {k: v for k, v in re.findall(r"(\w+)=(\S+)", text)}
 
 
@@ -63,7 +67,7 @@ def private_lines(text):
 
 def evaluate(text):
     s = sections(text)
-    reasons, measured = [], {}
+    reasons, measured = [], dict.fromkeys(MEASURED_KEYS)
     dmesg = s.get("dmesg", "")
 
     milestones = []
@@ -75,6 +79,9 @@ def evaluate(text):
                 break
     if "READY" not in [n for n, _ in milestones]:
         reasons.append("no 'firmware at READY' in the kernel log")
+
+    if "admitted by g15_accept_text_prefix" in dmesg:
+        reasons.append("firmware build admitted by the accept-prefix escape")
 
     faults = [l.strip() for l in dmesg.splitlines() if FAULT.search(l)]
     if faults:
@@ -102,7 +109,6 @@ def evaluate(text):
     edp = [l.split() for l in s.get("drm", "").splitlines() if "-eDP-1" in l]
     if not edp or edp[0][1] != "connected":
         reasons.append("eDP-1 missing or not connected")
-        measured["edp_mode"], measured["edid_bytes"] = None, None
     else:
         f = edp[0]
         measured["edp_mode"] = next((x for x in f[2:] if re.fullmatch(r"\d+x\d+", x)), None)
@@ -111,8 +117,10 @@ def evaluate(text):
 
     fps = re.findall(r"\(([\d.]+) fps\)", s.get("kmscube", ""))
     measured["kmscube_fps"] = float(fps[-1]) if fps else None
+    if not re.search(r"^Rendered ", s.get("kmscube", ""), re.M):
+        reasons.append("kmscube rendered nothing")
 
-    crtc = kv(s.get("crtc", ""))
+    crtc = key_values(s.get("crtc", ""))
     measured["presents"] = int(crtc["presents"]) if "presents" in crtc else None
     measured["swap_ms_last"] = int(crtc["swap_ns_last"]) / 1e6 if "swap_ns_last" in crtc else None
     measured["swap_ms_max"] = int(crtc["swap_ns_max"]) / 1e6 if "swap_ns_max" in crtc else None
@@ -121,6 +129,14 @@ def evaluate(text):
             int(crtc["window_ns"]) / 1e9)
     else:
         measured["presents_per_s"] = None
+    if "crtc_file missing" in s.get("crtc", ""):
+        reasons.append("crtc_file missing: no crtc status file")
+    if "presents" not in crtc or "presents_before" not in crtc:
+        reasons.append("crtc presents or presents_before missing")
+    elif int(crtc["presents"]) <= int(crtc["presents_before"]):
+        reasons.append("crtc presents did not move during kmscube")
+    if int(crtc.get("crashed", 0)):
+        reasons.append("crtc status has crashed=" + crtc["crashed"])
     if int(crtc.get("refused", 0)):
         reasons.append(f"{crtc['refused']} refused present(s)")
 
@@ -152,8 +168,7 @@ def render(r, name, head):
     out += ["## Checks (completed runs in the window)", "", "| check | runs |", "|---|---|"]
     out += [f"| {c} | {n} |" for c, n in m["throughput"].items()] + [""]
     out += ["## Measured (recorded, not judged)", ""]
-    for k in ("edp_mode", "edid_bytes", "kmscube_fps", "presents_per_s", "presents", "swap_ms_last", "swap_ms_max",
-              "gpu_busy_pct", "gpu_freq_khz"):
+    for k in MEASURED_KEYS:
         v = m.get(k)
         out.append(f"- {k}: {'unavailable' if v is None else v}")
     out += ["", "## GPU fault/recovery lines", ""]
@@ -164,7 +179,6 @@ def render(r, name, head):
 def main(argv):
     """accept_verdict.py COLLECT NAME KEY=VALUE...: print the record; exit 0 on PASS, 1 on FAIL,
     3 if COLLECT holds private lines (nothing printed)."""
-    import sys
     text = open(argv[1]).read()
     if private_lines(text):
         print("refusing: the collected text holds private lines", file=sys.stderr)
@@ -176,5 +190,4 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    import sys
     sys.exit(main(sys.argv))

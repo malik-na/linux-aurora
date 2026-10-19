@@ -1,4 +1,7 @@
-"""Tests for accept_verdict: the J516C acceptance run's parser and verdict (malik-na/linux-aurora#54)."""
+"""Tests for accept_verdict: the J516C acceptance run's parser and verdict (malik-na/linux-aurora#54).
+
+Run: python3 -m unittest test_accept_verdict (from tools/).
+"""
 import unittest
 
 import accept_verdict as av
@@ -28,20 +31,29 @@ def section(name, body):
     return f"== {name}\n{body}"
 
 
+def good_crtc():
+    return good_parts()["crtc"]
+
+
 def good(**over):
+    parts = good_parts()
+    parts.update(over)
+    return "".join(section(k, v) for k, v in parts.items())
+
+
+def good_parts():
     parts = {
         "dmesg": DMESG_GOOD,
         "drm": "card0-Unknown disconnected\ncard2-eDP-1 connected 3456x2234 edid=0\n",
         "checks": checks(),
         "kmscube": "Rendered 600 frames in 10.001 sec (59.99 fps)\n",
-        "crtc": "presents=2621 brightness_presents=3 blank_presents=1 nits_presents=0 refused=0\n"
+        "crtc": "crashed=0 presents=2621 brightness_presents=3 blank_presents=1 nits_presents=0 refused=0\n"
         "last_swap_id=9 swap_ns_last=16012345 swap_ns_max=17000000\n"
         "presents_before=2021 window_ns=10000000000\n",
         "engine": "jobs 1000 job_cmds 1200 job_max 4 early 0 recoveries 0 hang_kills 0 clustered 3\n",
         "load": "busy_pct 97.5\nfreq_khz unavailable\n",
     }
-    parts.update(over)
-    return "".join(section(k, v) for k, v in parts.items())
+    return parts
 
 
 class Sections(unittest.TestCase):
@@ -109,6 +121,35 @@ class Verdict(unittest.TestCase):
     def test_refused_presents_fail(self):
         r = av.evaluate(good(crtc="presents=10 refused=2\nlast_swap_id=1 swap_ns_last=1 swap_ns_max=1\n"))
         self.assertEqual(r["verdict"], "FAIL")
+
+    def test_kmscube_rendered_nothing_fails(self):
+        r = av.evaluate(good(kmscube="failed to create the surface\n"))
+        self.assertEqual(r["verdict"], "FAIL")
+        self.assertTrue(any("kmscube" in x for x in r["reasons"]))
+
+    def test_presents_not_moving_fails(self):
+        for crtc in ("crashed=0 presents=2021 refused=0\npresents_before=2021 window_ns=10000000000\n",
+                     "crashed=0 presents=2021 refused=0\n",
+                     "crashed=0 refused=0\npresents_before=2021 window_ns=10000000000\n"):
+            r = av.evaluate(good(crtc=crtc))
+            self.assertEqual(r["verdict"], "FAIL", crtc)
+            self.assertTrue(any("presents" in x for x in r["reasons"]), crtc)
+
+    def test_crashed_crtc_fails(self):
+        r = av.evaluate(good(crtc=good_crtc().replace("crashed=0", "crashed=1")))
+        self.assertEqual(r["verdict"], "FAIL")
+        self.assertTrue(any("crashed" in x for x in r["reasons"]))
+
+    def test_accept_prefix_escape_fails(self):
+        line = "[ 3.3] asahi-g15 x.gpu: GPU firmware build admitted by g15_accept_text_prefix\n"
+        r = av.evaluate(good(dmesg=DMESG_GOOD + line))
+        self.assertEqual(r["verdict"], "FAIL")
+        self.assertIn("firmware build admitted by the accept-prefix escape", r["reasons"])
+
+    def test_crtc_file_missing_fails(self):
+        r = av.evaluate(good(crtc="crtc_file missing\npresents_before=1 window_ns=10000000000\n"))
+        self.assertEqual(r["verdict"], "FAIL")
+        self.assertTrue(any("crtc_file" in x for x in r["reasons"]))
 
 
 class Measured(unittest.TestCase):
