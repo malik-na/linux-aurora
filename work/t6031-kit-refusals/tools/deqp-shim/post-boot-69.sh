@@ -25,6 +25,6 @@ elif [ "$stage" = list ]; then
   cd ~/Projects/build-out/deqp-shim && sed "s|P=\$HOME/Projects/build-out/mesa-exp/opt|P=$P|" run_gpu_list.sh > run_gpu_list_stock.sh && chmod +x run_gpu_list_stock.sh && ./run_gpu_list_stock.sh hang.txt gpu-pmgr && awk '$1!=0' gpu-pmgr/status | wc -l && grep -c Pass gpu-pmgr/status
 elif [ "$stage" = checks ]; then
   [ "$(fs)" != 0 ] && { echo "FAIL-STOP - stop"; exit 9; }
-  $P/bin/native-checks 2>&1 | tail -20
+  $P/bin/native-checks ~/Projects/build-out/deqp-shim/checks-pmgr 5 2>&1 | tail -8
 fi
 echo "fail-stop $(fs); timeouts $(to)"
