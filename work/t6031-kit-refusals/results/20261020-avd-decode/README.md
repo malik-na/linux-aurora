@@ -60,3 +60,25 @@ via /dev/video0 [avd]", CAPTURE NV12).
   interrupts each, decoder drops 0, VO drops 1 (H.264) / 0 (HEVC).
 - Not confirmed: what the panel showed during zero-copy playback (camera was not facing the M3; the still was
   deleted). A wrong dmabuf format/modifier in zero-copy would not show in these counters.
+
+## Power and colour on a 4K clip (2026-10-20 03:35-03:55, lead)
+
+Clip: Naeem's ~/video.mp4 on the M3 (3840x2160 H.264 High, 23.976 fps, 41 s, BT.709 limited). Charger connected;
+power from the SMC hwmon "Total System Power" (power1), sampled every 0.5 s over 25 s of each 30 s run, mpv
+fullscreen in the Hyprland session, panel brightness unchanged. Two rounds:
+
+| run | system power | CPU (all cores) | AVD interrupts | dropped (VO/decoder) |
+|---|---|---|---|---|
+| idle desktop | 11.85 / 11.15 W | 2.4 / 1.7 % | 0 | - |
+| `--hwdec=vaapi` (zero-copy) | 11.18 / 11.00 W | 1.0 / 0.9 % | 1452 / 1452 | 0 / 0 |
+| `--hwdec=no` (software) | 15.04 / 15.01 W | 7.4 / 7.4 % | 0 | 0 / 0 |
+
+Hardware decode of 4K costs about nothing over the idle desktop; software decode about +3.5 to 4 W. 1452 interrupts
+in 30 s = 2 per frame at 24 fps (every frame on the AVD). The SMC "Heatpipe Power" reading varied 5.3-9.1 W with no
+pattern and is not used.
+
+Colour: `smptehdbars` 1920x1080 H.264, BT.709 limited, mpv fullscreen paused, screen captured with grim (3456x2234):
+- `--hwdec=vaapi` and `--hwdec=no` screenshots are byte-identical.
+- Bar centres on screen match FFmpeg's BT.709 limited-range reference conversion of the same frame within +-1 per
+  channel (dither): e.g. gray 99/101/101 vs 99/102/101, yellow 189/202/6 vs 189/202/5, green 14/223/4 vs 14/223/5,
+  blue 0/0/182 vs 0/0/181.
