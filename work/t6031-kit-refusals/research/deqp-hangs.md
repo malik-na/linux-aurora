@@ -221,6 +221,21 @@ showed that early halt persisted with the pointers zero, so it was the window bu
 fresh = false on the working stack (t82 run 7) was never run. Second candidate: the 32-bit
 `0xffffffff` word at compute work +0x7e0.
 
+**Boot result (kernel-pmgr2, fresh = false): not fixed either**; the same four probe cases hang, 1024 x 8 GREEN.
+Both per-cluster literals of the compute command are now as the J516C driver sends them, and the limit stays.
+
+**Candidate B (2026-10-19 late): the compute UMA freelist.** The compute UMA manager's freelist is seeded with
+the first 8 of the 22 compute pools only (8192 pages of 0x1000 bytes = 32 MiB; `fw/graph.rs` `SEEDED_POOLS`,
+`graph.rs` `ComputeGraph::init`). The J516C driver's compute pools also start at 8 chunks but its managers grow
+(render pools at 120-128 chunks in the login snapshot; private `pool-manager-20261013.md`), and the T8122 talk
+describes the page manager as hardware allocating 4 MiB chunks on demand, faulting from hardware when it runs
+out; our compute commands mask faults, so exhaustion would stall silently. This fits everything measured: large
+groups draw dynamic memory, small ones do not; ten fit (about 3 MiB each with a reserve); the eleventh of one
+dispatch starves; an eleventh from a second dispatch waits for the first dispatch's pages; no event but the
+timeout. Branch `t6031/compute-pool-seed` (one commit on silicon-g15c): seed all 22 pools (22528 pages).
+Prediction before the boot: the limit moves from 10 to about 28 groups of 1024 threads (11 and 16 GREEN, 40
+still hangs); unchanged = hypothesis wrong. If it moves, the fix proper sizes the pools for all forty cores.
+
 ## 9. Earlier candidate list (superseded by section 8 unless the boot says otherwise)
 
 ## 9 (continued). Where the ten-group limit comes from (kernel-side candidates, one per boot)
