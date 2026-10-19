@@ -188,6 +188,6 @@ pub(crate) const CONFIG: Config = Config {
         ptc: 0x6000400020,
         dupm: 0x3c000000140,
         reg_1a0e9: 0,
-        fresh: true,
+        fresh: false,
     },
 };
