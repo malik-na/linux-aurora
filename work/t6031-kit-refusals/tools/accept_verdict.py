@@ -10,17 +10,22 @@ The M3 side of m3-accept prints one text made of `== NAME` sections:
   crtc     the apple-drm crtc status file after kmscube (presents=, refused=, swap_ns_last=),
            plus `presents_before=N window_ns=N` around the kmscube run
   engine   the asahi-g15 engine statistics file (recoveries, hang_kills)
-  load     `busy_pct P` and `freq_khz K|unavailable` under a sustained load
+  load     under the sustained load of the checks: `busy_pct P`; from the asahi-g15/pstate
+           file sampled every 100 ms, `freq_source stats|hwdata`, `freq_khz_samples K...`
+           (kHz or `unknown` per sample) and `pstate_samples I...`; `freq_khz unavailable`
+           without that file
 
 evaluate() judges only what #54 names: no READY, any wrong word or pixel, a failed or missing
 check, any GPU fault/recovery line, eDP-1 missing, a refused present. Everything measured
 (fps, swap time, throughput, busy, clock) is recorded, never judged.
 """
 import re
+import statistics
 import sys
 
 MEASURED_KEYS = ("edp_mode", "edid_bytes", "kmscube_fps", "presents_per_s", "presents", "swap_ms_last",
-                 "swap_ms_max", "gpu_busy_pct", "gpu_freq_khz")
+                 "swap_ms_max", "gpu_busy_pct", "gpu_freq_khz_max", "gpu_freq_khz_median",
+                 "gpu_freq_samples", "gpu_pstate_max", "gpu_pstate_source")
 
 CHECKS = ("compute-check", "vk-render-check", "gl-render-check", "gl-render-check-zink")
 
@@ -63,6 +68,29 @@ def key_values(text):
 
 def private_lines(text):
     return [l for l in text.splitlines() if any(p.search(l) for p in PRIVATE)]
+
+
+def numbers(text):
+    """The non-negative integers among the words of `text` (others, e.g. `unknown`, skipped)."""
+    return [int(w) for w in text.split() if w.isdigit()]
+
+
+def load_clock(load):
+    """The clock measurements of the `load` section's key -> rest-of-line map: the max and the
+    median (the lower middle sample, so an observed operating point) of the frequency samples,
+    their count, the highest state index and the state's source; all None without a sample."""
+    out = dict.fromkeys(("gpu_freq_khz_max", "gpu_freq_khz_median", "gpu_freq_samples",
+                         "gpu_pstate_max", "gpu_pstate_source"))
+    khz = numbers(load.get("freq_khz_samples", "")) or numbers(load.get("freq_khz", ""))
+    if not khz:
+        return out
+    out["gpu_freq_khz_max"] = max(khz)
+    out["gpu_freq_khz_median"] = statistics.median_low(khz)
+    out["gpu_freq_samples"] = len(khz)
+    ps = numbers(load.get("pstate_samples", ""))
+    out["gpu_pstate_max"] = max(ps) if ps else None
+    out["gpu_pstate_source"] = load.get("freq_source", "").strip() or None
+    return out
 
 
 def evaluate(text):
@@ -144,10 +172,10 @@ def evaluate(text):
     if int(eng.get("recoveries", 0)) or int(eng.get("hang_kills", 0)):
         reasons.append(f"engine: {eng.get('recoveries', 0)} recoveries, {eng.get('hang_kills', 0)} hang kills")
 
-    load = dict(l.split(None, 1) for l in s.get("load", "").splitlines() if " " in l)
+    load = {f[0]: f[1] if len(f) > 1 else "" for f in
+            (l.split(None, 1) for l in s.get("load", "").splitlines()) if f}
     measured["gpu_busy_pct"] = float(load["busy_pct"]) if "busy_pct" in load else None
-    fk = load.get("freq_khz", "").strip()
-    measured["gpu_freq_khz"] = int(fk) if fk.isdigit() else None
+    measured.update(load_clock(load))
 
     return {
         "verdict": "FAIL" if reasons else "PASS",

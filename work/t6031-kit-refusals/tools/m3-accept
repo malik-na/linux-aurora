@@ -11,7 +11,9 @@
 # parameters, so such a boot runs without apple_t6031_display.enable=1. With --no-boot nothing is
 # booted and the running boot is measured. Either way the run refuses a kernel that is not the
 # dev kernel (*-aurora-dev-silicon).
-# Then, on the M3: the native checks (N s each, default 5) with the GPU busy time around them,
+# Then, on the M3: the native checks (N s each, default 5) with the GPU busy time around them
+# and the GPU's performance state (asahi-g15/pstate's first line) sampled every 100 ms during
+# them,
 # kmscube on the panel (sddm stopped for it, restarted after) with the crtc present counters
 # around it, the G15/DCP kernel lines, the connectors and the engine statistics.
 # accept_verdict.py judges the collected text; the record goes to agent-docs
@@ -57,6 +59,7 @@ set -u
 secs=$1
 P=/opt/mesa-m3-g15c-native
 stats=/sys/kernel/debug/asahi-g15/stats
+pstate=/sys/kernel/debug/asahi-g15/pstate
 busy() { awk '/^(compute|render|mixed):/ { for (i = 1; i < NF; i++) if ($i == "busy_us") s += $(i + 1) } END { print s + 0 }' "$stats"; }
 conn=$(ls -d /sys/class/drm/card*-eDP-1 2>/dev/null | head -1)
 card=${conn##*/}; card=${card%%-*}
@@ -72,9 +75,16 @@ done
 
 echo "== checks"
 out=$(sudo -u naeem mktemp -d)
+samples=$out/pstate-samples sampler=
+if [ -r "$pstate" ]; then
+  # `pstate <index> freq_khz <kHz|unknown> source <stats|hwdata>`, one line per sample
+  ( while :; do head -1 "$pstate"; sleep 0.1; done ) >"$samples" 2>/dev/null &
+  sampler=$!
+fi
 b0=$(busy); t0=$(date +%s%N)
 sudo -u naeem "$P/bin/native-checks" "$out" "$secs" >/dev/null 2>&1
 t1=$(date +%s%N); b1=$(busy)
+if [ -n "$sampler" ]; then kill "$sampler"; wait "$sampler" 2>/dev/null; fi
 grep '^VERDICT' "$out/summary.txt"
 for f in "$out"/*.log; do
   l=$(grep -E '^(PASS|FAIL):' "$f" | tail -1); [ -n "$l" ] && echo "$(basename "$f"): $l"
@@ -83,7 +93,13 @@ grep -h '^# \(Device\|Renderer\)' "$out/summary.txt" | sed 's/^# /info: /'
 
 echo "== load"
 awk -v b="$((b1 - b0))" -v t="$((t1 - t0))" 'BEGIN { printf "busy_pct %.1f\n", t ? 100 * b * 1000 / t : 0 }'
-echo "freq_khz unavailable"
+if [ -n "$sampler" ] && grep -q '^pstate ' "$samples"; then
+  echo "freq_source $(awk '$1 == "pstate" { print $6 }' "$samples" | sort | uniq -c | sort -rn | awk 'NR == 1 { print $2 }')"
+  echo "freq_khz_samples $(awk '$1 == "pstate" { printf "%s ", $4 }' "$samples")"
+  echo "pstate_samples $(awk '$1 == "pstate" { printf "%s ", $2 }' "$samples")"
+else
+  echo "freq_khz unavailable"
+fi
 
 echo "== kmscube"
 sddm=$(systemctl is-active sddm || true)

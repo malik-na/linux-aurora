@@ -162,7 +162,8 @@ class Measured(unittest.TestCase):
         self.assertEqual(m["presents"], 2621)
         self.assertEqual(m["throughput"]["compute-check"], 10750)
         self.assertAlmostEqual(m["gpu_busy_pct"], 97.5)
-        self.assertIsNone(m["gpu_freq_khz"])
+        self.assertIsNone(m["gpu_freq_khz_max"])
+        self.assertIsNone(m["gpu_freq_khz_median"])
         self.assertEqual(m["edp_mode"], "3456x2234")
         self.assertEqual(m["edid_bytes"], 0)
 
@@ -173,6 +174,56 @@ class Measured(unittest.TestCase):
 
     def test_presents_per_second_from_the_counter_delta(self):
         self.assertAlmostEqual(av.evaluate(good())["measured"]["presents_per_s"], 60.0)
+
+    def test_freq_unavailable_without_the_pstate_file(self):
+        m = av.evaluate(good(load="busy_pct 97.5\nfreq_khz unavailable\n"))["measured"]
+        for k in ("gpu_freq_khz_max", "gpu_freq_khz_median", "gpu_freq_samples", "gpu_pstate_max",
+                  "gpu_pstate_source"):
+            self.assertIsNone(m[k], k)
+
+    def test_freq_max_and_median_of_the_samples(self):
+        load = ("busy_pct 97.5\nfreq_source stats\n"
+                "freq_khz_samples 1380000 338000 1312000 1380000 0\n"
+                "pstate_samples 8 1 7 8 0\n")
+        r = av.evaluate(good(load=load))
+        self.assertEqual(r["verdict"], "PASS")
+        m = r["measured"]
+        self.assertEqual(m["gpu_freq_khz_max"], 1380000)
+        self.assertEqual(m["gpu_freq_khz_median"], 1312000)
+        self.assertEqual(m["gpu_freq_samples"], 5)
+        self.assertEqual(m["gpu_pstate_max"], 8)
+        self.assertEqual(m["gpu_pstate_source"], "stats")
+
+    def test_freq_median_is_an_observed_value(self):
+        load = "freq_source hwdata\nfreq_khz_samples 338000 1380000 1312000 1380000\n"
+        m = av.evaluate(good(load=load))["measured"]
+        self.assertEqual(m["gpu_freq_khz_median"], 1312000)
+        self.assertEqual(m["gpu_pstate_source"], "hwdata")
+        self.assertIsNone(m["gpu_pstate_max"])
+
+    def test_unknown_freq_samples_are_skipped(self):
+        m = av.evaluate(good(load="freq_khz_samples unknown 1380000 unknown\n"))["measured"]
+        self.assertEqual(m["gpu_freq_khz_max"], 1380000)
+        self.assertEqual(m["gpu_freq_samples"], 1)
+
+    def test_no_numeric_sample_is_unavailable(self):
+        for load in ("freq_khz_samples\n", "freq_khz_samples unknown unknown\n"):
+            m = av.evaluate(good(load=load))["measured"]
+            self.assertIsNone(m["gpu_freq_khz_max"], load)
+            self.assertIsNone(m["gpu_freq_khz_median"], load)
+
+    def test_a_single_freq_value_is_one_sample(self):
+        m = av.evaluate(good(load="freq_khz 1380000\n"))["measured"]
+        self.assertEqual(m["gpu_freq_khz_max"], 1380000)
+        self.assertEqual(m["gpu_freq_khz_median"], 1380000)
+        self.assertEqual(m["gpu_freq_samples"], 1)
+
+    def test_freq_is_recorded_not_judged(self):
+        r = av.evaluate(good(load="freq_khz_samples 0 0 338000\n"))
+        self.assertEqual(r["verdict"], "PASS")
+        md = av.render(r, name="x", head={})
+        self.assertIn("- gpu_freq_khz_max: 338000", md)
+        self.assertIn("- gpu_freq_khz_median: 0", md)
 
     def test_milestones_in_order(self):
         r = av.evaluate(good())
