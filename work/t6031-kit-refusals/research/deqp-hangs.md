@@ -396,3 +396,12 @@ no refusal = the scene was large and fits; refusals with the same position repea
 a runaway (then the fix is on the firmware-interaction side, e.g. the position/counter check, not the heap);
 refusals with advancing positions = the scene needs more than 512 MiB (then a per-scene cap and a partial
 render through userspace, or a still bigger heap).
+
+### 9.5 Outcome: pb-heap-512 (4a0f6292) on the full unfiltered dEQP run
+
+VK 706 pass / 2 fail, GLES3 948 pass / 7 flaky depth_stencil, GLES31 796 pass / 1 fail / 0 crash; no fail-stop,
+0 recoveries, 0 refusals, PB peak 2884 of 4096 blocks, 0 answers past the firmware maximum (3072): the scene
+that hit 2048 was a large scene, not a runaway (record `results/20261020-003900-deqp-full-pbheap512/README.md`).
+The #69 series on the fork is therefore: `compute-pool-seed` (the hang cause), `pb-refusal-bound` (livelock to
+recovery), `pb-soft-max` (headroom for partial renders), `pb-heap-512` (the heap). Commit-message wording per
+ADR 0001 and the PR path are Naeem's.
