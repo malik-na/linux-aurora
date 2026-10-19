@@ -3176,6 +3176,29 @@ void iomfb_present_backlight_v14_7(struct apple_dcp *dcp)
 }
 
 /*
+ * Swap timestamps for the built-in panel, by the rule iomfb_flush() applies
+ * to its ProMotion panels: now, the previous accepted swap, now.  Run after
+ * the request is encoded, since the encoder zeroes the whole request.
+ */
+static void iomfb_swap_timestamps_v14_7(struct apple_dcp *dcp,
+					struct dcp_swap_submit_req_v14_7 *req)
+{
+	u64 timestamp, submit_timestamp;
+
+	if (!dcp->main_display)
+		return;
+
+	timestamp = arch_timer_read_counter();
+	submit_timestamp = dcp->swap_submit_timestamp;
+	if (!submit_timestamp)
+		submit_timestamp = timestamp;
+
+	req->swap.timestamp[0] = timestamp;
+	req->swap.timestamp[1] = submit_timestamp;
+	req->swap.timestamp[6] = timestamp;
+}
+
+/*
  * Complete a request just before A407: the single-surface invariant and the
  * level the backlight policy has to present.  False fails the present
  * without sending it.
@@ -3196,6 +3219,7 @@ bool iomfb_swap_prepare_v14_7(struct apple_dcp *dcp,
 		dcp->iomfb_v14_7.refused++;
 		return false;
 	}
+	iomfb_swap_timestamps_v14_7(dcp, req);
 	if (!dcp_backlight_active(dcp))
 		return true;
 	if (!transaction)
@@ -3218,6 +3242,7 @@ bool iomfb_swap_prepare_v14_7(struct apple_dcp *dcp,
 		swap_id = req->swap.swap_id;
 		iomfb_v14_7_encode_present(req, NULL);
 		req->swap.swap_id = swap_id;
+		iomfb_swap_timestamps_v14_7(dcp, req);
 		dcp->iomfb_v14_7.blank = true;
 	}
 	if (iomfb_v14_7_encode_nits(req, true, present.nits))
