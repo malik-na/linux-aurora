@@ -1,0 +1,15 @@
+kernel: 7.1.12-aurora-dev-silicon
+Mon Oct 19 18:27:21 IST 2026
+deqp: vulkan-cts-1.4.7.0
+jobs=2 timeout=30 suites=vk gles3 gles31
+skipped by /home/naeem/Projects/deqp/deqp-exclude.txt: 146 patterns
+   957 /home/naeem/Projects/build-out/deqp-results/silicon22/lists/gles3.txt
+   787 /home/naeem/Projects/build-out/deqp-results/silicon22/lists/gles31.txt
+  1209 /home/naeem/Projects/build-out/deqp-results/silicon22/lists/vk.txt
+  2953 total
+=== vk start 18:27:21
+=== vk end 18:27:27
+=== gles3 start 18:27:27
+=== gles3 end 18:27:37
+=== gles31 start 18:27:37
+=== gles31 end 18:28:11

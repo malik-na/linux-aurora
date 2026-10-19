@@ -1,0 +1,173 @@
+# deqp-runner --skips file for the M3 Max (G15C) dEQP baseline, ticket malik-na/linux-aurora#67.
+# Source: silicon-20 run of 2026-10-19 (results/silicon20), analysis in ../research/deqp-failstop.md.
+# One regex per line, '#' lines are comments. Use: deqp-runner run ... --skips deqp-exclude.txt
+#
+# Section A (active): every test that hung the GPU (firmware timeout -> recovery) in that run.
+# Each one hung on its first attempt and again on deqp-runner's retry, so the hangs are
+# deterministic for these exact cases. The baseline lists are deterministic (every Nth test),
+# so skipping these names removes every hang seen with the same lists.
+
+# A1. Vulkan: the 129 VK "Crash" results (all VK_ERROR_DEVICE_LOST from a GPU timeout)
+^dEQP-VK\.api\.copy_and_blit\.copy_commands2\.blit_image\.all_formats\.color\.3d\.r16g16_sfloat\.r16g16_sfloat\.optimal_optimal_linear_stripes_z$
+^dEQP-VK\.api\.copy_and_blit\.copy_commands2\.blit_image\.all_formats\.generate_mipmaps\.from_base_level\.layercount_6\.a8b8g8r8_srgb_pack32\.general_optimal_nearest$
+^dEQP-VK\.api\.copy_and_blit\.copy_commands2\.blit_image\.all_formats\.generate_mipmaps\.from_previous_level\.layercount_6\.r32g32b32a32_sfloat\.general_general_linear$
+^dEQP-VK\.api\.copy_and_blit\.core\.blit_image\.all_formats\.color\.3d\.a8b8g8r8_srgb_pack32\.a8b8g8r8_srgb_pack32\.optimal_general_nearest_stripes_y$
+^dEQP-VK\.api\.copy_and_blit\.core\.blit_image\.all_formats\.generate_mipmaps\.from_previous_level\.layercount_6\.b10g11r11_ufloat_pack32\.optimal_general_nearest$
+^dEQP-VK\.api\.copy_and_blit\.core\.blit_image\.simple_tests\.scaling_and_offset_3d\.nearest$
+^dEQP-VK\.api\.copy_and_blit\.core\.image_to_image\.all_formats\.color\.3d_to_3d\.a1b5g5r5_unorm_pack16\.a1b5g5r5_unorm_pack16\.general_general$
+^dEQP-VK\.api\.copy_and_blit\.dedicated_allocation\.blit_image\.all_formats\.color\.3d\.r16g16_snorm\.r16g16_snorm\.optimal_optimal_nearest_stripes_x$
+^dEQP-VK\.api\.copy_and_blit\.dedicated_allocation\.blit_image\.all_formats\.generate_mipmaps\.from_previous_level\.layercount_6\.r5g6b5_unorm_pack16\.optimal_general_linear$
+^dEQP-VK\.api\.image_clearing\.core\.clear_color_attachment\.multiple_layers\.r8g8_srgb_200x180_sample_count_2$
+^dEQP-VK\.api\.image_clearing\.core\.clear_color_attachment\.single_layer\.r32_uint_200x180_sample_count_4$
+^dEQP-VK\.api\.image_clearing\.core\.clear_color_image\.2d\.optimal\.remaining_array_layers\.r8g8_unorm_1x33_clamp_input$
+^dEQP-VK\.api\.image_clearing\.core\.clear_color_image\.2d\.optimal\.single_layer\.a1b5g5r5_unorm_pack16_64x11_multiple_subresourcerange$
+^dEQP-VK\.api\.image_clearing\.core\.clear_color_image\.2d\.optimal\.single_layer\.r32_sint_200x180_multiple_subresourcerange$
+^dEQP-VK\.api\.image_clearing\.core\.partial_clear_color_attachment\.single_layer\.a8b8g8r8_unorm_pack32$
+^dEQP-VK\.api\.image_clearing\.dedicated_allocation\.clear_color_image\.2d\.linear\.single_layer\.a2b10g10r10_sint_pack32_200x180$
+^dEQP-VK\.api\.image_clearing\.dedicated_allocation\.clear_color_image\.2d\.optimal\.multiple_layers\.a8b8g8r8_sint_pack32_200x180$
+^dEQP-VK\.api\.image_clearing\.dedicated_allocation\.clear_color_image\.2d\.optimal\.remaining_array_layers\.b8g8r8a8_unorm_200x180$
+^dEQP-VK\.api\.image_clearing\.dedicated_allocation\.clear_color_image\.2d\.optimal\.single_layer\.a4b4g4r4_unorm_pack16$
+^dEQP-VK\.api\.image_clearing\.dedicated_allocation\.clear_color_image\.2d\.optimal\.single_layer\.r5g5b5a1_unorm_pack16_sample_count_4$
+^dEQP-VK\.api\.image_clearing\.dedicated_allocation\.clear_color_image\.3d\.optimal\.single_layer\.r8_srgb_200x180x16$
+^dEQP-VK\.api\.image_clearing\.dedicated_allocation\.partial_clear_color_attachment\.cube_layers\.b5g5r5a1_unorm_pack16_clamp_input$
+^dEQP-VK\.compute\.pipeline\.zero_initialize_workgroup_memory\.max_workgroup_memory\.16$
+^dEQP-VK\.draw\.dynamic_rendering\.complete_secondary_cmd_buff\.multi_draw\.mosaic\.indexed_random\.one_draw\.standard_stride\.1_instance\.with_tess\.single_view\.offset_6_no_draw_id$
+^dEQP-VK\.draw\.dynamic_rendering\.partial_secondary_cmd_buff\.indirect_draw\.indexed_data_from_compute_bind_offset_16_alloc_offset_16\.indirect_draw_param_count_instanced\.first_instance\.triangle_list$
+^dEQP-VK\.draw\.dynamic_rendering\.partial_secondary_cmd_buff\.multi_draw\.mosaic\.indexed_random\.one_draw\.standard_stride\.1_instance\.tess_geom\.multiview\.no_offset$
+^dEQP-VK\.draw\.dynamic_rendering\.partial_secondary_cmd_buff\.shader_viewport_index\.tessellation_shader_10$
+^dEQP-VK\.draw\.dynamic_rendering\.primary_cmd_buff\.basic_draw\.draw_indirect\.triangle_strip_with_adjacency\.45_multi_command_multi_draw$
+^dEQP-VK\.draw\.dynamic_rendering\.primary_cmd_buff\.indirect_draw\.indexed_data_from_compute_alloc_offset_16\.indirect_draw_count_instanced\.no_first_instance\.triangle_list_multi_draw$
+^dEQP-VK\.draw\.dynamic_rendering\.primary_cmd_buff\.inverted_depth_ranges\.nodepthclamp_deltasmall_bias_clamp_pos$
+^dEQP-VK\.draw\.dynamic_rendering\.primary_cmd_buff\.multi_draw\.mosaic\.indexed_mixed\.one_draw\.stride_extra_12\.1_instance\.with_tess\.single_view\.no_offset$
+^dEQP-VK\.draw\.dynamic_rendering\.primary_cmd_buff\.multi_draw\.mosaic\.indexed_packed\.one_draw\.stride_extra_12\.10_instances\.with_tess\.multiview\.no_offset$
+^dEQP-VK\.draw\.dynamic_rendering\.primary_cmd_buff\.multi_draw\.mosaic\.indexed_packed\.one_draw\.stride_zero\.2_instances_base_3\.tess_geom\.single_view\.no_offset$
+^dEQP-VK\.draw\.dynamic_rendering\.primary_cmd_buff\.multi_draw\.mosaic\.indexed_random\.one_draw\.stride_extra_12\.1_instance\.tess_geom\.multiview\.no_offset$
+^dEQP-VK\.draw\.dynamic_rendering\.primary_cmd_buff\.multi_draw\.mosaic\.normal\.one_draw\.stride_zero\.1_instance\.tess_geom\.multiview\.no_offset$
+^dEQP-VK\.draw\.dynamic_rendering\.primary_cmd_buff\.multi_draw\.overlapping\.indexed_random\.16_draws\.stride_extra_12\.1_instance\.with_tess\.multiview\.no_offset$
+^dEQP-VK\.draw\.dynamic_rendering\.primary_cmd_buff\.shader_layer\.tessellation_shader_256$
+^dEQP-VK\.draw\.renderpass\.indirect_draw\.indexed_data_from_compute_bind_offset_16_alloc_offset_16\.indirect_draw_param_count\.triangle_strip$
+^dEQP-VK\.draw\.renderpass\.multi_draw\.mosaic\.indexed_packed\.16_draws\.stride_extra_12\.1_instance\.with_tess\.single_view\.no_offset$
+^dEQP-VK\.draw\.renderpass\.multi_draw\.mosaic\.indexed_random\.16_draws\.standard_stride\.10_instances\.with_tess\.multiview\.no_offset$
+^dEQP-VK\.draw\.renderpass\.multi_draw\.mosaic\.indexed_random\.16_draws\.stride_extra_4\.2_instances_base_3\.tess_geom\.single_view\.no_offset$
+^dEQP-VK\.draw\.renderpass\.multi_draw\.mosaic\.normal\.16_draws\.standard_stride\.2_instances_base_3\.tess_geom\.multiview\.no_offset$
+^dEQP-VK\.draw\.renderpass\.multi_draw\.overlapping\.indexed_packed\.one_draw\.stride_extra_4\.1_instance\.tess_geom\.multiview\.no_offset$
+^dEQP-VK\.draw\.renderpass\.multi_draw\.overlapping\.indexed_random\.one_draw\.stride_extra_4\.1_instance\.tess_geom\.single_view\.no_offset$
+^dEQP-VK\.draw\.renderpass\.multiple_clears_within_render_pass\.clear_clear_draw_c_r8g8b8a8_snorm_d_d32_sfloat_big_triangle$
+^dEQP-VK\.fragment_operations\.scissor\.lines\.crossing$
+^dEQP-VK\.fragment_operations\.scissor\.lines\.outside$
+^dEQP-VK\.fragment_operations\.scissor\.multi_viewport\.scissor_1$
+^dEQP-VK\.fragment_operations\.scissor\.multi_viewport\.scissor_11$
+^dEQP-VK\.fragment_operations\.scissor\.multi_viewport\.scissor_13$
+^dEQP-VK\.fragment_operations\.scissor\.multi_viewport\.scissor_15$
+^dEQP-VK\.fragment_operations\.scissor\.multi_viewport\.scissor_2$
+^dEQP-VK\.fragment_operations\.scissor\.multi_viewport\.scissor_4$
+^dEQP-VK\.fragment_operations\.scissor\.multi_viewport\.scissor_6$
+^dEQP-VK\.fragment_operations\.scissor\.multi_viewport\.scissor_8$
+^dEQP-VK\.fragment_operations\.scissor\.points\.inside$
+^dEQP-VK\.fragment_operations\.scissor\.points\.partially_inside$
+^dEQP-VK\.fragment_operations\.scissor\.triangles\.inside$
+^dEQP-VK\.fragment_operations\.scissor\.triangles\.partially_inside$
+^dEQP-VK\.glsl\.builtin\.function\.integer\.findMSB\.ivec3_mediump_tess_eval$
+^dEQP-VK\.glsl\.builtin\.function\.integer\.usubborrow\.uvec3_mediump_tess_eval$
+^dEQP-VK\.glsl\.derivate\.dfdx\.texture\.msaa4\.vec2_highp$
+^dEQP-VK\.glsl\.derivate\.dfdxfine\.output_store\.vec4_highp$
+^dEQP-VK\.glsl\.derivate\.dfdycoarse\.constant\.float$
+^dEQP-VK\.glsl\.derivate\.dfdyfine\.static_switch\.vec3_highp$
+^dEQP-VK\.glsl\.derivate\.fwidthcoarse\.fbo\.vec2_highp$
+^dEQP-VK\.glsl\.derivate\.fwidthfine\.texture\.msaa4\.vec4_highp$
+^dEQP-VK\.glsl\.indexing\.matrix_subscript\.mat4x2_static_loop_write_dynamic_loop_read_vertex$
+^dEQP-VK\.glsl\.indexing\.varying_array\.vec4_static_write_dynamic_read$
+^dEQP-VK\.glsl\.loops\.special\.do_while_uniform_iterations\.nested_tricky_dataflow_2_fragment$
+^dEQP-VK\.glsl\.loops\.special\.while_dynamic_iterations\.infinite_with_unconditional_break_last_vertex$
+^dEQP-VK\.glsl\.matrix\.add\.uniform\.mediump_mat3x2_mat3x2_vertex$
+^dEQP-VK\.glsl\.matrix\.div_assign\.mediump_mat2_float_vertex$
+^dEQP-VK\.glsl\.matrix\.mul\.dynamic\.highp_mat2x3_vec2_vertex$
+^dEQP-VK\.glsl\.matrix\.mul\.uniform\.highp_vec4_mat2x4_vertex$
+^dEQP-VK\.glsl\.matrix\.pre_decrement\.mediump_mat4_float_vertex$
+^dEQP-VK\.glsl\.matrix\.transpose\.dynamic\.highp_mat3_float_vertex$
+^dEQP-VK\.glsl\.operator\.binary_operator\.add_assign_effect\.mediump_float_vertex$
+^dEQP-VK\.glsl\.operator\.binary_operator\.bitwise_and_assign_result\.mediump_ivec4_int_fragment$
+^dEQP-VK\.glsl\.operator\.binary_operator\.bitwise_xor_assign_effect\.highp_ivec4_int_fragment$
+^dEQP-VK\.glsl\.operator\.binary_operator\.div_assign_effect\.mediump_vec3_vertex$
+^dEQP-VK\.glsl\.operator\.binary_operator\.left_shift_assign_effect\.highp_ivec3_vertex$
+^dEQP-VK\.glsl\.operator\.binary_operator\.mod\.mediump_uint_uvec4_fragment$
+^dEQP-VK\.glsl\.operator\.binary_operator\.mul_assign_effect\.mediump_ivec3_vertex$
+^dEQP-VK\.glsl\.operator\.binary_operator\.right_shift_assign_effect\.highp_ivec3_uvec3_fragment$
+^dEQP-VK\.glsl\.operator\.binary_operator\.sub\.mediump_uint_uvec4_fragment$
+^dEQP-VK\.glsl\.operator\.common_functions\.max\.highp_uvec2_vertex$
+^dEQP-VK\.glsl\.operator\.sequence\.no_side_effects\.highp_vec4_vertex$
+^dEQP-VK\.glsl\.operator\.unary_operator\.pre_decrement_effect\.mediump_float_vertex$
+^dEQP-VK\.glsl\.return\.output_write_in_func_dynamic_fragment$
+^dEQP-VK\.glsl\.struct\.uniform\.not_equal_fragment$
+^dEQP-VK\.glsl\.texture_functions\.texelfetchoffset_pcoffset\.repeat\.sampler1darray_float_fragment$
+^dEQP-VK\.glsl\.texture_functions\.textureclamp\.usampler1darray_bias_fragment$
+^dEQP-VK\.glsl\.texture_functions\.texturegradoffset\.mirrored_repeat\.sampler2dshadow_fragment$
+^dEQP-VK\.glsl\.texture_functions\.texturegradoffsetclamp\.clamp_to_edge\.sampler1d_fixed_fragment$
+^dEQP-VK\.glsl\.texture_functions\.texturegradoffsetclamp_pcoffset\.repeat\.isampler1darray_fragment$
+^dEQP-VK\.glsl\.texture_functions\.texturelodoffset\.clamp_to_edge\.isampler2darray_vertex$
+^dEQP-VK\.glsl\.texture_functions\.texturelodoffset\.mirrored_repeat\.usampler1d_vertex$
+^dEQP-VK\.glsl\.texture_functions\.texturelodoffset_pcoffset\.mirrored\.sampler3d_float_vertex$
+^dEQP-VK\.glsl\.texture_functions\.textureoffset\.repeat\.usampler1d_fragment$
+^dEQP-VK\.glsl\.texture_functions\.textureoffsetclamp_pcoffset\.repeat\.isampler1d_bias_fragment$
+^dEQP-VK\.glsl\.texture_functions\.textureprojgradoffset\.clamp_to_edge\.sampler3d_fixed_fragment$
+^dEQP-VK\.glsl\.texture_functions\.textureprojgradoffset_pcoffset\.clamp_to_edge\.usampler2d_vec3_fragment$
+^dEQP-VK\.glsl\.texture_functions\.textureprojlodoffset_pcoffset\.clamp_to_edge\.sampler2d_vec3_float_fragment$
+^dEQP-VK\.glsl\.texture_functions\.textureprojoffset\.clamp_to_edge\.sampler2dshadow_fragment$
+^dEQP-VK\.glsl\.texture_functions\.textureprojoffset_pcoffset\.clamp_to_border\.isampler2d_vec3_bias_fragment$
+^dEQP-VK\.glsl\.texture_functions\.textureprojoffset_pcoffset\.repeat\.sampler2dshadow_bias_fragment$
+^dEQP-VK\.memory\.pipeline_barrier\.graphics\.all\.65536_vertex_buffer_stride_2$
+^dEQP-VK\.memory\.pipeline_barrier\.graphics\.host_write_index_buffer\.1048576$
+^dEQP-VK\.memory\.pipeline_barrier\.graphics\.host_write_uniform_texel_buffer\.65536$
+^dEQP-VK\.memory\.pipeline_barrier\.graphics\.transfer_dst_storage_image\.8192$
+^dEQP-VK\.pipeline\.monolithic\.attachment_feedback_loop_layout\.misc\.no_color_draw$
+^dEQP-VK\.pipeline\.monolithic\.image\.suballocation\.sampling_type\.combined\.view_type\.1d\.format\.r10x6_unorm_pack16\.count_4\.size\.512x1$
+^dEQP-VK\.pipeline\.monolithic\.image\.suballocation\.sampling_type\.combined\.view_type\.1d_array\.format\.a1b5g5r5_unorm_pack16\.count_8\.size\.pipeline_protected_flag_512x1_array_of_6$
+^dEQP-VK\.pipeline\.monolithic\.image\.suballocation\.sampling_type\.combined\.view_type\.1d_array\.format\.r12x4g12x4_unorm_2pack16\.count_1\.size\.pipeline_protected_flag_127x1_array_of_6$
+^dEQP-VK\.pipeline\.monolithic\.image\.suballocation\.sampling_type\.combined\.view_type\.1d_array\.format\.r8_sint\.count_4\.size\.pipeline_protected_flag_512x1_array_of_6$
+^dEQP-VK\.pipeline\.monolithic\.sampler\.view_type\.1d_array\.format\.r4g4b4a4_unorm_pack16\.address_modes\.uvw_mode_clamp_to_edge_mode_clamp_to_border_mode_repeat$
+^dEQP-VK\.pipeline\.monolithic\.sampler\.view_type\.2d_array\.format\.astc_6x6_srgb_block\.address_modes\.uvw_mode_mirror_clamp_to_edge_mode_clamp_to_border_mode_mirrored_repeat$
+^dEQP-VK\.pipeline\.monolithic\.sampler\.view_type\.2d_array\.format\.b8g8r8a8_sint\.address_modes\.all_mode_clamp_to_border_custom_0011$
+^dEQP-VK\.pipeline\.monolithic\.sampler\.view_type\.2d_array\.format\.etc2_r8g8b8a1_unorm_block\.address_modes\.all_mode_clamp_to_border_custom_0000$
+^dEQP-VK\.pipeline\.monolithic\.sampler\.view_type\.2d_array\.format\.r16g16b16a16_sfloat\.address_modes\.all_mode_clamp_to_edge$
+^dEQP-VK\.pipeline\.monolithic\.sampler\.view_type\.2d_array\.format\.r8g8_sint\.address_modes\.all_mode_mirror_clamp_to_edge$
+^dEQP-VK\.pipeline\.monolithic\.sampler\.view_type\.2d_array\.format\.r8g8b8a8_unorm\.address_modes\.all_mode_clamp_to_border_transparent_black$
+^dEQP-VK\.pipeline\.monolithic\.sampler\.view_type\.3d\.format\.r16_unorm\.address_modes\.uvw_mode_repeat_mode_mirrored_repeat_mode_clamp_to_border$
+^dEQP-VK\.pipeline\.monolithic\.sampler\.view_type\.3d\.format\.r32g32b32_uint\.address_modes\.uvw_mode_repeat_mode_clamp_to_edge_mode_mirrored_repeat$
+^dEQP-VK\.pipeline\.monolithic\.sampler\.view_type\.3d\.format\.r8g8b8_uint\.address_modes\.uvw_mode_repeat_mode_mirror_clamp_to_edge_mode_mirror_clamp_to_edge$
+^dEQP-VK\.texture\.explicit_lod\.2d\.sizes\.32x32_nearest_nearest_mipmap_nearest_clamp$
+^dEQP-VK\.texture\.mipmap\.2d\.base_level\.nearest_nearest$
+^dEQP-VK\.texture\.mipmap\.3d\.min_lod\.linear_nearest$
+
+# A2. GLES31: the 16 tests that hung (8 Crash, 8 Fail), plus the test that hung at the fail-stop
+^dEQP-GLES31\.functional\.primitive_bounding_box\.wide_lines\.global_state\.vertex_geometry_fragment\.default_framebuffer_bbox_equal$
+^dEQP-GLES31\.functional\.primitive_bounding_box\.wide_points\.global_state\.vertex_tessellation_fragment\.fbo_bbox_larger$
+^dEQP-GLES31\.functional\.shaders\.builtin_functions\.common\.ceil\.vec2_lowp_geometry$
+^dEQP-GLES31\.functional\.shaders\.builtin_functions\.common\.floatbitstoint\.vec2_lowp_tess_eval$
+^dEQP-GLES31\.functional\.shaders\.builtin_functions\.common\.frexp\.float_highp_vertex$
+^dEQP-GLES31\.functional\.shaders\.builtin_functions\.common\.roundeven\.float_lowp_tess_eval$
+^dEQP-GLES31\.functional\.shaders\.builtin_functions\.common\.sign\.float_mediump_geometry$
+^dEQP-GLES31\.functional\.shaders\.builtin_functions\.common\.sign\.ivec4_mediump_tess_eval$
+^dEQP-GLES31\.functional\.shaders\.builtin_functions\.integer\.bitcount\.int_highp_tess_control$
+^dEQP-GLES31\.functional\.shaders\.builtin_functions\.integer\.bitfieldinsert\.int_mediump_tess_control$
+^dEQP-GLES31\.functional\.shaders\.builtin_functions\.integer\.bitfieldreverse\.ivec4_mediump_vertex$
+^dEQP-GLES31\.functional\.shaders\.builtin_functions\.integer\.findlsb\.uvec4_highp_fragment$
+^dEQP-GLES31\.functional\.shaders\.builtin_functions\.integer\.findmsb\.ivec2_mediump_tess_control$
+^dEQP-GLES31\.functional\.shaders\.builtin_functions\.integer\.uaddcarry\.uint_mediump_tess_control$
+^dEQP-GLES31\.functional\.shaders\.builtin_functions\.pack_unpack\.packunorm4x8_mediump_tess_control$
+^dEQP-GLES31\.functional\.tessellation\.user_defined_io\.per_vertex_block\.vertex_io_array_size_implicit\.quads_explicit_tcs_out_size$
+^dEQP-GLES31\.functional\.shaders\.opaque_type_indexing\.sampler\.const_literal\.tessellation_evaluation\.samplercubearray$
+
+# Section B (commented out): group regexes for a changed or larger caselist. Each group below hung
+# on most of the cases it ran (hung/ran in parentheses). Uncomment to keep a run away from them.
+# ^dEQP-VK\.glsl\.(operator|derivate|matrix|indexing|loops|return|struct|texture_functions)\.   (46/47)
+# ^dEQP-VK\.glsl\.builtin\.                         (2/7)
+# ^dEQP-VK\.fragment_operations\.scissor\.          (14/14)
+# ^dEQP-VK\.api\.image_clearing\.                   (13/25)
+# ^dEQP-VK\.memory\.pipeline_barrier\.graphics\.    (4/4)
+# ^dEQP-VK\.texture\.(mipmap|explicit_lod)\.        (3/3)
+# ^dEQP-VK\.draw\.(dynamic_rendering|renderpass)\.  (22/92)
+# ^dEQP-VK\.api\.copy_and_blit\..*blit_image\.      (9 of 107 copy_and_blit hung, mostly 3d / generate_mipmaps blits)
+# ^dEQP-VK\.pipeline\.monolithic\.(sampler|image\.suballocation)\.   (15/86 monolithic)
+# ^dEQP-GLES31\.functional\.shaders\.builtin_functions\.(common|integer|pack_unpack)\..*_(tess_eval|tess_control|geometry)$
+# ^dEQP-GLES31\.functional\.shaders\.opaque_type_indexing\..*tessellation
+# ^dEQP-GLES31\.functional\.primitive_bounding_box\.wide_(lines|points)\.

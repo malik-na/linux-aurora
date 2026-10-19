@@ -20,6 +20,7 @@ OUT=${1:?usage: $0 <output-dir>}
 JOBS=${JOBS:-2}
 TIMEOUT=${TIMEOUT:-30}
 SUITES=${SUITES:-"vk gles3 gles31"}
+SKIPS=${SKIPS:-$HOME/Projects/deqp/deqp-exclude.txt}   # tests that hang the G15C (research/deqp-failstop.md)
 B=$HOME/Projects/build-out/deqp
 D=$HOME/Projects/deqp
 RUNNER=$HOME/Projects/build-out/cargo/root/bin/deqp-runner
@@ -47,6 +48,12 @@ nth() { awk -v n="$1" 'NR % n == 1 || n == 1'; }   # nth N < file
   nth 300 < $MP/texture.txt; nth 300 < $MP/glsl.txt; } > "$L/vk.txt"
 { nth 50 < $GM/gles31-main.txt; grep -E '^dEQP-GLES31\.functional\.compute\.' $GM/gles31-main.txt | nth 4; } | sort -u > "$L/gles31.txt"
 { nth 80 < $GM/gles3-main.txt; grep -E '^dEQP-GLES3\.functional\.fragment_ops\.' $GM/gles3-main.txt | nth 8; } | sort -u > "$L/gles3.txt"
+# drop the tests that hang the G15C (anchored regexes, '#' comments); deqp-runner's own --skips misread the file
+if [ -s "$SKIPS" ]; then
+  grep -vE '^(#|$)' "$SKIPS" > "$L/skips.re"
+  for f in "$L"/vk.txt "$L"/gles3.txt "$L"/gles31.txt; do grep -vEf "$L/skips.re" "$f" > "$f.kept"; mv "$f.kept" "$f"; done
+  echo "skipped by $SKIPS: $(wc -l < "$L/skips.re") patterns" >> "$OUT/run-info.txt"
+fi
 wc -l "$L"/*.txt | tee -a "$OUT/run-info.txt"
 [ -n "${DRYRUN:-}" ] && { echo "dry run: lists only"; exit 0; }
 
@@ -60,11 +67,15 @@ run() {  # run <name> <binary> <caselist> [deqp args...]
   # kernel side: GPU faults/hangs during this suite (dmesg may need root; ignored if not allowed)
   { dmesg 2>/dev/null || sudo -n dmesg 2>/dev/null; } | grep -iE 'asahi|agx|gpu|fault|hang|timeout|oops|BUG' | tail -n 100 > "$OUT/$name.dmesg-gpu.txt"
 }
+# A fail-stopped GPU makes Mesa fall back to software rendering: stop rather than record those as GPU results.
+failstop() { { dmesg 2>/dev/null || sudo -n dmesg 2>/dev/null; } | grep -q 'G15: fail-stop'; }
+failstop && { echo "refusing: the G15 driver is already in fail-stop; reboot first" >&2; exit 1; }
 for s in $SUITES; do
   case $s in
     vk)     run vk     "$B/external/vulkancts/modules/vulkan/deqp-vk" "$L/vk.txt" ;;
     gles3)  run gles3  "$B/modules/gles3/deqp-gles3"   "$L/gles3.txt"  "${GLARGS[@]}" ;;
     gles31) run gles31 "$B/modules/gles31/deqp-gles31" "$L/gles31.txt" "${GLARGS[@]}" ;;
   esac
+  if failstop; then echo "=== STOPPED after $s: G15 fail-stop (GPU unusable until reboot); later suites not run" | tee -a "$OUT/run-info.txt"; break; fi
 done
 echo "done; results in $OUT (<suite>/results.csv, failures.csv, <suite>/*.qpa for failures)"
