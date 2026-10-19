@@ -1,7 +1,7 @@
 # Board data from the device tree: Globals and Power words (#55)
 
 Date: 2026-10-19. Branch `t6031/board-dt` on `malik-na/linux-aurora` (on `t6031/silicon-dcp`), commits
-`d192ec403d40` (template fill into a core-only submodule) and `222c47af99a3` (Globals and Power from the
+`d192ec403d40` (template fill into a core-only submodule) and `ffc5a66e371b` (Globals and Power from the
 device tree, cross-checked against the board file). Code: `drivers/gpu/drm/asahi/g15/board/words.rs`
 (core-only, host-tested), `board.rs` (`device_tree`), `initdata.rs` (`blob`: the cross-check).
 
