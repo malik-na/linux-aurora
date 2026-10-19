@@ -224,3 +224,6 @@ Spec malik-na/linux-aurora#53 (ready-for-agent). Tickets #54-#68, blocking edges
   iconidentify/siliconforest-linux#12; pstate and board-record changes next). Keep #363 open as the tested J516C
   reference; no rebase onto omacom#148 by us. #69 work in progress (forks t6031/compute-pool-seed 7ef6475c ->
   pb-refusal-bound 4ce31a06 -> pb-soft-max 8424e318 -> pb-heap-512 4a0f6292); none of it is on #363 yet.
+- 02:40 (Oct 20): #69 fixed and pushed to #363 (45338523..027bd762, 4 commits; regression record
+  20261020-023600-regress-hangfix). Installed default: silicon-30 (= 027bd762). PR body's gap line about the compute
+  hangs is now stale (Naeem to OK a body edit). Next asked: a Basecamp update report.
