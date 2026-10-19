@@ -180,3 +180,5 @@ Spec malik-na/linux-aurora#53 (ready-for-agent). Tickets #54-#68, blocking edges
 - #66: `research/external-displays.md`, decision "later".
 - In flight (subagents, hardware-free, own worktrees and M3 build dirs): #55 board data from DT (branch
   `t6031/board-dt`), #63 panel EDID (branch `t6031/panel-edid-silicon`). Boots stay with the lead session.
+- 17:30: #60 closed (only the stub 14.7 and macOSTest 14.8 chains start Linux; both pinned). Naeem: hold 65cd19c0 and
+  later fixes on the fork and add them to aurora-silicon/linux#363 as one batch (with #63/#55), not one by one.
