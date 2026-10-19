@@ -1,0 +1,125 @@
+#!/bin/bash
+# m3-accept: the J516C acceptance run (malik-na/linux-aurora#54), driven from the M1 Air.
+#
+#   m3-accept NAME [--no-boot] [--image FILE] [--secs N] [-- PARAM...]
+#
+# Boots the M3's dev slot (linux-aurora-dev, the default entry since 2026-10-18) through
+# m3-testboot with a proxy chainload of --image (default ~/m3-images/t35/boot.bin.gpu1-702),
+# unless --no-boot, which measures the running boot. Without PARAMs it is a plain reboot into
+# the default entry, with its own cmdline. With PARAMs m3-testboot arms m3-oneshot on the dev
+# kernel: that entry has the default cmdline, not the dev entry's, and m3-oneshot refuses the
+# dev entry's own parameters, so such a boot runs without apple_t6031_display.enable=1.
+# The run refuses a boot that is not the dev kernel (*-aurora-dev-silicon), which measures the running
+# boot. Then, on the M3: the native checks (N s each, default 5) with the GPU busy time around
+# them, kmscube on the panel (sddm stopped for it, restarted after) with the crtc present
+# counters around it, the G15/DCP kernel lines, the connectors and the engine statistics.
+# accept_verdict.py judges the collected text; the record goes to agent-docs
+# results/<time>-NAME-accept/ (README.md with the verdict on top, collect.txt). A collected text
+# with private lines (MAC addresses, serials) stays in ~/m3-results only.
+# Exit 0 on PASS, 1 on FAIL, 2 when the boot or the collection failed, 3 on private lines.
+set -euo pipefail
+
+TOOLS=$(cd "$(dirname "$0")" && pwd)
+RESULTS=$(cd "$TOOLS/../results" && pwd)
+SSH=(ssh -o BatchMode=yes -o ConnectTimeout=5 m3)
+die() { echo "m3-accept: $*" >&2; exit 2; }
+
+name=${1:-}; [[ -n $name && $name != -* ]] || die "usage: m3-accept NAME [--no-boot] [--image FILE] [--secs N] [-- PARAM...]"
+shift
+boot=1 image=$HOME/m3-images/t35/boot.bin.gpu1-702 secs=5 params=()
+while (($#)); do
+  case $1 in
+    --no-boot) boot=0; shift ;;
+    --image) image=$2; shift 2 ;;
+    --secs) secs=$2; shift 2 ;;
+    --) shift; params=("$@"); break ;;
+    *) die "unknown argument $1" ;;
+  esac
+done
+[[ $secs =~ ^[0-9]+$ ]] && ((secs >= 1 && secs <= 60)) || die "--secs must be 1..60"
+
+stamp=$(date +%Y%m%d-%H%M%S)
+priv=$HOME/m3-results/$stamp-$name-accept
+mkdir -p "$priv"
+
+if ((boot)); then
+  "$TOOLS/m3-testboot" "$name-accept" --image "$image" --source-entry linux-aurora-dev ${params[@]+-- "${params[@]}"} \
+    || die "the test boot failed (see ~/m3-results/*-$name-accept/run.log)"
+fi
+
+kernel=$("${SSH[@]}" uname -r) || die "no SSH to the M3"
+[[ $kernel == *-aurora-dev-silicon ]] || die "the M3 runs $kernel, not the dev kernel"
+
+"${SSH[@]}" "sudo -n bash -s $secs" >"$priv/collect.txt" 2>"$priv/collect.err" <<'EOF_M3' || die "collection failed: $(tail -3 "$priv/collect.err")"
+set -u
+secs=$1
+P=/opt/mesa-m3-g15c-native
+stats=/sys/kernel/debug/asahi-g15/stats
+busy() { awk '/^(compute|render|mixed):/ { for (i = 1; i < NF; i++) if ($i == "busy_us") s += $(i + 1) } END { print s + 0 }' "$stats"; }
+conn=$(ls -d /sys/class/drm/card*-eDP-1 2>/dev/null | head -1)
+card=${conn##*/}; card=${card%%-*}
+crtc=/sys/kernel/debug/dri/${card#card}/crtc-0/j514s
+
+echo "== drm"
+for c in /sys/class/drm/card*-*; do
+  echo "${c##*/} $(cat "$c/status" 2>/dev/null) $(head -1 "$c/modes" 2>/dev/null) edid=$(cat "$c/edid" 2>/dev/null | wc -c)"
+done
+
+echo "== checks"
+out=$(sudo -u naeem mktemp -d)
+b0=$(busy); t0=$(date +%s%N)
+sudo -u naeem "$P/bin/native-checks" "$out" "$secs" >/dev/null 2>&1
+t1=$(date +%s%N); b1=$(busy)
+grep '^VERDICT' "$out/summary.txt"
+for f in "$out"/*.log; do
+  l=$(grep -E '^(PASS|FAIL):' "$f" | tail -1); [ -n "$l" ] && echo "$(basename "$f"): $l"
+done
+grep -h '^# \(Device\|Renderer\)' "$out/summary.txt" | sed 's/^# /info: /'
+
+echo "== load"
+awk -v b="$((b1 - b0))" -v t="$((t1 - t0))" 'BEGIN { printf "busy_pct %.1f\n", t ? 100 * b * 1000 / t : 0 }'
+echo "freq_khz unavailable"
+
+echo "== kmscube"
+sddm=$(systemctl is-active sddm || true)
+[ "$sddm" = active ] && { systemctl stop sddm; sleep 3; }
+p0=$(sed -n 's/.*\bpresents=\([0-9]*\).*/\1/p' "$crtc"); k0=$(date +%s%N)
+timeout -k 3 30 env LD_LIBRARY_PATH=$P/lib GBM_BACKENDS_PATH=$P/lib/gbm LIBGL_DRIVERS_PATH=$P/lib/dri \
+  __EGL_VENDOR_LIBRARY_FILENAMES=$P/share/glvnd/egl_vendor.d/50_mesa.json \
+  /home/naeem/aurora-test/bin/kmscube -A -N -D "/dev/dri/$card" -c 1200 2>&1 | grep -E '^Rendered|^failed|rror:' | tail -4
+k1=$(date +%s%N)
+echo "== crtc"
+cat "$crtc" | grep -E '^(crashed|presents|last_swap_id)='
+echo "presents_before=$p0 window_ns=$((k1 - k0))"
+[ "$sddm" = active ] && systemctl start sddm
+
+echo "== engine"
+cat "$stats"
+
+echo "== dmesg"
+dmesg | grep -E 'G15|GPU firmware|asahi|apple-dcp|apple-drm|apple_pmp|t6031-display|Kernel panic|watchdog' | grep -vi 'command line'
+echo "== head"
+echo "uname $(uname -r)"
+echo "package $(pacman -Q linux-aurora-dev)"
+echo "params $(tr ' ' '\n' </proc/cmdline | grep -E '^(asahi|apple_|printk)' | tr '\n' ' ')"
+echo "mesa $(grep -h '^Version:' "$out"/gl-render-check.log | head -1)"
+rm -rf "$out"
+EOF_M3
+
+sha=$( { sha256sum "$image" 2>/dev/null || true; } | cut -c1-8)
+head=$(sed -n '/^== head$/,$p' "$priv/collect.txt" | tail -n +2)
+args=("kernel=$(sed -n 's/^uname //p' <<<"$head")" "package=$(sed -n 's/^package //p' <<<"$head")"
+      "mesa=$(sed -n 's/^mesa //p' <<<"$head")" "params=$(sed -n 's/^params //p' <<<"$head")"
+      "boot=$( ((boot)) && echo "test boot, chainloaded $sha" || echo "running boot (--no-boot)")"
+      "check window=$secs s each" "date=$(date -Iseconds)")
+rc=0
+python3 "$TOOLS/accept_verdict.py" "$priv/collect.txt" "$name" "${args[@]}" >"$priv/README.md" || rc=$?
+if ((rc == 3)); then
+  echo "m3-accept: private lines in the collection; the record stays in $priv" >&2; exit 3
+fi
+pub=$RESULTS/$stamp-$name-accept
+mkdir -p "$pub"
+cp "$priv/README.md" "$priv/collect.txt" "$pub/"
+sed -n '1,/^## Build/p' "$pub/README.md" | head -n -1
+echo "m3-accept: record $pub"
+exit "$rc"
