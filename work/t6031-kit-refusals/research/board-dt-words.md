@@ -164,3 +164,30 @@ write the DT value in `hwdata_a`.
   `board data: device-tree hardware record|Globals|Power differs from ... at +0x...: built ..., file ...`,
   `hardware record from the device tree: <why>`, `GPU node has no u32 apple,...`, `GPU operating point N has
   M voltage cells`.
+
+
+---
+
+# Part 3: 42 words shown unneeded (2026-10-19, branch `t6031/board-hw-32`)
+
+The two experiments proposed above were booted by the lead (records `results/20261019-191209-exp-zero-38-accept`
+and `results/20261019-191324-exp-zero-hwdatab-accept`): READY, all checks pass, 120 fps, 1380 MHz under
+`gpu-heat`, no faults. The permanent version (one commit on `t6031/board-hw-on-pstate`) drops them from
+`record::FROM_FILE`; `record::UNNEEDED` names them, the builder leaves them zero, the cross-check accepts
+the file's value there against a zero built word and still compares every other word. The dmesg line now
+reads `... (32 record words from the file, 42 file words left zero) ...`.
+
+| group | words | shown unneeded by |
+|---|---|---|
+| HwDataB +0x38..+0x638 block (27) and the two all-ones words +0x30d8/+0x30f0 | 29 | `20261019-191324-exp-zero-hwdatab-accept` |
+| the #38 tail readings: HwDataA +0x6d34 and the twelve singles after +0x6d80 | 13 | `20261019-191209-exp-zero-38-accept` |
+
+Caveat on the thirteen readings: the acceptance load runs about 10 s. If they are thermal calibration or
+limits, a long-term effect (throttling behaviour over minutes, a different steady-state temperature) would
+not show in that window; the acceptance run's clock readout under a longer load is where it would. #38 is
+otherwise closed by this: nothing of its thirteen words is in public code or in the images.
+
+**Remaining 32 file words** (`FROM_FILE`): the maximum power (1; needs the real power model), the MTR fast-die
+and alarm masks (6; untested replacement by the DT's 0x8080, the risky boot), the relative powers (7; follow
+the maximum power), the six sensor rows (18; need an m1n1 export of the aon-ptd table). Those four groups
+are what stands between the J516C and a boot without the board file.
