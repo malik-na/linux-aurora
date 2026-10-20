@@ -240,9 +240,9 @@ Why this is better than both A and a straight M1/M2 port, from the measurements:
 M1/M2 returns only when the queue dies); the synchronous path stays allocation-free (M1/M2 allocates while
 the firmware waits); and the per-boot accumulation that killed the 512 MiB heap today is reset at idle.
 
-### 3.3 Implementation (fork branch `t6031/pb-adaptive`, head c998bc9f on 027bd762)
+### 3.3 Implementation (fork branch `t6031/pb-adaptive`, head 7b335a74 on 027bd762)
 
-Four commits (d2c2bfb8, b01cca13, 473e4e87, c998bc9f), SOB only, host tests 12/12 (`tools/g15-host-tests/run.sh <tree>`), rustfmt clean, checkpatch
+Four commits (d2c2bfb8, b01cca13, 473e4e87, 7b335a74; c998bc9f was the first boot's head), SOB only, host tests 12/12 (`tools/g15-host-tests/run.sh <tree>`), rustfmt clean, checkpatch
 --strict: only the module-parameter description strings exceed 100 columns, as the existing ones do.
 Built on the M3 (`~/Projects/linux-pbadapt`, out dir `~/Projects/build-out/kernel-pbadapt`,
 `~/aurora-test/silicon/build-pbadapt{,-all}.sh`): three packages from the same commits, differing only in the
@@ -308,3 +308,27 @@ did not reach published without `map_heap` dropping it; design bug), or a shmem/
 What proves it better than today: RAM 32 MiB at idle and after heavy use against 512 MiB always (and
 256 MiB before 027bd762); the heavy test's three runs end where 027bd762 fail-stops; the full dEQP results
 unchanged; no new stall (`waits` small, no `left unanswered`, no `fail-stop`).
+
+## 4. Boot results (lead, 2026-10-20, packages of c998bc9f)
+
+- Idle about 2 min after boot, MemAvailable: 027bd762 42,940 MiB; r0 43,461 (+521 MiB); r1 43,470; r2 43,478.
+  The desktop runs on 64 blocks, 2 chunks, no growth.
+- r0: acceptance PASS; full unfiltered dEQP identical to §2 (VK 706/2, GLES3 955, GLES31 796/1), 0 fail-stop,
+  0 recoveries, 0 faults; `pb: 64/2884 ... chunks 24 waits 0 refills 22`, 282 requests.
+- r1: heavy test x3, 5 s apart: each ends in 1-2 s, 0 fail-stop; a reclaim after each run (InitBM at draw
+  423/481/545), posted back to 64, peak about 1484 per run, chunks stay 13. **No DEVCTL 0x11 was needed**: the
+  running firmware accepts the fresh InitBM. Full dEQP identical, 0 fail-stop, 4 reclaims in the run.
+- r2: run 1 reclaimed and freed (13 -> 2 chunks, MemAvailable back to idle - 77 MiB); after run 2 **no reclaim**
+  came before run 3 (stats 64/1484, chunks 13, reclaims 1); run 3 piled to 2784 blocks / 23 chunks; the second
+  reclaim came only at "idle 11997 ms". 0 fail-stop, 0 faults.
+
+### 4.1 The r2 miss: the idle clock was only started by a pass that found the flights already empty
+
+`note_idle` ran at the start of a poll pass whose flights were empty. The pass that retires the last flight
+returns "do not re-arm", so a later pass, and with it the idle timestamp, happened only when the one-jiffy
+backup work was still pending: a timing race, not a property of the freeing (the late reclaim's "idle
+11997 ms" dates the clock to the end of run 3, which did get its extra pass; run 2 did not). Fix (folded into
+the reclaim commit, head 7b335a74): the clock is a core type (`IdleClock`, host-tested with the r2 sequence:
+heavy scene, reclaim + free, refills in the next heavy scene, idle gap with a small job, the next arrival must
+reclaim) and is noted at the end of every poll pass and every publication as well as at a job's arrival.
+Package for the re-test: `pkgs/...-pbadapt-r2b-7b335a74...` (same plan as r2).
