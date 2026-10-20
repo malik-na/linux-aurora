@@ -535,3 +535,19 @@ slot-5 PB's C1 and manager image name slot 5's lists, none keeps slot 0's bases.
 as r0pq-c's: idle clean (0 failures), the §5.4 concurrency step with no fault at any list base and no
 first-prefix failure, VK equal to r2b, memory bounded. Fail: first-prefix failures with no fault = the
 per-queue TA words; faults at another fixed address = another global record names a per-PB object.
+
+### 5.10 Boot r0pq-d (602da306): per-VM PBs work under concurrency; two known-bad renders remain
+
+Idle clean. Concurrency (desktop + gpu-heat 30 + dEQP VK -j2): VK 706 Pass / 1 Fail / 1 Crash / 630 Skip
+(r2b: 706/2/0), gpu-heat 41,604 frames in 30 s, 2 prefix failures, 3 faults, no fail-stop; memory chunks 5,
+pbs 4, graves 0, MemAvailable 43,183 MiB. **Slot fact settled:** the firmware does not echo InitBM +0x8
+(requests say slot 0 for ctx 17); context routing is what works.
+
+The two failures are the two renders that fail on r2b too: `host_write_index_buffer.1048576` (now Crash:
+after its first two growth answers, a read of 0x70706ed940 by unit 0x3a) and
+`primitive_restart_index...dyn_prim_restart` (two reads at garbage VAs). 0x70706ed940 is not a PB block GVA:
+it is 4.9 MiB past pass slot 12's 2 MiB TPC area (0x7040000000 + 12 x 0x4000000), below the heap; the grant
+path maps a run before its records, producer and reply (`RunMap`, host-tested, sixth commit). So the two
+are the pre-existing render-correctness failures (#61) surfacing as faults under concurrency rather than
+per-VM PB defects; the control is the same concurrency run on r2b (one-PB driver). Packages from the sixth
+commit: `r0epq` (reclaim off) and `r2epq` (reclaim on), for the control's verdict and the §5.4 reclaim step.
