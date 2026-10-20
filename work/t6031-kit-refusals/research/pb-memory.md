@@ -519,3 +519,19 @@ allocated per slot used. Boot test (r0pq-c): the §5.4 concurrency step: pass = 
 no first-prefix timeouts, VK results equal to r2b's, graves bounded (pool chunks tracking live PBs +
 reserve + one grave chunk); fail with the same first-prefix timeouts but no faults = the per-queue TA words
 (+0x1c, 0x1c830, +0x77c, +0x878, legacy_empty) are next.
+
+### 5.9 Boot r0pq-c (2d82e5ec): the C1 record is the page-list address
+
+Memory now bounded (chunks 3, graves 2, created 95 / destroyed 94, MemAvailable 43,388 MiB). But 3 failures
+already at idle and, under concurrency, 89 prefix failures with 89 identical faults: "read unmapped va
+0x1074000000 ... ctx N", 1 ms after "ctx N gets a parameter buffer", on the new PB's first prefix. No record
+of ours carried that address any more except **C1** `{0x07400000, 4 * initial}` (initdata, written once):
+0x07400000 << 4 = 0x74000000 = compact(0x1074000000). C1's first word is the page list's address, not a
+constant; the firmware reads the page list where C1 says at InitBM. With one PB this never showed.
+
+Change (fifth commit): `c1_record(page_list_gva, initial)` and C1 written in every prefix that carries an
+InitBM (the priming prefix runs alone, so one C1 serves each PB in turn). Host test `records_per_slot`: a
+slot-5 PB's C1 and manager image name slot 5's lists, none keeps slot 0's bases. Package r0pq-d. Boot test:
+as r0pq-c's: idle clean (0 failures), the §5.4 concurrency step with no fault at any list base and no
+first-prefix failure, VK equal to r2b, memory bounded. Fail: first-prefix failures with no fault = the
+per-queue TA words; faults at another fixed address = another global record names a per-PB object.
