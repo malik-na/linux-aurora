@@ -551,3 +551,22 @@ path maps a run before its records, producer and reply (`RunMap`, host-tested, s
 are the pre-existing render-correctness failures (#61) surfacing as faults under concurrency rather than
 per-VM PB defects; the control is the same concurrency run on r2b (one-PB driver). Packages from the sixth
 commit: `r0epq` (reclaim off) and `r2epq` (reclaim on), for the control's verdict and the §5.4 reclaim step.
+
+### 5.11 Control on r2b: per-VM PBs do break the two heavy renders; the TA/FS record is per queue
+
+The identical concurrency test on r2b (one PB): VK 706 Pass / 2 Fail (image comparison, the same two
+tests) / 0 Crash, 0 failures, 0 faults. So per-VM PBs turn those two renders' wrong geometry into faults
+(a read 4.9 MiB past pass slot 12's TPC; garbage-VA reads). The per-VM PB design changed nothing in the
+pass slots, TPC sizing (`geo.tpc_bytes`), register #33, PBREQ or the manager maxima. What it did change is
+which firmware records are per PB: natively (hv §6) the TA command word +0x34 is **per queue** (records
+0x10800 apart) while the scene-list register and UMA managers are shared; our graph's `legacy_empty`
+(0x40 bytes, named by TA work +0x34 and FS work +0x38 of every render) is one record for every PB. A record
+named by both the TA and the FS of a render is the firmware's TA-to-FS handoff; shared across two managers,
+an FS can take up another render's tail pointers, which is what a read far past a small render's TPC by a
+heavy render looks like.
+
+Change (seventh commit): one such record per PB (`PbSet.legacy`, zeroed at the PB's initialization), named
+by that VM's TA and FS work; compute-only prefixes keep the graph's. Package r0pq-f. Boot test: the
+concurrency step; pass = VK 706/2 Fail/0 Crash as the r2b control, 0 faults; fail with the same two
+crashes = next candidates the per-queue slot-like TA words (+0x1c, 0x1c830, +0x77c, +0x878) and the stamp
+pointers (+0x864/+0x86c), then a per-PB scene list.
