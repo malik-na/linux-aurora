@@ -1,23 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-only OR MIT
 
-//! The PB growth ledger, its backing account and the growth-request checks.
+//! The per-PB growth ledger, the shared block pool, request routing and the idle clock.
 //!
-//! The firmware asks for more PB with an event of type 7 naming PB slot 0, the context of a
-//! published render, its request counter (P+0x60 before its increment), the TA position and the
-//! halt epoch; the host appends at most ten blocks of the heap to the block list and advances
-//! the block_ctl+4 producer (modulo K), then replies with DEVCTL 7. At the maximum the reply
+//! Each VM that renders has a PB of its own (a manager, lists and a [`Ledger`]); the firmware
+//! asks for more PB with an event of type 7 naming the PB's slot (the word the host wrote at
+//! InitBM +0x8: the VM's context), the context, its request counter (P+0x60 before its
+//! increment), the TA position and the halt epoch. [`route`] picks the PB from the slot and
+//! context words. The host appends at most ten blocks to that PB's block list and advances its
+//! block_ctl+4 producer (modulo K), then replies with DEVCTL 7. At the PB's maximum the reply
 //! refuses, and the firmware finishes the scene with partial renders. A request from before a
-//! halt (epoch) or not matching a published render prefix is left unanswered.
+//! halt (epoch) or not matching a published render prefix of its VM is left unanswered.
 //!
-//! The heap's VA range covers [`MAX_BLOCKS`] blocks but its RAM comes in chunks of
-//! [`CHUNK_BLOCKS`] blocks, backed on demand from the heap base: the ledger counts them as
-//! `backed`. A request is granted from the backed blocks above `posted`; a chunk is due
-//! ([`Ledger::refill_due`]) whenever fewer than [`RESERVE_BLOCKS`] backed blocks remain above
-//! the posted count, so the reply path itself never waits for an allocation; only if the
-//! reserve ran dry does a request wait ([`Answer::Wait`]) for the chunk the same pass backs. A
-//! re-initialization ([`Ledger::reinit`]) returns the posted count to the initial size and
-//! keeps the backing; [`Ledger::keep_chunks`] says how much of it the initial posting and the
-//! reserve need.
+//! The blocks come from one [`BlockPool`] shared by every PB: chunks of [`CHUNK_BLOCKS`] blocks
+//! (16 MiB) backed on demand, a run of up to ten contiguous free blocks per grant, and a reserve
+//! of [`RESERVE_BLOCKS`] free blocks kept ahead of demand so the reply path never waits for an
+//! allocation; only a reserve that ran dry makes a request wait ([`Answer::Wait`]). A PB's
+//! re-initialization ([`Ledger::reinit`]) returns its posted count to the initial size; its
+//! blocks go back to the pool, and chunks wholly free above the reserve may be unbacked.
 //!
 //! Core-only (no `kernel` imports): this file is compiled by the host test harness as well.
 
@@ -25,24 +24,26 @@ use crate::g15::fw::buffer::{grow_request, BLOCK_LIST_RECORDS, GROW_STEP, MAX_BL
 
 /// Blocks per backing chunk (16 MiB).
 pub(crate) const CHUNK_BLOCKS: u32 = 128;
-/// Backed blocks kept above the posted count: at 1-2 ms per request of ten blocks, 13 requests
-/// of lead for the allocation of the next chunk.
+/// Free blocks kept in the pool ahead of demand: at 1-2 ms per request of ten blocks, 13
+/// requests of lead for the allocation of the next chunk.
 pub(crate) const RESERVE_BLOCKS: u32 = CHUNK_BLOCKS;
-/// Chunks of the whole heap.
-pub(crate) const MAX_CHUNKS: u32 = MAX_BLOCKS / CHUNK_BLOCKS;
+/// Chunks the pool may back at most (1 GiB): a bound, not a reservation.
+pub(crate) const POOL_CHUNKS: u32 = 64;
+/// Blocks of the whole pool.
+pub(crate) const POOL_BLOCKS: u32 = POOL_CHUNKS * CHUNK_BLOCKS;
 
 /// The answer to an admitted growth request.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Answer {
-    /// Post blocks `[first, first + count)` (`count` at most ten) and reply grown.
+    /// Post `count` blocks (at most ten) as PB blocks `[first, first + count)` and reply grown.
     Grant { first: u32, count: u32 },
     /// Reply refused: the maximum is posted.
     Refuse,
-    /// No backed block above the posted count: leave the request queued and back a chunk.
+    /// No free block in the pool: leave the request queued and back a chunk.
     Wait,
 }
 
-/// The PB ledger since the last (re)initialization.
+/// One PB's ledger since its last (re)initialization.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Ledger {
     /// Initial blocks (the C1 pages, InitBM blocks and TA register #33 name them).
@@ -51,8 +52,6 @@ pub(crate) struct Ledger {
     pub(crate) max: u32,
     /// Blocks posted to the block list, cumulative (the block_ctl+4 producer is this modulo K).
     pub(crate) posted: u32,
-    /// Blocks with RAM behind them, from the heap base: whole chunks.
-    pub(crate) backed: u32,
     /// The next expected request counter.
     pub(crate) next_request: u32,
     /// A refusal at the maximum was logged since the last initialization.
@@ -70,7 +69,7 @@ pub(crate) const MAX_REFUSALS: u32 = 2;
 
 impl Ledger {
     /// A fresh ledger. With growth, the initial size is clamped to 64..=4096 blocks and the
-    /// maximum to initial..=4096 (the caller passes 4095); without, both are the whole heap.
+    /// maximum to initial..=4096 (the caller passes 4095); without, both are the whole range.
     pub(crate) const fn new(grow: bool, blocks: u32, max_blocks: u32) -> Self {
         let (initial, max) = if grow {
             let nb = clamp(blocks, MIN_BLOCKS, MAX_BLOCKS);
@@ -82,7 +81,6 @@ impl Ledger {
             initial,
             max,
             posted: initial,
-            backed: 0,
             next_request: 0,
             refusal_logged: false,
             refusals: 0,
@@ -90,7 +88,7 @@ impl Ledger {
     }
 
     /// A re-initialization: the initial blocks are posted again, the request counter starts
-    /// over, the backing stays.
+    /// over.
     pub(crate) const fn reinit(&mut self) {
         self.posted = self.initial;
         self.next_request = 0;
@@ -103,71 +101,29 @@ impl Ledger {
         self.posted % BLOCK_LIST_RECORDS
     }
 
-    /// Records one more backed chunk.
-    pub(crate) const fn back_chunk(&mut self) {
-        self.backed += CHUNK_BLOCKS;
-    }
-
-    /// Drops the backing to `chunks` chunks.
-    pub(crate) const fn unback_to(&mut self, chunks: u32) {
-        self.backed = chunks * CHUNK_BLOCKS;
-    }
-
-    /// Backed blocks above the posted count.
-    pub(crate) const fn spare(&self) -> u32 {
-        self.backed.saturating_sub(self.posted)
-    }
-
-    /// Whether another chunk is due: fewer than the reserve above the posted count and the heap
-    /// not yet backed whole.
-    pub(crate) const fn refill_due(&self) -> bool {
-        self.backed < MAX_BLOCKS && self.spare() < RESERVE_BLOCKS
-    }
-
-    /// Chunks that `blocks` posted blocks and the reserve need.
-    pub(crate) const fn chunks_for(blocks: u32) -> u32 {
-        let n = (blocks + RESERVE_BLOCKS).div_ceil(CHUNK_BLOCKS);
-        if n > MAX_CHUNKS {
-            MAX_CHUNKS
-        } else {
-            n
-        }
-    }
-
-    /// Chunks a re-initialized heap keeps: those of the initial posting and the reserve.
-    pub(crate) const fn keep_chunks(&self) -> u32 {
-        Self::chunks_for(self.initial)
-    }
-
-    /// Whether the heap is to be re-initialized: idle for `idle_ns` with more than `floor`
-    /// blocks posted.
-    pub(crate) const fn reclaim_due(&self, floor: u32, idle_ns: u64, min_idle_ns: u64) -> bool {
-        self.posted > floor && idle_ns >= min_idle_ns
-    }
-
     /// Whether the refusals at the maximum are used up: further requests go unanswered.
     pub(crate) const fn exhausted(&self) -> bool {
         self.refusals >= MAX_REFUSALS
     }
 
-    /// Whether `request` may be answered: growth on, an event of type 7 for PB slot 0 from a
-    /// context with a published render prefix (`live`), a counter not below the next expected
-    /// one, the current halt epoch, and refusals at the maximum not used up.
+    /// Whether `request` may be answered by this PB: growth on, an event of type 7 routed here
+    /// ([`route`]), from a context with a published render prefix (`live`), a counter not below
+    /// the next expected one, the current halt epoch, and refusals at the maximum not used up.
     pub(crate) fn admits(&self, request: &[u32; 14], grow: bool, live: bool, epoch: u64) -> bool {
         !self.exhausted()
             && grow
             && request[grow_request::TYPE] == 7
-            && request[grow_request::SLOT] == 0
             && live
             && request[grow_request::COUNTER] >= self.next_request
             && request_epoch(request) == epoch
     }
 
-    /// Accepts an admitted request. Granted or refused, the next expected counter follows it;
-    /// a request that waits for backing is accepted again when the chunk is there.
-    pub(crate) fn accept(&mut self, request: &[u32; 14]) -> Answer {
+    /// Accepts an admitted request with `free` blocks available in the pool. Granted or
+    /// refused, the next expected counter follows it; a request that waits for backing is
+    /// accepted again when the pool has a block.
+    pub(crate) fn accept(&mut self, request: &[u32; 14], free: u32) -> Answer {
         let room = self.max - self.posted;
-        if room != 0 && self.spare() == 0 {
+        if room != 0 && free == 0 {
             return Answer::Wait;
         }
         self.next_request = request[grow_request::COUNTER].wrapping_add(1);
@@ -177,7 +133,7 @@ impl Ledger {
         }
         Answer::Grant {
             first: self.posted,
-            count: GROW_STEP.min(room).min(self.spare()),
+            count: GROW_STEP.min(room).min(free),
         }
     }
 
@@ -202,10 +158,180 @@ impl Ledger {
         self.refusal_logged |= count == 0;
         info
     }
+
+    /// Whether this PB is to be re-initialized: its VM idle for `idle_ns` with more than
+    /// `floor` blocks posted.
+    pub(crate) const fn reclaim_due(&self, floor: u32, idle_ns: u64, min_idle_ns: u64) -> bool {
+        self.posted > floor && idle_ns >= min_idle_ns
+    }
 }
 
-/// The engine's idle clock for the reclaim policy: when nothing was published and nothing
-/// pending, from the pass that retired the last flight on. Noted at the end of every poll pass
+/// The PB a growth request names: its slot word (the context the host wrote at InitBM +0x8),
+/// or the context word if the firmware reports slot 0 for every PB; a slot that names another
+/// context than the request's is nobody's.
+pub(crate) const fn route(request: &[u32; 14]) -> Option<u32> {
+    let slot = request[grow_request::SLOT];
+    let ctx = request[grow_request::CONTEXT];
+    if slot == 0 || slot == ctx {
+        Some(ctx)
+    } else {
+        None
+    }
+}
+
+/// The shared block pool: which blocks of the [`POOL_CHUNKS`] chunks are backed, and which of
+/// the backed ones are posted to some PB. Block `b` is block `b % CHUNK_BLOCKS` of chunk
+/// `b / CHUNK_BLOCKS`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BlockPool {
+    /// Backed chunks (bit `c`).
+    chunks: u64,
+    /// Used blocks (bit `b`).
+    used: [u64; POOL_BLOCKS as usize / 64],
+}
+
+impl BlockPool {
+    pub(crate) const fn new() -> Self {
+        Self {
+            chunks: 0,
+            used: [0; POOL_BLOCKS as usize / 64],
+        }
+    }
+
+    /// Backed chunks.
+    pub(crate) const fn chunks(&self) -> u32 {
+        self.chunks.count_ones()
+    }
+
+    /// Whether chunk `c` is backed.
+    pub(crate) const fn backed(&self, c: u32) -> bool {
+        c < POOL_CHUNKS && self.chunks & (1 << c) != 0
+    }
+
+    /// The lowest unbacked chunk index, if any.
+    pub(crate) const fn next_chunk(&self) -> Option<u32> {
+        let c = (!self.chunks).trailing_zeros();
+        if c < POOL_CHUNKS {
+            Some(c)
+        } else {
+            None
+        }
+    }
+
+    /// Marks chunk `c` backed, all its blocks free.
+    pub(crate) fn back_chunk(&mut self, c: u32) {
+        self.chunks |= 1 << c;
+        for w in self.words(c) {
+            self.used[w] = 0;
+        }
+    }
+
+    /// Unbacks chunk `c` if it is wholly free; false if a block of it is in use.
+    pub(crate) fn unback_chunk(&mut self, c: u32) -> bool {
+        if !self.chunk_free(c) {
+            return false;
+        }
+        self.chunks &= !(1 << c);
+        true
+    }
+
+    /// Whether backed chunk `c` has no block in use.
+    pub(crate) fn chunk_free(&self, c: u32) -> bool {
+        self.backed(c) && self.words(c).all(|w| self.used[w] == 0)
+    }
+
+    fn words(&self, c: u32) -> core::ops::Range<usize> {
+        let first = (c * CHUNK_BLOCKS) as usize / 64;
+        first..first + CHUNK_BLOCKS as usize / 64
+    }
+
+    /// Blocks in use.
+    pub(crate) fn used_blocks(&self) -> u32 {
+        self.used.iter().map(|w| w.count_ones()).sum()
+    }
+
+    /// Backed blocks not in use.
+    pub(crate) fn free_blocks(&self) -> u32 {
+        self.chunks() * CHUNK_BLOCKS - self.used_blocks()
+    }
+
+    /// Whether another chunk is due: fewer than the reserve free and the pool not at its bound.
+    pub(crate) fn refill_due(&self) -> bool {
+        self.free_blocks() < RESERVE_BLOCKS && self.chunks() < POOL_CHUNKS
+    }
+
+    /// Takes the lowest run of up to `max` contiguous free blocks within one chunk: the pool
+    /// block index of its first block and its length. None when nothing is free.
+    pub(crate) fn take_run(&mut self, max: u32) -> Option<(u32, u32)> {
+        let max = max.max(1);
+        let mut best: Option<(u32, u32)> = None;
+        for c in 0..POOL_CHUNKS {
+            if !self.backed(c) {
+                continue;
+            }
+            let base = c * CHUNK_BLOCKS;
+            let mut b = 0;
+            while b < CHUNK_BLOCKS {
+                if self.is_used(base + b) {
+                    b += 1;
+                    continue;
+                }
+                let start = b;
+                while b < CHUNK_BLOCKS && b - start < max && !self.is_used(base + b) {
+                    b += 1;
+                }
+                let len = b - start;
+                if len == max {
+                    self.mark(base + start, len, true);
+                    return Some((base + start, len));
+                }
+                if best.is_none_or(|(_, l)| len > l) {
+                    best = Some((base + start, len));
+                }
+            }
+        }
+        let (first, len) = best?;
+        self.mark(first, len, true);
+        Some((first, len))
+    }
+
+    /// Returns the run `[first, first + len)` to the pool.
+    pub(crate) fn free_run(&mut self, first: u32, len: u32) {
+        self.mark(first, len, false);
+    }
+
+    /// Chunks the pool needs for its used blocks and the reserve.
+    pub(crate) fn chunks_needed(&self) -> u32 {
+        (self.used_blocks() + RESERVE_BLOCKS).div_ceil(CHUNK_BLOCKS)
+    }
+
+    /// A wholly free chunk above what the used blocks and the reserve need (the highest), to
+    /// be unbacked.
+    pub(crate) fn releasable(&self) -> Option<u32> {
+        if self.chunks() <= self.chunks_needed() {
+            return None;
+        }
+        (0..POOL_CHUNKS).rev().find(|&c| self.chunk_free(c))
+    }
+
+    const fn is_used(&self, b: u32) -> bool {
+        self.used[b as usize / 64] & (1 << (b % 64)) != 0
+    }
+
+    fn mark(&mut self, first: u32, len: u32, used: bool) {
+        for b in first..first + len {
+            let bit = 1u64 << (b % 64);
+            if used {
+                self.used[b as usize / 64] |= bit;
+            } else {
+                self.used[b as usize / 64] &= !bit;
+            }
+        }
+    }
+}
+
+/// A PB's idle clock for the reclaim policy: when its VM had nothing published and nothing
+/// pending, from the pass that retired its last flight on. Noted at the end of every poll pass
 /// and publication (a pass that empties the flights is not re-armed, so a note only at the
 /// start of a pass with empty flights depends on a backup pass happening to run) and, busy,
 /// when a job is enqueued.
@@ -216,7 +342,7 @@ pub(crate) struct IdleClock {
 }
 
 impl IdleClock {
-    /// Notes the engine idle or busy at `now_ns`; an idle already begun keeps its start.
+    /// Notes the VM idle or busy at `now_ns`; an idle already begun keeps its start.
     pub(crate) fn note(&mut self, idle: bool, now_ns: u64) {
         if !idle {
             self.since_ns = 0;
@@ -255,10 +381,14 @@ mod tests {
     use super::*;
 
     fn request(ctx: u32, counter: u32, epoch: u64) -> [u32; 14] {
+        request_slot(ctx, ctx, counter, epoch)
+    }
+
+    fn request_slot(slot: u32, ctx: u32, counter: u32, epoch: u64) -> [u32; 14] {
         let mut q = [0u32; 14];
         q[0] = 7;
         q[1] = ctx;
-        q[2] = 0;
+        q[2] = slot;
         q[3] = counter;
         q[4] = 0x100;
         q[5] = epoch as u32;
@@ -266,19 +396,12 @@ mod tests {
         q
     }
 
-    /// A ledger with the heap backed whole.
-    fn backed(grow: bool, blocks: u32, max_blocks: u32) -> Ledger {
-        let mut l = Ledger::new(grow, blocks, max_blocks);
-        l.unback_to(MAX_CHUNKS);
-        l
-    }
-
     #[test]
     fn clamps() {
-        let l = backed(true, 1024, 2048);
+        let l = Ledger::new(true, 1024, 2048);
         assert_eq!(
-            (l.initial, l.max, l.posted, l.backed, l.next_request),
-            (1024, 2048, 1024, 4096, 0)
+            (l.initial, l.max, l.posted, l.next_request),
+            (1024, 2048, 1024, 0)
         );
         assert_eq!(l.producer(), 1024);
         assert_eq!(Ledger::new(true, 10, 20).initial, 64);
@@ -291,8 +414,8 @@ mod tests {
     }
 
     #[test]
-    fn admission() {
-        let l = backed(true, 1024, 2048);
+    fn admission_and_routing() {
+        let l = Ledger::new(true, 1024, 2048);
         let q = request(5, 0, 3);
         assert!(l.admits(&q, true, true, 3));
         assert!(!l.admits(&q, false, true, 3));
@@ -302,31 +425,35 @@ mod tests {
         let mut bad = q;
         bad[0] = 6;
         assert!(!l.admits(&bad, true, true, 3));
-        let mut bad = q;
-        bad[2] = 1;
-        assert!(!l.admits(&bad, true, true, 3));
         // 64-bit epochs.
         let q = request(5, 0, 0x1_0000_0002);
         assert!(l.admits(&q, true, true, 0x1_0000_0002));
         assert!(!l.admits(&q, true, true, 2));
+        // Routing: the slot word names the PB (= the context); slot 0 (a firmware that does
+        // not echo InitBM +0x8) falls back to the context; a slot of another context is
+        // nobody's.
+        assert_eq!(route(&request_slot(5, 5, 0, 0)), Some(5));
+        assert_eq!(route(&request_slot(0, 7, 0, 0)), Some(7));
+        assert_eq!(route(&request_slot(5, 7, 0, 0)), None);
+        assert_eq!(route(&request_slot(0, 0, 0, 0)), Some(0));
     }
 
     #[test]
     fn growth_to_the_maximum() {
-        // 512 initial and 1024 maximum blocks.
-        let mut l = backed(true, 512, 1024);
+        // 512 initial and 1024 maximum blocks, the pool never short.
+        let mut l = Ledger::new(true, 512, 1024);
         let mut grown = 0;
         let mut counter = 0;
         loop {
             let q = request(5, counter, 1);
             assert!(l.admits(&q, true, true, 1));
-            let n = match l.accept(&q) {
+            let n = match l.accept(&q, POOL_BLOCKS) {
                 Answer::Grant { first, count } => {
                     assert_eq!(first, 512 + grown);
                     count
                 }
                 Answer::Refuse => break,
-                Answer::Wait => panic!("backed whole"),
+                Answer::Wait => panic!("pool never short"),
             };
             assert!(n <= 10);
             assert_eq!(l.post(n), (512 + grown + n) % 4096);
@@ -344,22 +471,31 @@ mod tests {
         assert_eq!(l.refusals, 1);
         assert!(!l.exhausted());
         let q = request(5, counter + 3, 1);
-        assert_eq!(l.accept(&q), Answer::Refuse);
+        assert_eq!(l.accept(&q, POOL_BLOCKS), Answer::Refuse);
         assert!(l.exhausted());
         assert!(!l.admits(&request(5, counter + 4, 1), true, true, 1));
-        // A fresh ledger starts over, and so does a re-initialized one (backing kept).
+        // A fresh ledger starts over, and so does a re-initialized one.
         assert!(!Ledger::new(true, 512, 1024).exhausted());
         l.reinit();
-        assert_eq!(
-            (l.posted, l.next_request, l.refusals, l.backed),
-            (512, 0, 0, 4096)
-        );
+        assert_eq!((l.posted, l.next_request, l.refusals), (512, 0, 0));
         assert!(!l.exhausted() && !l.refusal_logged);
+        // An empty pool makes a request wait without consuming its counter; a short pool
+        // clips the grant.
+        let q = request(5, 0, 1);
+        assert_eq!(l.accept(&q, 0), Answer::Wait);
+        assert_eq!(l.next_request, 0);
+        assert_eq!(
+            l.accept(&q, 3),
+            Answer::Grant {
+                first: 512,
+                count: 3
+            }
+        );
     }
 
     #[test]
     fn producer_wraps_at_k() {
-        let mut l = backed(true, 2048, 2048);
+        let mut l = Ledger::new(true, 2048, 2048);
         assert_eq!(l.producer(), 2048);
         l.posted = 4095;
         assert_eq!(l.post(1), 0);
@@ -367,67 +503,82 @@ mod tests {
     }
 
     #[test]
-    fn backing() {
-        // 64 initial blocks: two chunks at boot (the initial posting and the reserve).
-        assert_eq!(Ledger::chunks_for(64), 2);
-        assert_eq!(Ledger::chunks_for(1024), 9);
-        assert_eq!(Ledger::chunks_for(4095), MAX_CHUNKS);
-        assert_eq!(MAX_CHUNKS, 32);
-        let mut l = Ledger::new(true, 64, 4095);
-        assert_eq!(l.keep_chunks(), 2);
-        assert_eq!(l.spare(), 0);
-        assert!(l.refill_due());
-        // Nothing backed: a request waits and the counter does not advance.
-        let q = request(3, 0, 1);
-        assert_eq!(l.accept(&q), Answer::Wait);
-        assert_eq!(l.next_request, 0);
-        l.back_chunk();
-        l.back_chunk();
-        assert_eq!((l.backed, l.spare()), (256, 192));
-        assert!(!l.refill_due());
-        // Granting until the reserve line, then a refill is due; at the end of the backing the
-        // grant is clipped and the next request waits.
+    fn pool_accounting_across_two_pbs() {
+        let mut p = BlockPool::new();
         assert_eq!(
-            l.accept(&q),
-            Answer::Grant {
-                first: 64,
-                count: 10
-            }
+            (p.chunks(), p.free_blocks(), p.next_chunk()),
+            (0, 0, Some(0))
         );
-        assert_eq!(l.post(10), 74);
-        assert_eq!(l.next_request, 1);
-        l.posted = 128;
-        assert!(!l.refill_due());
-        l.posted = 129;
-        assert!(l.refill_due());
-        l.posted = 250;
+        assert!(p.refill_due());
+        assert_eq!(p.take_run(10), None);
+        // Boot: two chunks.
+        p.back_chunk(0);
+        p.back_chunk(1);
         assert_eq!(
-            l.accept(&request(3, 1, 1)),
-            Answer::Grant {
-                first: 250,
-                count: 6
-            }
+            (p.chunks(), p.free_blocks(), p.next_chunk()),
+            (2, 256, Some(2))
         );
-        l.post(6);
-        assert_eq!(l.accept(&request(3, 2, 1)), Answer::Wait);
-        // The heap end: no refill past the whole heap, the maximum refuses.
-        l.unback_to(MAX_CHUNKS);
-        l.posted = 4090;
-        assert!(!l.refill_due());
-        assert_eq!(
-            l.accept(&request(3, 2, 1)),
-            Answer::Grant {
-                first: 4090,
-                count: 5
+        assert!(!p.refill_due());
+        // VM A's initial posting: 64 blocks as runs of ten (and one of four), contiguous.
+        let mut a = alloc::vec::Vec::new();
+        let mut want = 64;
+        while want > 0 {
+            let (first, len) = p.take_run(want.min(10)).unwrap();
+            a.push((first, len));
+            want -= len;
+        }
+        assert_eq!(a[0], (0, 10));
+        assert_eq!(a[6], (60, 4));
+        assert_eq!((p.used_blocks(), p.free_blocks()), (64, 192));
+        // VM B's initial posting takes the next 64.
+        let mut b = alloc::vec::Vec::new();
+        for _ in 0..7 {
+            b.push(p.take_run(10).unwrap());
+        }
+        assert_eq!(b[0], (64, 10));
+        // A run never crosses a chunk: the seventh run skips blocks 124..128 for chunk 1.
+        assert_eq!(b[6], (128, 10));
+        assert_eq!(p.free_blocks(), 122);
+        assert!(p.refill_due());
+        // A's blocks go back (a reclaim or its destruction): the holes are reused first, and
+        // neither chunk is wholly free while B's runs are in both.
+        for (first, len) in a.iter() {
+            p.free_run(*first, *len);
+        }
+        assert_eq!(p.free_blocks(), 186);
+        assert_eq!(p.take_run(10), Some((0, 10)));
+        p.free_run(0, 10);
+        assert!(!p.chunk_free(0));
+        assert!(!p.chunk_free(1));
+        assert_eq!(p.releasable(), None);
+        // B gone too: both chunks free; one above the reserve's need is releasable.
+        for (first, len) in b.iter() {
+            p.free_run(*first, *len);
+        }
+        assert_eq!(p.used_blocks(), 0);
+        assert_eq!(p.chunks_needed(), 1);
+        assert_eq!(p.releasable(), Some(1));
+        assert!(p.unback_chunk(1));
+        assert_eq!((p.chunks(), p.free_blocks()), (1, 128));
+        assert_eq!(p.releasable(), None);
+        // A run never crosses a chunk: with 3 free at the end of chunk 0 and chunk 2 backed,
+        // the request of ten gets ten from chunk 2.
+        p.back_chunk(2);
+        p.mark(0, 125, true);
+        assert_eq!(p.take_run(10), Some((256, 10)));
+        // With no full run anywhere the longest run is granted.
+        p.mark(256 + 10, 128 - 10, true);
+        assert_eq!(p.take_run(10), Some((125, 3)));
+        assert_eq!(p.take_run(10), None);
+        assert!(!p.unback_chunk(2));
+        // The bound.
+        for c in 0..POOL_CHUNKS {
+            if !p.backed(c) {
+                p.back_chunk(c);
             }
-        );
-        l.post(5);
-        assert_eq!(l.accept(&request(3, 3, 1)), Answer::Refuse);
-        // Re-initialization keeps the backing; dropping it to the kept chunks.
-        l.reinit();
-        assert_eq!((l.posted, l.backed), (64, 4096));
-        l.unback_to(l.keep_chunks());
-        assert_eq!(l.backed, 256);
+        }
+        assert_eq!(p.next_chunk(), None);
+        assert!(!p.refill_due());
     }
 
     #[test]
@@ -453,68 +604,87 @@ mod tests {
         assert_eq!(c.idle_ns(s), s - 1);
     }
 
-    /// The r2 boot's sequence: a heavy scene, a reclaim that frees the backing, refills during
-    /// the next heavy scene, an idle gap with a small job in it, and the next render must
-    /// reclaim again.
+    /// Two PBs over one pool: a heavy VM grows while a light one renders on; the heavy VM's
+    /// idle reclaim returns its blocks and frees chunks while the light VM keeps its blocks;
+    /// the heavy VM's next scene is served from the reclaimed blocks.
     #[test]
-    fn reclaim_after_free_then_refill() {
+    fn reclaim_of_one_pb_while_another_renders() {
         let s = 1_000_000_000;
         let (floor, min_idle) = (1024, s);
-        let mut l = Ledger::new(true, 64, 4095);
-        l.unback_to(l.keep_chunks());
-        let mut clock = IdleClock::default();
-        // A heavy scene grows the PB to 1484 blocks, refilling as it goes.
-        let mut heavy = |l: &mut Ledger, clock: &mut IdleClock, t: u64| {
-            clock.note(false, t);
-            let mut counter = l.next_request;
-            while l.posted < 1484 {
-                while l.refill_due() {
-                    l.back_chunk();
+        let mut p = BlockPool::new();
+        p.back_chunk(0);
+        p.back_chunk(1);
+        let take = |p: &mut BlockPool, want: u32| -> alloc::vec::Vec<(u32, u32)> {
+            let mut runs = alloc::vec::Vec::new();
+            let mut left = want;
+            while left > 0 {
+                while p.refill_due() {
+                    let c = p.next_chunk().unwrap();
+                    p.back_chunk(c);
                 }
-                match l.accept(&request(1, counter, 0)) {
-                    Answer::Grant { count, .. } => {
-                        l.post(count);
-                    }
-                    other => panic!("{other:?} at {}", l.posted),
-                }
-                counter += 1;
+                let (f, l) = p.take_run(left.min(10)).unwrap();
+                runs.push((f, l));
+                left -= l;
             }
-            // The pass that retires the last flight notes the idle; no later pass may run.
-            clock.note(true, t + s);
+            runs
         };
-        heavy(&mut l, &mut clock, 100 * s);
-        assert_eq!((l.posted, l.backed), (1484, 13 * CHUNK_BLOCKS));
-        // 5 s later a small job arrives: the reclaim is due; it frees the backing above the
-        // kept chunks; the re-initialization happens at the next render.
-        let t = 106 * s;
-        assert!(l.reclaim_due(floor, clock.idle_ns(t), min_idle));
-        l.unback_to(l.keep_chunks());
-        clock.note(false, t);
-        assert_eq!(l.backed, 2 * CHUNK_BLOCKS);
-        clock.note(true, t + s / 2);
-        // The next render re-initializes, then the second heavy scene refills to 1484 again.
-        l.reinit();
-        assert_eq!((l.posted, l.backed), (64, 256));
-        heavy(&mut l, &mut clock, 110 * s);
-        assert_eq!((l.posted, l.backed), (1484, 13 * CHUNK_BLOCKS));
-        // The same gap again: the reclaim must be due at the small job's arrival.
-        let t = 116 * s;
-        assert_eq!(clock.idle_ns(t), 5 * s);
-        assert!(l.reclaim_due(floor, clock.idle_ns(t), min_idle));
-    }
-
-    #[test]
-    fn logging() {
-        let mut l = Ledger::new(true, 64, 64);
-        // The first two requests are logged.
-        assert!(l.log_answer(&request(1, 0, 0), 10, false));
-        assert!(l.log_answer(&request(1, 1, 0), 10, false));
-        assert!(!l.log_answer(&request(1, 2, 0), 10, false));
-        // A failed reply is logged.
-        assert!(l.log_answer(&request(1, 5, 0), 10, true));
-        // The first refusal at the maximum is logged once.
-        assert!(l.log_answer(&request(1, 6, 0), 0, false));
-        assert!(!l.log_answer(&request(1, 7, 0), 0, false));
-        assert!(l.refusal_logged);
+        let mut heavy = Ledger::new(true, 64, 4095);
+        let light = Ledger::new(true, 64, 4095);
+        let mut heavy_runs = take(&mut p, 64);
+        let light_runs = take(&mut p, 64);
+        let mut heavy_clock = IdleClock::default();
+        let mut light_clock = IdleClock::default();
+        // The heavy scene: grows to 1484 while the light VM renders (busy).
+        heavy_clock.note(false, 100 * s);
+        light_clock.note(false, 100 * s);
+        let mut counter = 0;
+        while heavy.posted < 1484 {
+            while p.refill_due() {
+                let c = p.next_chunk().unwrap();
+                p.back_chunk(c);
+            }
+            match heavy.accept(&request(5, counter, 0), p.free_blocks()) {
+                Answer::Grant { count, .. } => {
+                    let (f, l) = p.take_run(count).unwrap();
+                    assert_eq!(l, count);
+                    heavy_runs.push((f, l));
+                    heavy.post(count);
+                }
+                other => panic!("{other:?}"),
+            }
+            counter += 1;
+        }
+        assert_eq!(p.used_blocks(), 1484 + 64);
+        assert_eq!(
+            p.chunks(),
+            (1484 + 64 + RESERVE_BLOCKS).div_ceil(CHUNK_BLOCKS)
+        );
+        // The heavy VM goes idle, the light one does not.
+        heavy_clock.note(true, 102 * s);
+        light_clock.note(false, 102 * s);
+        let t = 108 * s;
+        assert!(heavy.reclaim_due(floor, heavy_clock.idle_ns(t), min_idle));
+        assert!(!light.reclaim_due(floor, light_clock.idle_ns(t), min_idle));
+        for (f, l) in heavy_runs.drain(..) {
+            p.free_run(f, l);
+        }
+        heavy.reinit();
+        while let Some(c) = p.releasable() {
+            assert!(p.unback_chunk(c));
+        }
+        // The light VM's 64 blocks are untouched and the pool kept them plus the reserve.
+        assert_eq!(p.used_blocks(), 64);
+        for (f, l) in light_runs.iter() {
+            for b in *f..*f + *l {
+                assert!(p.is_used(b));
+            }
+        }
+        assert_eq!(p.chunks(), 2);
+        assert_eq!(light.posted, 64);
+        // The heavy VM's next render re-posts its 64 from the pool.
+        heavy_clock.note(false, 110 * s);
+        let again = take(&mut p, heavy.initial);
+        assert_eq!(again.iter().map(|(_, l)| l).sum::<u32>(), 64);
+        assert_eq!(p.used_blocks(), 128);
     }
 }
