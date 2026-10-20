@@ -668,6 +668,7 @@ impl Firmware {
             mgr_misc: a.mgr_misc,
             pb_init_blocks: a.init_blocks,
             pb_slot: a.pb_slot,
+            pb_queue: a.pb_queue,
         }
     }
 

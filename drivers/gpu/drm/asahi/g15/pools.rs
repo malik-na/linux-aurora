@@ -63,7 +63,9 @@ use super::Firmware;
 use crate::driver::AsahiDevice;
 use crate::gem;
 
-pub(crate) use growth::{Answer, BlockPool, Grave, GraveLedger, IdleClock, Ledger};
+pub(crate) use growth::{
+    Answer, BlockPool, Grave, GraveLedger, IdleClock, Ledger, QueueIndices, QueueWords,
+};
 
 static_assert!(buffer::MAX_BLOCKS == sizes::PB_BLOCKS);
 static_assert!(buffer::MAX_PAGES == sizes::PB_PAGES);
@@ -179,6 +181,8 @@ pub(crate) struct VmPb {
     /// The VM (`VmState::id`) and its context (= the PB's slot).
     vm_id: u64,
     slot: u32,
+    /// The PB's queue index (the native per-queue TA words), given back at burial.
+    queue: u32,
     set: PbSet,
     pub(crate) ledger: Ledger,
     /// The posted runs, in heap order.
@@ -229,6 +233,8 @@ pub(crate) struct AllocatorRefs {
     /// The PB's record for TA work +0x34 and FS work +0x38 (0: the VM has no PB; the caller
     /// falls back to the graph's).
     pub(crate) legacy_empty: u64,
+    /// The PB's queue index (TA work +0x1c, +0x77c = 2q + 1, +0x878 = 2q).
+    pub(crate) pb_queue: u32,
 }
 
 /// PB statistics over every VM.
@@ -276,6 +282,8 @@ pub(crate) struct Pools {
     /// PBs of dead VMs, kept until their grace period passed, and their block account.
     graveyard: KVec<(Grave, VmPb)>,
     graves: GraveLedger,
+    /// Queue indices of the live and buried-not-yet PBs.
+    queues: QueueIndices,
     pub(crate) stats: PbStats,
 }
 
@@ -533,6 +541,7 @@ impl Pools {
             free_sets: KVec::new(),
             graveyard: KVec::new(),
             graves: GraveLedger::default(),
+            queues: QueueIndices::default(),
             stats: PbStats::default(),
         };
         let initial = super::params::pb_blocks();
@@ -647,9 +656,11 @@ impl Pools {
             super::params::pb_blocks(),
             tuning::PB_MAX_BLOCKS,
         );
+        let queue = self.queues.take().ok_or(ENOSPC)?;
         self.vms[slot] = Some(VmPb {
             vm_id: vm.id,
             slot: vm.slot,
+            queue,
             set,
             ledger,
             runs: KVec::new(),
@@ -733,6 +744,7 @@ impl Pools {
     /// rested [`SET_GRACE_NS`].
     fn bury(&mut self, pb: VmPb) {
         self.graves.remove(pb.run_blocks());
+        self.queues.give(pb.queue);
         for run in pb.runs.iter() {
             self.pool.free_run(run.pool_first, run.len);
         }
@@ -836,6 +848,7 @@ impl Pools {
             init_blocks: pb.map_or(0, |pb| pb.ledger.initial),
             pb_slot: pb.map_or(0, |pb| pb.slot),
             legacy_empty: pb.map_or(0, |pb| pb.set.legacy.va),
+            pb_queue: pb.map_or(0, |pb| pb.queue),
         }
     }
 
@@ -882,9 +895,10 @@ impl Pools {
         for pb in self.vms.iter().flatten() {
             writeln!(
                 f,
-                "pbvm: ctx {} vm {} blocks {}/{}/{} renders {} requests {} grown {} refused {} inits {} init_pending {}",
+                "pbvm: ctx {} vm {} queue {} blocks {}/{}/{} renders {} requests {} grown {} refused {} inits {} init_pending {}",
                 pb.slot,
                 pb.vm_id,
+                pb.queue,
                 pb.ledger.initial,
                 pb.ledger.posted,
                 pb.soft_max(),

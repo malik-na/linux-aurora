@@ -517,6 +517,8 @@ pub(crate) struct RenderRefs {
     pub(crate) pb_init_blocks: u32,
     /// The PB's slot (InitBM +0x8).
     pub(crate) pb_slot: u32,
+    /// The PB's queue index (TA work +0x1c, +0x77c, +0x878).
+    pub(crate) pb_queue: u32,
 }
 
 /// Addresses of one pass slot.
@@ -668,7 +670,11 @@ pub(crate) fn encode_ta(
     put64(w, 0x768, geo.tpc_bytes);
     put64(w, 0x770, uv);
     put32(w, 0x778, ta::SEQ_SIZE as u32);
-    put32(w, 0x77c, 1);
+    // The per-queue index words (natively 0/1/0 and 1/3/2 for a context's two queues).
+    let qw = crate::g15::pools::QueueWords::new(r.pb_queue);
+    put32(w, 0x1c, qw.index);
+    put32(w, 0x77c, qw.odd);
+    put32(w, 0x878, qw.even);
     put32(w, 0x780, tta);
     put64(w, 0x7a8, compact(p.pre_gva[0]));
     put32(w, 0x840, 0x67);

@@ -416,6 +416,57 @@ impl RunMap {
     }
 }
 
+/// The per-queue index words of a render's TA work. Natively the two queues of one context
+/// carry 0/0/0 and 1/1/2 at +0x1c, register 0x1c830 (low word) and +0x878, and 1 and 3 at
+/// +0x77c: an index `q` per queue, with `2q` and `2q + 1` where the queue's pair of stamp
+/// cells is named. One PB per VM here: `q` is the PB's queue index.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct QueueWords {
+    /// TA work +0x1c.
+    pub(crate) index: u32,
+    /// TA work +0x77c.
+    pub(crate) odd: u32,
+    /// TA work +0x878.
+    pub(crate) even: u32,
+}
+
+impl QueueWords {
+    pub(crate) const fn new(q: u32) -> Self {
+        Self {
+            index: q,
+            odd: 2 * q + 1,
+            even: 2 * q,
+        }
+    }
+}
+
+/// Queue indices of the live PBs: the lowest free one is taken at a PB's creation and given
+/// back when the PB is buried, so a few concurrent PBs use the small indices the native driver
+/// uses.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct QueueIndices {
+    used: u64,
+}
+
+impl QueueIndices {
+    /// Takes the lowest free index (0..64); None when all are taken.
+    pub(crate) fn take(&mut self) -> Option<u32> {
+        let q = (!self.used).trailing_zeros();
+        if q >= 64 {
+            return None;
+        }
+        self.used |= 1 << q;
+        Some(q)
+    }
+
+    /// Gives index `q` back.
+    pub(crate) fn give(&mut self, q: u32) {
+        if q < 64 {
+            self.used &= !(1 << q);
+        }
+    }
+}
+
 /// Blocks the graveyard may hold at most (one chunk): beyond it the oldest graves are buried at
 /// once, so the memory of dead PBs stays bounded whatever the VM churn.
 pub(crate) const GRAVE_BLOCKS: u32 = CHUNK_BLOCKS;
@@ -642,6 +693,41 @@ mod tests {
         assert!(m.gva + m.bytes as u64 <= heap + MAX_BLOCKS as u64 * BLOCK_BYTES);
         assert!(m.offset + m.bytes <= CHUNK_BLOCKS as usize * BLOCK_BYTES as usize);
         assert_eq!(l.post(n), 74);
+    }
+
+    #[test]
+    fn queue_words_and_indices() {
+        // The native pairs: queue 0 = 0/1/0, queue 1 = 1/3/2.
+        assert_eq!(
+            QueueWords::new(0),
+            QueueWords {
+                index: 0,
+                odd: 1,
+                even: 0
+            }
+        );
+        assert_eq!(
+            QueueWords::new(1),
+            QueueWords {
+                index: 1,
+                odd: 3,
+                even: 2
+            }
+        );
+        assert_eq!(QueueWords::new(5).even, 10);
+        // Indices: lowest free first, reused after being given back, 64 at most.
+        let mut qi = QueueIndices::default();
+        assert_eq!(qi.take(), Some(0));
+        assert_eq!(qi.take(), Some(1));
+        assert_eq!(qi.take(), Some(2));
+        qi.give(1);
+        assert_eq!(qi.take(), Some(1));
+        for _ in 3..64 {
+            assert!(qi.take().is_some());
+        }
+        assert_eq!(qi.take(), None);
+        qi.give(63);
+        assert_eq!(qi.take(), Some(63));
     }
 
     #[test]
