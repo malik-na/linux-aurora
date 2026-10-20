@@ -32,8 +32,11 @@
 //!   nothing pending for `g15_pb_idle_ms` and more than `g15_pb_reclaim_blocks` posted is
 //!   re-initialized at its next render (its own InitBM, no halt; proven on the one-PB driver)
 //!   and its blocks return to the pool now; with level 2 wholly free chunks above the reserve's
-//!   need are unbacked. A VM's death ([`Firmware::drain_dead_vms`]) returns its blocks, frees
-//!   its lists and recycles its manager set.
+//!   need are unbacked. A VM's death ([`Firmware::drain_dead_vms`]) moves its PB to the
+//!   graveyard for `g15_pb_grace_ms` with its blocks out of the pool and its lists and manager
+//!   untouched (the native driver frees a torn-down queue's lists and blocks within about
+//!   30 s and keeps the manager image mapped); then its blocks return, its lists are freed and
+//!   its manager set rests for minutes before a new PB is written into it.
 //! - UMA managers ASC-cached with an uncached spare set; the first recovered render abort swaps
 //!   to the spare and never rewrites the cached set (the ASC may still hold dirty lines of it).
 
@@ -57,7 +60,7 @@ use super::Firmware;
 use crate::driver::AsahiDevice;
 use crate::gem;
 
-pub(crate) use growth::{Answer, BlockPool, IdleClock, Ledger};
+pub(crate) use growth::{Answer, BlockPool, Grave, IdleClock, Ledger};
 
 static_assert!(buffer::MAX_BLOCKS == sizes::PB_BLOCKS);
 static_assert!(buffer::MAX_PAGES == sizes::PB_PAGES);
@@ -74,6 +77,9 @@ static_assert!(buffer::BLOCK_BYTES % hw::PAGE == 0);
 pub(crate) const CHUNK_BYTES: u64 = growth::CHUNK_BLOCKS as u64 * buffer::BLOCK_BYTES;
 /// PB slots: one per TTBAT context (1..63; 0 is the kernel's).
 const PB_SLOTS: usize = sizes::MAX_VMS as usize + 1;
+/// Time a buried PB's manager set rests before a new PB is written into it: the native driver
+/// keeps a torn-down queue's manager image mapped and unchanged for minutes.
+const SET_GRACE_NS: u64 = 300 * 1_000_000_000;
 
 /// A GPU-only (never CPU-mapped, never in the firmware window) backing chunk of the pool.
 pub(crate) struct Chunk {
@@ -285,8 +291,10 @@ pub(crate) struct Pools {
     heap: KVec<Option<Chunk>>,
     /// The PBs by slot (context).
     vms: KVec<Option<VmPb>>,
-    /// Manager sets of dead VMs, for the next PB.
-    free_sets: KVec<PbSet>,
+    /// Manager sets of buried PBs with their burial time, for a later PB.
+    free_sets: KVec<(u64, PbSet)>,
+    /// PBs of dead VMs, kept until their grace period passed.
+    graveyard: KVec<(Grave, VmPb)>,
     /// C1 names the initial pages (the same for every PB).
     c1_written: bool,
     pub(crate) stats: PbStats,
@@ -539,6 +547,7 @@ impl Pools {
             heap,
             vms,
             free_sets: KVec::new(),
+            graveyard: KVec::new(),
             c1_written: false,
             stats: PbStats::default(),
         };
@@ -639,8 +648,13 @@ impl Pools {
     /// of the VM carries InitBM.
     fn create_pb(&mut self, vm: &VmState, objects: &mut Objects) -> Result {
         let slot = vm.slot as usize;
-        let set = match self.free_sets.pop() {
-            Some(set) => set,
+        let now = super::engine::now_ns();
+        let rested = self
+            .free_sets
+            .iter()
+            .position(|(t, _)| now.wrapping_sub(*t) >= SET_GRACE_NS);
+        let set = match rested.and_then(|i| self.free_sets.remove(i).ok()) {
+            Some((_, set)) => set,
             None => PbSet::alloc(objects)?,
         };
         let page_list = UserObject::new(&self.adev, buffer::PAGE_LIST_SIZE)?;
@@ -697,16 +711,55 @@ impl Pools {
         Ok(())
     }
 
-    /// Destroys PB `slot` (its VM is gone or being replaced): blocks to the pool, lists freed,
-    /// the manager set recycled.
-    fn destroy_pb(&mut self, slot: usize) {
-        self.return_blocks(slot, None);
-        if let Some(pb) = self.vms[slot].take() {
-            // Recycling may fail only for lack of memory: then the set is retained with the
-            // Objects allocator, like every firmware object.
-            let _ = self.free_sets.push(pb.set, GFP_KERNEL);
-            self.stats.destroyed += 1;
+    /// Moves PB `slot` (its VM is gone) to the graveyard: nothing of it is touched until its
+    /// grace period passed ([`Self::bury`]). Without memory for the entry the PB is buried at
+    /// once.
+    fn entomb(&mut self, slot: usize, now_ns: u64) {
+        let Some(pb) = self.vms[slot].take() else {
+            return;
+        };
+        self.stats.destroyed += 1;
+        if self.graveyard.reserve(1, GFP_KERNEL).is_err() {
+            self.bury(pb);
+            return;
         }
+        if let Err(e) = self
+            .graveyard
+            .push_within_capacity((Grave { death_ns: now_ns }, pb))
+        {
+            self.bury(e.0 .1);
+        }
+    }
+
+    /// Frees a dead PB: blocks to the pool, lists dropped, the manager set kept for a later PB
+    /// once it has rested [`SET_GRACE_NS`].
+    fn bury(&mut self, pb: VmPb) {
+        for run in pb.runs.iter() {
+            self.pool.free_run(run.pool_first, run.len);
+        }
+        // Keeping may fail only for lack of memory: then the set is retained with the Objects
+        // allocator, like every firmware object.
+        let _ = self
+            .free_sets
+            .push((super::engine::now_ns(), pb.set), GFP_KERNEL);
+    }
+
+    /// Buries the graveyard's PBs whose grace period passed; returns how many.
+    fn bury_due(&mut self, now_ns: u64, grace_ns: u64) -> usize {
+        let mut n = 0;
+        let mut i = 0;
+        while i < self.graveyard.len() {
+            if self.graveyard[i].0.due(now_ns, grace_ns) {
+                // In range: `i` is below the length.
+                if let Ok((_, pb)) = self.graveyard.remove(i) {
+                    self.bury(pb);
+                    n += 1;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+        n
     }
 
     /// First rebuild after an abort with cached managers: the cached set may still have dirty
@@ -806,7 +859,7 @@ impl Pools {
         let initial = super::params::pb_blocks();
         writeln!(
             f,
-            "pb: blocks {}/{}/{}/{} requests {} grown {} refused {} bad {} backed {} chunks {} waits {} refills {} reclaims {} freed {} pbs {} created {} destroyed {}",
+            "pb: blocks {}/{}/{}/{} requests {} grown {} refused {} bad {} backed {} chunks {} waits {} refills {} reclaims {} freed {} pbs {} created {} destroyed {} graves {}",
             initial,
             self.posted_total(),
             super::params::pb_max_blocks().clamp(initial, tuning::PB_MAX_BLOCKS),
@@ -823,17 +876,19 @@ impl Pools {
             self.stats.freed,
             self.vms.iter().flatten().count(),
             self.stats.created,
-            self.stats.destroyed
+            self.stats.destroyed,
+            self.graveyard.len()
         )?;
         for pb in self.vms.iter().flatten() {
             writeln!(
                 f,
-                "pbvm: ctx {} vm {} blocks {}/{}/{} requests {} grown {} refused {} inits {} init_pending {}",
+                "pbvm: ctx {} vm {} blocks {}/{}/{} renders {} requests {} grown {} refused {} inits {} init_pending {}",
                 pb.slot,
                 pb.vm_id,
                 pb.ledger.initial,
                 pb.ledger.posted,
                 pb.soft_max(),
+                pb.ledger.renders,
                 pb.requests,
                 pb.grown,
                 pb.refused,
@@ -877,7 +932,8 @@ impl Firmware {
             if pb.vm_id == vm.id {
                 return Ok(vm.slot);
             }
-            self.pools.destroy_pb(slot);
+            // The context's previous VM is dead and not drained yet.
+            self.pools.entomb(slot, super::engine::now_ns());
         }
         self.pools.create_pb(vm, &mut self.objects)?;
         self.refill_backing();
@@ -910,13 +966,15 @@ impl Firmware {
         Ok(())
     }
 
-    /// The PB counters of a publication with renders, after the render threshold: the PB
-    /// counter names the prefix's last draw, and C1 = {0x07400000, 4 * initial blocks} is
-    /// written once (every PB posts the same initial size). An error leaves the prefix
-    /// unpublished.
-    pub(crate) fn publish_pb(&mut self, slot: u32, draw: u32) -> Result {
+    /// The PB counter of a publication with `renders` renders of the VM's PB, after the render
+    /// threshold: the counter counts the PB's own renders since its InitBM (not the engine's
+    /// draws: with several PBs those differ, and a counter ahead of the PB's renders stalls its
+    /// FS), and C1 = {0x07400000, 4 * initial blocks} is written once (every PB posts the same
+    /// initial size). An error leaves the prefix unpublished.
+    pub(crate) fn publish_pb(&mut self, slot: u32, renders: u32) -> Result {
         let pb = self.pools.vms[slot as usize].as_mut().ok_or(ENOENT)?;
-        pb.set.counter.w32(0, draw)?;
+        let count = pb.ledger.render(renders);
+        pb.set.counter.w32(0, count)?;
         let initial = pb.ledger.initial;
         if !self.pools.c1_written {
             self.write_c1(&buffer::c1_record(initial))?;
@@ -1022,15 +1080,14 @@ impl Firmware {
         }
     }
 
-    /// Returns the blocks of dead VMs (`VmState` dropped: handle closed, no queue, no job) to
-    /// the pool and recycles their manager sets; with reclaim level 2 unbacks the chunks that
-    /// became wholly free above the reserve's need. Called under the device lock in idle poll
+    /// Moves the PBs of dead VMs (`VmState` dropped: handle closed, no queue, no job) to the
+    /// graveyard, and buries those whose grace period passed: their blocks return to the pool
+    /// and their manager sets are recycled; with reclaim level 2 the chunks that became wholly
+    /// free above the reserve's need are unbacked. Called under the device lock in idle poll
     /// passes and at a job's arrival.
     pub(crate) fn drain_dead_vms(&mut self) {
+        let now = super::engine::now_ns();
         let dead = self.vms.take_dead();
-        if dead.is_empty() {
-            return;
-        }
         let mut n = 0;
         for id in dead.iter() {
             for slot in 0..PB_SLOTS {
@@ -1038,23 +1095,26 @@ impl Firmware {
                     .as_ref()
                     .is_some_and(|pb| pb.vm_id == *id)
                 {
-                    self.pools.destroy_pb(slot);
+                    self.pools.entomb(slot, now);
                     n += 1;
                 }
             }
         }
-        if n != 0 {
-            let freed = if super::params::pb_reclaim() >= 2 {
+        let buried = self.pools.bury_due(now, super::params::pb_grace_ns());
+        if n != 0 || buried != 0 {
+            let freed = if buried != 0 && super::params::pb_reclaim() >= 2 {
                 self.pools.release_chunks()
             } else {
                 0
             };
             dev_dbg!(
                 self.dev(),
-                "PB: {} parameter buffers of dead VMs destroyed, {} chunks unbacked, {} backed\n",
+                "PB: {} parameter buffers of dead VMs entombed, {} buried, {} chunks unbacked, {} backed, {} in the graveyard\n",
                 n,
+                buried,
                 freed,
-                self.pools.pool.chunks()
+                self.pools.pool.chunks(),
+                self.pools.graveyard.len()
             );
         }
     }

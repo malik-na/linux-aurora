@@ -82,9 +82,14 @@ pub(crate) fn pb_idle_ns() -> u64 {
     (*module_parameters::g15_pb_idle_ms.value()).max(100) as u64 * 1_000_000
 }
 
-/// Posted blocks above which an idle engine reclaims the PB.
+/// Posted blocks above which an idle VM's PB is reclaimed.
 pub(crate) fn pb_reclaim_blocks() -> u32 {
     *module_parameters::g15_pb_reclaim_blocks.value()
+}
+
+/// Time a dead VM's PB is kept before it is freed, ns.
+pub(crate) fn pb_grace_ns() -> u64 {
+    *module_parameters::g15_pb_grace_ms.value() as u64 * 1_000_000
 }
 
 /// Whether FRAGMENT_BARRIERS is advertised and mapped to early tiling.

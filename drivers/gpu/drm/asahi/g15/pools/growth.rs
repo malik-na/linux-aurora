@@ -52,6 +52,10 @@ pub(crate) struct Ledger {
     pub(crate) max: u32,
     /// Blocks posted to the block list, cumulative (the block_ctl+4 producer is this modulo K).
     pub(crate) posted: u32,
+    /// Renders of this PB since its InitBM: the value of its counter record (manager +0x58),
+    /// which counts the PB's own renders, not the engine's draws (the native manager's words
+    /// +0x0/+0x10 follow this counter one per TA kick).
+    pub(crate) renders: u32,
     /// The next expected request counter.
     pub(crate) next_request: u32,
     /// A refusal at the maximum was logged since the last initialization.
@@ -81,19 +85,28 @@ impl Ledger {
             initial,
             max,
             posted: initial,
+            renders: 0,
             next_request: 0,
             refusal_logged: false,
             refusals: 0,
         }
     }
 
-    /// A re-initialization: the initial blocks are posted again, the request counter starts
-    /// over.
+    /// A re-initialization: the initial blocks are posted again, the request and render
+    /// counters start over.
     pub(crate) const fn reinit(&mut self) {
         self.posted = self.initial;
+        self.renders = 0;
         self.next_request = 0;
         self.refusal_logged = false;
         self.refusals = 0;
+    }
+
+    /// Counts `n` renders of this PB published in one prefix and returns the counter record's
+    /// new value.
+    pub(crate) const fn render(&mut self, n: u32) -> u32 {
+        self.renders = self.renders.wrapping_add(n);
+        self.renders
     }
 
     /// The live block_ctl+4 producer.
@@ -361,6 +374,21 @@ impl IdleClock {
     }
 }
 
+/// A dead PB's grave: its blocks stay out of the pool, its lists and manager untouched, until
+/// `grace_ns` after the VM's death (the native driver frees a torn-down queue's lists and
+/// blocks within about 30 s and keeps the manager image mapped).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Grave {
+    pub(crate) death_ns: u64,
+}
+
+impl Grave {
+    /// Whether the grace period has passed at `now_ns`.
+    pub(crate) const fn due(&self, now_ns: u64, grace_ns: u64) -> bool {
+        now_ns.wrapping_sub(self.death_ns) >= grace_ns
+    }
+}
+
 /// The halt epoch a request names (u64 at words 5..6).
 pub(crate) const fn request_epoch(request: &[u32; 14]) -> u64 {
     request[grow_request::EPOCH] as u64 | (request[grow_request::EPOCH + 1] as u64) << 32
@@ -491,6 +519,39 @@ mod tests {
                 count: 3
             }
         );
+    }
+
+    #[test]
+    fn render_counter_per_pb() {
+        // Two PBs render interleaved: each counter follows its own renders, not the draws.
+        let mut a = Ledger::new(true, 64, 4095);
+        let mut b = Ledger::new(true, 64, 4095);
+        assert_eq!((a.renders, b.renders), (0, 0));
+        let mut draw = 0;
+        for _ in 0..80 {
+            draw += 1;
+            assert_eq!(a.render(1), draw);
+        }
+        draw += 1;
+        assert_eq!(b.render(1), 1);
+        draw += 1;
+        assert_eq!(a.render(1), 81);
+        assert_eq!(draw, 82);
+        // A prefix of three renders counts three; a re-initialization starts over.
+        assert_eq!(b.render(3), 4);
+        b.reinit();
+        assert_eq!(b.renders, 0);
+        assert_eq!(b.render(1), 1);
+    }
+
+    #[test]
+    fn grave() {
+        let s = 1_000_000_000;
+        let g = Grave { death_ns: 100 * s };
+        assert!(!g.due(100 * s, 10 * s));
+        assert!(!g.due(109 * s, 10 * s));
+        assert!(g.due(110 * s, 10 * s));
+        assert!(g.due(u64::MAX, 10 * s));
     }
 
     #[test]
