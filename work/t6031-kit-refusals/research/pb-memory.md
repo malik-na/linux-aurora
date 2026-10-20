@@ -240,20 +240,65 @@ Why this is better than both A and a straight M1/M2 port, from the measurements:
 M1/M2 returns only when the queue dies); the synchronous path stays allocation-free (M1/M2 allocates while
 the firmware waits); and the per-boot accumulation that killed the 512 MiB heap today is reset at idle.
 
-### 3.3 What a boot has to prove (test plan, for Naeem)
+### 3.3 Implementation (fork branch `t6031/pb-adaptive`, on 027bd762)
 
-Package: see the final report. Measurements, each with `pb:` sampled by `~/pbsample.sh` (on the M3):
+Four commits, SOB only, host tests 12/12 (`tools/g15-host-tests/run.sh <tree>`), rustfmt clean, checkpatch
+--strict: only the module-parameter description strings exceed 100 columns, as the existing ones do.
 
-1. Boot, log in, idle 60 s: `pb: blocks 64/<p>/3072/4095 ... backed 256 chunks 2` with p the desktop's need
-   (expected below 1024), MemAvailable about 480 MiB above the 027bd762 boot's.
-2. native-checks and gpu-heat: pass, no growth beyond the desktop's, no wait.
-3. `dEQP-VK.memory.pipeline_barrier.graphics.host_write_index_buffer.1048576` alone, three times with 5 s
-   idle between: each run ends (Fail, image comparison, as before), `reclaims` increments between runs,
-   posted returns to 64, `chunks` falls back to 2 (with `g15_pb_reclaim=2`), no refusal, no fail-stop. On
-   027bd762 the third run would fail-stop.
-4. Full unfiltered dEQP (-j2, all three suites): results equal to `results/20261020-003900-deqp-full-pbheap512`
-   (706/948/796 pass), no fail-stop, `waits` small (tens at most), `refused 0`.
-5. Failure signatures and what they mean: a GPU fault on a PB page = a block was posted before its chunk was
-   mapped in the tiling VM (design bug, boot-fatal, back to A for the day); a hang right after a reclaim's
-   InitBM = the firmware does not accept re-initialization while running (set `g15_pb_reclaim=0`, keep 1-2);
-   `waits` in the hundreds = the reserve is too small for this GPU (raise the chunk count per refill).
+1. `drm/asahi: g15: Account PB backing and re-initialization in the growth ledger` (`pools/growth.rs`):
+   `backed`, `Answer::{Grant, Refuse, Wait}`, `refill_due`, `reinit`, `keep_chunks`, `reclaim_due`.
+2. `drm/asahi: g15: Back the parameter-buffer heap in 16 MiB chunks on demand` (`pools.rs`, `vm.rs`,
+   `engine.rs`): `Chunk` GEM objects (GPU-only, user VMs only; the window mirror forbids freeing
+   kernel-window tables, and the G13 driver's blocks are user-VM allocations), `VmState::map_heap`
+   (creation, publication) and `map_chunk` (flights at a refill), `Firmware::refill_backing` after the
+   answers, `Wait` leaves the request at the queue head; stats `backed chunks waits refills`.
+3. `drm/asahi: g15: Start the parameter buffer at 64 blocks` (`g15_pb_blocks`, default 64).
+4. `drm/asahi: g15: Reclaim the parameter buffer when the engine is idle` (`g15_pb_reclaim` 0/1/2, default
+   2; `g15_pb_idle_ms` 1000; `g15_pb_reclaim_blocks` 1024): `reclaim_check` in idle poll passes and at a
+   job's arrival at an idle engine (idle polls are not re-armed), re-init through `recovery.reinit`, chunk
+   freeing + `unmap_heap_above` in every open VM; stats `reclaims freed`.
+
+Memory at boot: 2 chunks = 32 MiB (was 512 MiB; 256 MiB before 027bd762). The VA range, K, the lists, the
+firmware maximum (3072) and the refusal bound are unchanged.
+
+### 3.4 What the boots have to prove (staged, one package per boot; the lead installs and boots)
+
+Three packages from the same commits, differing only in the compiled default of `g15_pb_reclaim` (kernel
+parameters are not available on the one-shot entry): `-r0` (chunked backing + 64-block start, no reclaim),
+`-r1` (+ re-initialization at idle, no freeing), `-r2` (+ freeing; the branch's default). Each boot with
+`pb:` sampled by `~/pbsample.sh` (every 165 ms) and `sudo -n dmesg | grep -c 'G15: fail-stop'` checked
+between workloads.
+
+Boot r0:
+1. Log in, idle 60 s: `pb: blocks 64/<p>/3072/4095 ... backed <b> chunks <c> waits 0`, p the desktop's
+   need (expected below 1024, so c at most 9), MemAvailable about 480 MiB above the 027bd762 boot's at the
+   same point. **Fail:** any `G15:` fault on a GVA in 0x70c0000000-0x70e0000000 (a block posted before its
+   chunk was mapped in the tiling VM: design bug, stop the series), or a fail-stop.
+2. native-checks, gpu-heat: pass; `refills` grows with posted, `waits` stays 0 or single digits.
+3. Full unfiltered dEQP (-j2, three suites): results equal to `results/20261020-003900-deqp-full-pbheap512`
+   (706/948/796 pass), `refused 0`, `waits` at most tens; posted ends near 2884 + the 64-vs-1024 start, i.e.
+   the same high-water mark, with `chunks` about 24 instead of a 512 MiB heap. The heavy test is run once
+   by the list; without reclaim a second run of the VK list is expected to fail-stop as today: do not run it.
+
+Boot r1 (re-initialization, no freeing): the DEVCTL 0x11 question.
+4. `dEQP-VK.memory.pipeline_barrier.graphics.host_write_index_buffer.1048576` alone, three times, 5 s idle
+   between (`cd ~/Projects/build-out/deqp/external/vulkancts/modules/vulkan && timeout 60 env
+   LD_LIBRARY_PATH=/opt/mesa-m3-g15c-native/lib VK_ICD_FILENAMES=/opt/mesa-m3-g15c-native/share/vulkan/icd.d/asahi_icd.aarch64.json
+   ./deqp-vk --deqp-case=dEQP-VK.memory.pipeline_barrier.graphics.host_write_index_buffer.1048576`).
+   **Pass:** each run ends in a few seconds (Fail, image comparison, as before); between runs the log shows
+   `PB heap: idle ... re-initialization to 64 at the next render` and the next run's log
+   `render allocators re-initialized; InitBM at draw N`; `reclaims` 1 then 2; posted falls back to 64 and
+   grows again; `refused 0`, no fail-stop. On 027bd762 the second or third run fail-stops. **Fail:** the run
+   after a reclaim hangs or fail-stops at its first render: the running firmware does not accept a fresh
+   InitBM without whatever the native DEVCTL 0x11 pair does; then r0 is the design (no reclaim) and the 0x11
+   pair is the next research item (the hv observer has its timing).
+5. Full unfiltered dEQP as in 3: same results; `reclaims` may be nonzero (idle gaps between suites).
+
+Boot r2 (freeing): 4 and 5 again; in 4 `chunks` falls back to 2 and `freed` counts the chunks, MemAvailable
+returns to within 40 MiB of the idle value after each reclaim; in 5 no fault, same results.
+**Fail:** a GVA fault in the heap range after a reclaim (a stale mapping to a freed chunk: a VM the reclaim
+did not reach published without `map_heap` dropping it; design bug), or a shmem/GEM warning at free.
+
+What proves it better than today: RAM 32 MiB at idle and after heavy use against 512 MiB always (and
+256 MiB before 027bd762); the heavy test's three runs end where 027bd762 fail-stops; the full dEQP results
+unchanged; no new stall (`waits` small, no `left unanswered`, no `fail-stop`).
