@@ -480,3 +480,22 @@ grace period (`g15_pb_grace_ms`, 10 s) before a dead PB's lists and blocks are f
 rewritten. Boot test: login + 2 min desktop with zero prefix failures, recoveries or faults, then §5.4. If
 the A-after-B FS timeout persists, the next candidates are the shared UMA managers and scene list (the hv
 two-queue captures can say whether the native queues name different UMA managers).
+
+### 5.7 Fix for r0pq (branch head in the final report) and the hv two-queue facts
+
+The hv agent's offline comparison of the two native queues (`pb-macos-observation.md` §6): each manager's
+counter counts only its own queue's TA kicks (manager +0x0/+0x10 = counter - 1), which confirms the
+diagnosis; the TA UMA manager (tail +0x2e) is the **same** record for both queues (shared UMA is native);
+per-queue TA words besides the manager at +0x24: +0x1c 0/1, +0x34 a per-queue legacy_empty record, register
+0x1c830 low word 0/1, +0x77c 1/3, +0x864/+0x86c stamp pointers in adjacent slots, +0x878 0/2 (three slot-like
+integers per queue); teardown unmaps block_ctl, counter and lists 8-26 s after the last use and keeps the
+manager image mapped unchanged for minutes.
+
+Change (third commit on `t6031/pb-per-queue`): the PB counter counts the PB's own renders since its InitBM
+(`Ledger::render`), a dead VM's PB rests in a graveyard for `g15_pb_grace_ms` (10 s) with its blocks out of
+the pool and its lists and manager untouched, and a buried PB's manager set is not rewritten for a new PB
+for 5 minutes. Package `pkgs/...-pbadapt-r0bpq-<hash>...` (reclaim off). Boot test: login + 2 min desktop
+(about 30 contexts): zero `prefix FAILED`, event 4, recoveries or faults; `pbs` about 2, `graves` small,
+`created` tracking `destroyed`; MemAvailable within 40 MiB of r2b's idle. Then §5.4. If the A-after-B FS
+timeout persists, the next candidates are the per-queue slot-like TA words (+0x1c, 0x1c830, +0x77c, +0x878)
+and the per-queue legacy_empty record, which our encoder leaves at the single-queue values.
