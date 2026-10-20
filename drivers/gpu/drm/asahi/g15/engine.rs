@@ -934,8 +934,9 @@ impl Firmware {
                 .render
                 .threshold
                 .w32(0, 2u32.wrapping_mul(pf.draw as u32))?;
-            // The VM's PB counter counts its own renders, then C1 once.
-            self.publish_pb(job.vm.slot, renders)?;
+            // The VM's PB counter counts its own renders; C1 names its page list before an
+            // InitBM.
+            self.publish_pb(job.vm.slot, renders, pf.initbm)?;
         }
         wmb();
         // The queue WRITEs: from here on a failure is uncertain (EIO).

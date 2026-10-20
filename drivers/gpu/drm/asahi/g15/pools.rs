@@ -267,8 +267,6 @@ pub(crate) struct Pools {
     /// PBs of dead VMs, kept until their grace period passed, and their block account.
     graveyard: KVec<(Grave, VmPb)>,
     graves: GraveLedger,
-    /// C1 names the initial pages (the same for every PB).
-    c1_written: bool,
     pub(crate) stats: PbStats,
 }
 
@@ -524,7 +522,6 @@ impl Pools {
             free_sets: KVec::new(),
             graveyard: KVec::new(),
             graves: GraveLedger::default(),
-            c1_written: false,
             stats: PbStats::default(),
         };
         let initial = super::params::pb_blocks();
@@ -993,16 +990,17 @@ impl Firmware {
     /// The PB counter of a publication with `renders` renders of the VM's PB, after the render
     /// threshold: the counter counts the PB's own renders since its InitBM (not the engine's
     /// draws: with several PBs those differ, and a counter ahead of the PB's renders stalls its
-    /// FS), and C1 = {0x07400000, 4 * initial blocks} is written once (every PB posts the same
-    /// initial size). An error leaves the prefix unpublished.
-    pub(crate) fn publish_pb(&mut self, slot: u32, renders: u32) -> Result {
+    /// FS); a prefix that carries InitBM (`initbm`) first writes C1 = {the PB's page list,
+    /// compact and shifted right by 4; 4 * initial blocks}: the firmware reads the page list at
+    /// C1's address, and each slot's list has its own. The priming prefix runs alone, so one C1
+    /// serves every PB in turn. An error leaves the prefix unpublished.
+    pub(crate) fn publish_pb(&mut self, slot: u32, renders: u32, initbm: bool) -> Result {
         let pb = self.pools.vms[slot as usize].as_mut().ok_or(ENOENT)?;
         let count = pb.ledger.render(renders);
         pb.set.counter.w32(0, count)?;
-        let initial = pb.ledger.initial;
-        if !self.pools.c1_written {
-            self.write_c1(&buffer::c1_record(initial))?;
-            self.pools.c1_written = true;
+        if initbm {
+            let initial = pb.ledger.initial;
+            self.write_c1(&buffer::c1_record(client::pb_page_list(slot), initial))?;
         }
         Ok(())
     }

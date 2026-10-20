@@ -164,10 +164,12 @@ pub(crate) mod grow_request {
     pub(crate) const EPOCH: usize = 5;
 }
 
-/// The C1 record written once per (re)initialization before the first render prefix that
-/// follows it: {0x07400000, 4 * initial blocks}.
-pub(crate) const fn c1_record(initial_blocks: u32) -> [u8; 16] {
-    let a = 0x07400000u32.to_le_bytes();
+/// The C1 record written before the render prefix that carries a PB's InitBM: the PB's page
+/// list as a compact address shifted right by 4 (0x07400000 for the list at 0x1074000000), and
+/// its initial pages, 4 * initial blocks. The firmware reads the page list at this address, so
+/// a PB whose list lives elsewhere needs its own C1 before its InitBM.
+pub(crate) const fn c1_record(page_list_gva: u64, initial_blocks: u32) -> [u8; 16] {
+    let a = ((compact(page_list_gva) >> 4) as u32).to_le_bytes();
     let b = (PAGES_PER_BLOCK * initial_blocks).to_le_bytes();
     [
         a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3], 0, 0, 0, 0, 0, 0, 0, 0,
@@ -364,10 +366,40 @@ mod tests {
         assert_eq!(get32(&b, 4), 1024);
         assert!(b[8..].iter().all(|&x| x == 0));
         assert_eq!(uma_pools::row(0x7010000000), 0x4000007010000000);
-        let c1 = c1_record(1024);
+        let c1 = c1_record(0x1074000000, 1024);
         assert_eq!(get32(&c1, 0), 0x07400000);
         assert_eq!(get32(&c1, 4), 4096);
         assert!(c1[8..].iter().all(|&x| x == 0));
+    }
+
+    /// The records of a PB in context slot 5 name slot 5's lists everywhere; nothing keeps
+    /// slot 0's bases (the first per-VM boots failed on a C1 that did).
+    #[test]
+    fn records_per_slot() {
+        let page0 = 0x1074000000u64;
+        let block0 = 0x70f0000000u64;
+        let page5 = page0 + 5 * PAGE_LIST_SIZE as u64;
+        let block5 = block0 + 5 * BLOCK_LIST_SIZE as u64;
+        let c1 = c1_record(page5, 64);
+        assert_eq!(get32(&c1, 0), 0x0740c800);
+        assert_ne!(get32(&c1, 0), 0x07400000);
+        assert_eq!((get32(&c1, 0) as u64) << 4, compact(page5));
+        assert_eq!(get32(&c1, 4), 256);
+        let p = pb_manager_image(
+            64,
+            3072,
+            page5,
+            block5,
+            0xfffffc2d00010000,
+            0xfffffc2d00020000,
+        );
+        assert_eq!(get64(&p, 0x1c), page5);
+        assert_eq!(get64(&p, 0x38), block5);
+        assert_ne!(get64(&p, 0x1c), page0);
+        assert_ne!(get64(&p, 0x38), block0);
+        // The page and block records name the heap, which is per VM at one GVA range.
+        assert_eq!(page_record(HEAP, 0), 0xc18000);
+        assert_eq!(block_record(HEAP, 63), 0xc18000 + 4 * 63);
     }
 
     #[test]
