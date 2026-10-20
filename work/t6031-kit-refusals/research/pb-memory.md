@@ -332,3 +332,108 @@ the reclaim commit, head 7b335a74): the clock is a core type (`IdleClock`, host-
 heavy scene, reclaim + free, refills in the next heavy scene, idle gap with a small job, the next arrival must
 reclaim) and is noted at the end of every poll pass and every publication as well as at a job's arrival.
 Package for the re-test: `pkgs/...-pbadapt-r2b-7b335a74...` (same plan as r2).
+
+## 5. Per-queue parameter buffers (design, 2026-10-20, on top of `t6031/pb-adaptive` 7b335a74)
+
+Asked by Naeem after the r2b boot passed (`results/20261020-1130-pb-adaptive`): the macOS/M1-M2 shape, keeping
+reserve-ahead chunked backing (no allocation in the reply path), bounded refusals, idle reclaim (now per
+queue) and freeing on destruction. Constraint unchanged: small start, no raised defaults.
+
+### 5.1 Facts
+
+- **How a render names its PB.** Every render record of ours carries the manager's firmware VA: TA work
+  +0x24, TA sequence +0x1c and f+0xc, FS work +0x28, FS sequence f+0x24, and InitBM +0x14 (`encode.rs`);
+  TA register #33 carries 4 x initial blocks, the scene record the scene list and misc record. All are
+  written per prefix from `AllocatorRefs`, so choosing a manager per render is a change of what
+  `render_refs()` returns, not of the records. Native: each TA command names its queue's manager at +0x24;
+  two queues, two managers, no block shared (`pb-macos-observation.md` §2).
+- **The slot word.** The public G13/G17 driver's InitBuffer record is `{tag, vm_slot, buffer_slot, unk_c,
+  block_count, buffer pointer, stamp}` (`fw/buffer.rs`), its vertex/fragment records and the scene carry
+  `buffer_slot` too; the host picks the slot from a 127-entry allocator ("127, not 128") and the firmware's
+  grow event names `buffer_slot` and `vm_slot`, which the ack echoes. Our InitBM is `{op, +4 ctx, +8 ?,
+  +0xc ?, +0x10 blocks, +0x14 manager, +0x1c stamp}`: the same shape, **+0x8 is the buffer slot and we have
+  always written 0**; the firmware's type-7 requests echo `slot 0` and we admit only slot 0. So the slot is
+  host-chosen and the request identifies the PB by it (plus the context). Whether our TA/FS records also
+  carry a slot word (as G13's do) is not known: the native captures with two queues can tell (the two
+  queues' TA commands differ at +0x24; any other differing word is a candidate). Firmware table size on G15:
+  not known; G13 has 127; we need at most 63 (one per live VM).
+- **Per-manager state.** Native: manager, block_ctl, counter, block list, page list and heap blocks are per
+  queue; InitBM once per queue at its first command; the request counter is per manager. Not stated as per
+  queue: the UMA managers, misc record and scene list. Ours today: one `AllocatorSet` holds all of them; the
+  recovery re-init rebuilds the whole set.
+- **InitBM and the priming prefix.** InitBM is issued in the first render prefix after boot and after a
+  re-initialization; that prefix holds a single render and nothing is published behind it until it retired
+  (a second render in it, or one behind it, crashed the firmware in its progress path: `engine.rs`
+  `publish_prefix_into`). A per-manager InitBM makes every VM's first render prefix such a priming prefix.
+  r1/r2b proved the running firmware accepts a fresh InitBM for a live PB with no halt and no DEVCTL 0x11.
+- **Destruction.** Native: a torn-down queue's block_ctl, counter, lists and most heap pages are unmapped
+  within 30 s; the manager image page and the queue-info record stay mapped. Ours: a `VmState` lives while
+  the client handle, a queue or a job of the VM does; failed jobs are retained until reboot and keep their
+  VM. Jobs of a VM are visible to the engine as flights and pending jobs (`job.vm`).
+- **Measured demand** (§2, §4): desktop 64 blocks per boot with no growth; dEQP tests up to about 1484
+  blocks for the heavy one; the reserve-ahead pool never made a request wait (`waits 0` in every boot).
+
+### 5.2 Design E: one PB per VM, blocks from one shared chunk pool
+
+1. **One PB per VM** (context): manager, block_ctl, counter, page list, block list and a ledger, created at
+   the VM's first render (lazily, so compute-only VMs cost nothing), InitBM with +0x8 = the VM's TTBAT slot
+   (1..63, unique among live VMs, below G13's 127) and +4 = the context. The UMA managers, misc record and
+   scene list stay shared (not per queue natively as far as observed; the UMA pools are the page-manager
+   allocators, a different mechanism). Per VM rather than per logical queue: our queues own no firmware
+   state and share one graph; a dEQP process is one VM; a compositor is one VM with one or two queues. The
+   memory shape equals the native one at one queue per process.
+2. **Growth request routing.** The request's `slot` word selects the VM's PB; `context` must agree (else
+   logged, unanswered). The reply echoes both. If the first boot shows the firmware ignoring +0x8 (requests
+   still say 0 for every VM), routing falls back to the context word alone (one PB per VM makes the context
+   sufficient); the design works either way, the slot is a cross-check.
+3. **Shared chunk pool, per-VM blocks.** The 16 MiB chunks stay global (`Pools`), kept one reserve chunk
+   ahead of the sum of all posted blocks, allocated after a reply as today. A VM's PB takes **runs of ten
+   blocks** (one growth step, 1.25 MiB) from the pool's free list and maps each run at its own GVA
+   (`PB_HEAP + block * 128 KiB`, the VM's private range: the same GVA names different pool blocks in
+   different VMs) in the one VM that owns the PB: a reply maps one 1.25 MiB run in one VM (page-table
+   writes, no RAM allocation); nothing is mapped into other VMs any more. The initial posting of a VM is
+   `g15_pb_blocks` blocks (default 64 = 8 MiB, the native value) from the pool. Pool cap 64 chunks (1 GiB)
+   as a bound, not a reservation; a VM's own range stays 4095 blocks and its firmware maximum 3072.
+4. **Idle at N apps:** 16 MiB reserve + 8 MiB per VM that has rendered: compositor alone 24 MiB (32 today);
+   compositor + 4 idle apps 56 MiB; with `g15_pb_blocks=8` (the M1/M2 start) 16 + 1 MiB per VM. Measured in
+   the boot per VM (new `pbvm:` stats lines) to choose the default later.
+5. **Reclaim per VM.** A VM idle (no flight, no pending job of that VM) for `g15_pb_idle_ms` with posted >
+   `g15_pb_reclaim_blocks` is re-initialized at its next render (its own InitBM; its blocks return to the
+   pool) while other VMs render on; a chunk whose blocks are all free and above the reserve is freed. The
+   priming-prefix rule applies to that VM's prefix only.
+6. **Destruction.** When a VM's last job retired and its handle is closed (the registry's prune and the
+   `VmState` drop), its blocks return to the pool and its lists and block_ctl are freed; the manager image
+   (0xac bytes) is retained until reboot, as the native driver keeps it mapped.
+7. **Refusals.** Per-VM ledger with the two-refusal bound at the VM's maximum; pool exhaustion (64 chunks)
+   makes requests wait, which the host deadline turns into that VM's failure, never a whole-GPU state.
+8. **Recovery.** A recovered render abort re-initializes every live PB (each VM's next render carries its
+   InitBM) and the shared set as today.
+
+How E meets the constraint: nothing is allocated for a VM until it renders; 8 MiB per rendering VM (the
+native value) and one 16 MiB reserve; growth on request from the pool; blocks return at idle and at
+destruction; no default is raised (the 1 GiB figure is a cap).
+
+### 5.3 Open facts to settle on the first boot (the design tolerates both outcomes)
+
+- Whether the firmware echoes InitBM +0x8 in the request's slot word with two live PBs (log the first
+  request of every VM: slot, context).
+- Whether two live managers are accepted by this firmware as on macOS (dEQP -j2 renders with two VMs).
+- Whether the UMA managers may stay shared across managers (any UMA pool fault or progress-path crash with
+  two VMs rendering concurrently says no).
+
+### 5.4 Per-boot test plan
+
+1. Boot, login, idle 60 s: `pb:` pool line `chunks 2 ... vms 1`, one `pbvm:` line (compositor) with 64
+   blocks; MemAvailable within 10 MiB of r2b's idle. Fail: fault in the heap range, fail-stop.
+2. Concurrency: desktop + `gpu-heat` (one VM) + dEQP VK baseline `-j2` (two more VMs): all three render at
+   once; each VM's first request logs its slot; `refused 0`, `waits 0`; no fault. Fail signatures: a fault
+   in 0x70c0000000-0x70e0000000 (a block posted to the wrong VM: routing bug), a request logged "not
+   answered: unknown slot/context" (routing fact missing), a firmware crash (shared UMA with two managers).
+3. Queue churn: a loop of 200 `vk-render-check` runs (a VM created, renders, destroyed each time): `vms`
+   returns to 1 after each, pool chunks fall back to 2 within `g15_pb_idle_ms`, no leak of blocks (the
+   pool's posted total returns to the compositor's 64).
+4. Per-VM reclaim while another is busy: the heavy test x3 in one terminal while `gpu-heat 30` runs in
+   another: the heavy VM reclaims between its runs (its `pbvm:` line back to 64) while gpu-heat's line stays
+   at its posted count and its rendering is uninterrupted (no gap in its frame log).
+5. Full unfiltered dEQP -j2: results equal to §4 r0; `refused 0`; the pool peak about 24 chunks or less
+   (two VMs at a time, each at its own peak).
