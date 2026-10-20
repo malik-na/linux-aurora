@@ -1,50 +1,46 @@
 // SPDX-License-Identifier: GPL-2.0-only OR MIT
 
-//! Render UMA/PB allocators, their spare set and parameter-buffer growth.
+//! Render UMA allocators, the per-VM parameter buffers and their shared block pool.
 //!
-//! Record layouts: [`super::fw::buffer`]; the ledger and request checks: [`growth`]
-//! (host-tested).
+//! Record layouts: [`super::fw::buffer`]; the ledger, the pool, request routing and the idle
+//! clock: [`growth`] (host-tested).
 //!
-//! - One PB heap range at [`super::hw::client::PB_HEAP`] (4096 blocks of 128 KiB of client VA,
-//!   GPU-only), **backed on demand** in chunks of [`growth::CHUNK_BLOCKS`] blocks (16 MiB): each
-//!   chunk is its own GEM object mapped at its fixed GVA in every user VM that can tile into it
-//!   (at VM creation; at refill into the VMs of the flights; at publication into the job's VM:
-//!   [`Firmware::map_heap`]) and nowhere in the firmware window (the firmware learns pages from
-//!   the page and block lists only). Initial `g15_pb_blocks` (64) blocks posted,
-//!   `Ledger::chunks_for` of them backed at boot (the posting and one reserve chunk); truthful
-//!   K = 4096 in every profile (PB reconstruction, also in recovery, synchronizes 8 * K bytes of
-//!   the block list: K = 0x26cd overran the 0x8000-byte list and crashed the second recovery).
-//! - Backing: a request is granted from the backed blocks above the posted count; after the
-//!   reply, when fewer than a reserve chunk remain, [`Firmware::refill_backing`] allocates the
-//!   next chunk (the TA runs on meanwhile). Only a reserve that ran dry makes a request wait: it
-//!   stays queued, the chunk is backed in the same pass and the next pass answers it.
-//! - Reclaim ([`Firmware::reclaim_check`], `g15_pb_reclaim`): posted blocks never come back
-//!   while a PB lives (the firmware recycles pages inside its own pool; the host has no view of
-//!   it), so an engine idle for `g15_pb_idle_ms` with more than `g15_pb_reclaim_blocks` posted
-//!   re-initializes the PB at its next render through the recovery re-init path (fresh lists
-//!   and manager, InitBM of the initial blocks, no halt) and frees the backing above the kept
-//!   chunks. The native driver does the equivalent by replacing a live queue's PB manager.
+//! - **One PB per VM** ([`VmPb`]): a manager, block_ctl and counter in the firmware window
+//!   (uncached, recycled when the VM dies), a page list and a block list of the VM's own at the
+//!   fixed client GVAs [`client::PB_PAGE_LIST`] and [`client::PB_BLOCK_LIST`], mapped in that VM
+//!   only, and a ledger. Created at the VM's first render (compute-only VMs have none), with an
+//!   InitBM naming the VM's context at +0x4 and as the PB's slot at +0x8; the firmware's
+//!   growth requests name the PB by that slot ([`growth::route`]). The native driver keeps one
+//!   manager per render queue the same way. The UMA managers, misc record and scene list stay
+//!   shared.
+//! - **One block pool** ([`growth::BlockPool`]): chunks of 128 blocks (16 MiB), each a GPU-only
+//!   GEM object, backed on demand and kept one reserve chunk ahead of the sum of the posted
+//!   blocks (refilled after the replies, never in the reply path). A PB's blocks are runs of up
+//!   to ten contiguous pool blocks, each run mapped at the PB's next heap GVAs
+//!   ([`client::PB_HEAP`] + block * 128 KiB: the same GVA names different pool blocks in
+//!   different VMs) in the owning VM at the moment it is posted. A request that finds the pool
+//!   empty waits at the head of the queue for the chunk this pass backs.
 //! - Growth: the event drain queues type-7 requests; [`Firmware::answer_growth`] answers each
-//!   one in the poll pass: type 7, PB slot 0, the context of a live published render prefix,
-//!   counter >= next expected, epoch == current halt count; write records `(G - 0x1000000000)
-//!   >> 15` at producer % K, barrier, block_ctl+4, barrier, then DEVCTL 7 with +4 = 1 echoing
-//!   slot, context, counter, position and epoch; +10 blocks per request. At the maximum, reply
-//!   +4 = 0: the firmware finishes with partial renders (Mesa's partial background/EOT
-//!   programs). Invalid requests are logged and left unanswered, so the host deadline applies.
-//!   Recovery drops pending requests (epoch gate).
-//! - Managers ASC-cached with an uncached spare set allocated with the graph; the first
-//!   recovered render abort swaps to the spare and never rewrites the cached set (the ASC may
-//!   still hold dirty lines of it); later aborts rewrite the spare in place. block_ctl stays
-//!   uncached when growth is on (a live host producer).
-//!
-//! The engine uses: [`Firmware::init_render_pools`] (render graph init: `false`; the priming
-//! prefix after an abort: `true` when [`super::recovery::Recovery::reinit`] is set), the VAs
-//! for its encoders ([`Pools::allocator_refs`]), [`Firmware::publish_pb`] after the render
-//! threshold, and [`Pools::write_stats`] for the debugfs `pb:` line.
+//!   one in the poll pass: routed to its PB, type 7, the context of a live published render
+//!   prefix of that VM, counter >= next expected, epoch == current halt count; take a run, map
+//!   it, write records `(G - 0x1000000000) >> 15` at producer % K, barrier, block_ctl+4,
+//!   barrier, then DEVCTL 7 with +4 = 1 echoing slot, context, counter, position and epoch. At
+//!   the PB's maximum, reply +4 = 0 (partial renders); after two refusals the requests are left
+//!   to the deadline. Invalid requests are logged and left unanswered. Recovery drops pending
+//!   requests (epoch gate) and marks every PB for re-initialization.
+//! - Reclaim ([`Firmware::reclaim_check`], `g15_pb_reclaim`): a VM with nothing published and
+//!   nothing pending for `g15_pb_idle_ms` and more than `g15_pb_reclaim_blocks` posted is
+//!   re-initialized at its next render (its own InitBM, no halt; proven on the one-PB driver)
+//!   and its blocks return to the pool now; with level 2 wholly free chunks above the reserve's
+//!   need are unbacked. A VM's death ([`Firmware::drain_dead_vms`]) returns its blocks, frees
+//!   its lists and recycles its manager set.
+//! - UMA managers ASC-cached with an uncached spare set; the first recovered render abort swaps
+//!   to the spare and never rewrites the cached set (the ASC may still hold dirty lines of it).
 
 mod growth;
 
 use core::fmt;
+use core::ptr::NonNull;
 use kernel::{
     device,
     prelude::*,
@@ -61,7 +57,7 @@ use super::Firmware;
 use crate::driver::AsahiDevice;
 use crate::gem;
 
-pub(crate) use growth::{Answer, IdleClock, Ledger};
+pub(crate) use growth::{Answer, BlockPool, IdleClock, Ledger};
 
 static_assert!(buffer::MAX_BLOCKS == sizes::PB_BLOCKS);
 static_assert!(buffer::MAX_PAGES == sizes::PB_PAGES);
@@ -71,57 +67,158 @@ static_assert!(buffer::MAX_BLOCKS as u64 * buffer::BLOCK_BYTES == client::PB_HEA
 static_assert!(buffer::PAGE_LIST_SIZE as u64 == client::PB_PAGE_LIST_SIZE);
 static_assert!(uma_manager::SEEDS == sizes::FREELIST_SEED);
 static_assert!(uma_pools::POOL_SIZE == sizes::POOL_SIZE);
-static_assert!(growth::MAX_CHUNKS * growth::CHUNK_BLOCKS == buffer::MAX_BLOCKS);
 static_assert!(CHUNK_BYTES % hw::PAGE == 0);
+static_assert!(buffer::BLOCK_BYTES % hw::PAGE == 0);
 
 /// Bytes of one backing chunk.
 pub(crate) const CHUNK_BYTES: u64 = growth::CHUNK_BLOCKS as u64 * buffer::BLOCK_BYTES;
+/// PB slots: one per TTBAT context (1..63; 0 is the kernel's).
+const PB_SLOTS: usize = sizes::MAX_VMS as usize + 1;
 
-/// Client GVA of backing chunk `i`.
-pub(crate) const fn chunk_gva(i: usize) -> u64 {
-    client::PB_HEAP + i as u64 * CHUNK_BYTES
-}
-
-/// One backing chunk of the heap: a GPU-only GEM object (never CPU-mapped, never in the
-/// firmware window), mapped into user VMs by [`VmState::map_heap`].
+/// A GPU-only (never CPU-mapped, never in the firmware window) backing chunk of the pool.
 pub(crate) struct Chunk {
     backing: gem::ObjectRef,
 }
 
+/// Checks that every page of a GEM object is one the UAT can name.
+fn check_pages(backing: &gem::ObjectRef) -> Result {
+    let sgt = gem::held_sg_table(&backing.gem)?;
+    for range in sgt.iter() {
+        let pa = range.dma_address() as u64;
+        let len = range.dma_len() as u64;
+        if pa == 0
+            || (pa | len) & (hw::PAGE - 1) != 0
+            || (pa + len - 1) & !(hw::PA_MASK | (hw::PAGE - 1)) != 0
+        {
+            return Err(EPERM);
+        }
+    }
+    Ok(())
+}
+
 impl Chunk {
-    /// Allocates a chunk: zeroed pages, pinned and DMA-mapped, each one the UAT can name.
     fn new(dev: &AsahiDevice) -> Result<Self> {
         let backing = gem::new_kernel_object_wc(dev, CHUNK_BYTES as usize)?;
-        let sgt = gem::held_sg_table(&backing.gem)?;
-        for range in sgt.iter() {
-            let pa = range.dma_address() as u64;
-            let len = range.dma_len() as u64;
-            if pa == 0
-                || (pa | len) & (hw::PAGE - 1) != 0
-                || (pa + len - 1) & !(hw::PA_MASK | (hw::PAGE - 1)) != 0
-            {
-                return Err(EPERM);
-            }
-        }
+        check_pages(&backing)?;
         Ok(Self { backing })
     }
 
-    /// The GEM object, for the VM mappings.
     pub(crate) fn gem(&self) -> ARef<gem::Object> {
         self.backing.gem.clone()
     }
 }
 
-/// The allocator state a rebuild after an abort moves to the spare.
+/// A CPU-written, GPU/firmware-read record object of one VM (its PB lists): a GEM object with
+/// a write-combined CPU mapping, mapped in that VM only.
+pub(crate) struct UserObject {
+    backing: gem::ObjectRef,
+    cpu: NonNull<u8>,
+    size: usize,
+}
+
+// SAFETY: The object refers to kernel memory shared with the GPU; every host access goes
+// through raw pointers with volatile or byte-copy semantics, serialized by the device lock.
+unsafe impl Send for UserObject {}
+// SAFETY: See `Send`.
+unsafe impl Sync for UserObject {}
+
+impl UserObject {
+    /// Allocates a zeroed object of `size` bytes (whole pages).
+    fn new(dev: &AsahiDevice, size: usize) -> Result<Self> {
+        let mut backing = gem::new_kernel_object_wc(dev, size)?;
+        check_pages(&backing)?;
+        let mut vmap = backing.vmap()?;
+        vmap.memset(0);
+        let cpu = NonNull::new(vmap.as_mut_ptr()).ok_or(ENOMEM)?;
+        core::mem::drop(vmap);
+        // INVARIANT: `cpu` came from the owned vmap that `backing` keeps for its lifetime.
+        Ok(Self { backing, cpu, size })
+    }
+
+    fn ptr(&self, offset: usize, len: usize) -> Result<*mut u8> {
+        if offset.checked_add(len).ok_or(EINVAL)? > self.size {
+            return Err(EINVAL);
+        }
+        // SAFETY: By the invariant `cpu` maps `size` bytes; `offset + len` was checked.
+        Ok(unsafe { self.cpu.as_ptr().add(offset) })
+    }
+
+    fn write(&self, offset: usize, bytes: &[u8]) -> Result {
+        let p = self.ptr(offset, bytes.len())?;
+        // SAFETY: `p` is valid for `bytes.len()` bytes of the mapping, which no Rust reference
+        // aliases.
+        unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len()) };
+        Ok(())
+    }
+
+    fn fill(&self, value: u8) -> Result {
+        let p = self.ptr(0, self.size)?;
+        // SAFETY: As for `write`.
+        unsafe { core::ptr::write_bytes(p, value, self.size) };
+        Ok(())
+    }
+
+    fn w64(&self, offset: usize, value: u64) -> Result {
+        let p = self.ptr(offset, 8)?;
+        if p as usize % 8 == 0 {
+            // SAFETY: `p` is valid and aligned for a u64.
+            unsafe { (p as *mut u64).write_volatile(value.to_le()) };
+            Ok(())
+        } else {
+            self.write(offset, &value.to_le_bytes())
+        }
+    }
+
+    pub(crate) fn gem(&self) -> ARef<gem::Object> {
+        self.backing.gem.clone()
+    }
+}
+
+/// The firmware-window records of one PB (uncached: rewritten in place at every
+/// re-initialization, as the spare set is), recycled from VM to VM.
+struct PbSet {
+    manager: Arc<FwObject>,
+    block_ctl: Arc<FwObject>,
+    counter: Arc<FwObject>,
+}
+
+/// A run of pool blocks posted to a PB.
+#[derive(Copy, Clone)]
+struct Run {
+    /// Pool block index of the first block.
+    pool_first: u32,
+    len: u32,
+}
+
+/// One VM's parameter buffer.
+pub(crate) struct VmPb {
+    /// The VM (`VmState::id`) and its context (= the PB's slot).
+    vm_id: u64,
+    slot: u32,
+    set: PbSet,
+    page_list: UserObject,
+    block_list: UserObject,
+    pub(crate) ledger: Ledger,
+    /// The posted runs, in heap order.
+    runs: KVec<Run>,
+    /// The next render prefix of this VM carries InitBM (first use, reclaim, recovery).
+    pub(crate) needs_init: bool,
+    /// The unanswered-at-the-maximum warning was given since the last initialization.
+    exhausted_logged: bool,
+    idle: IdleClock,
+    requests: u64,
+    grown: u64,
+    refused: u64,
+    inits: u64,
+}
+
+/// The shared allocator state a rebuild after an abort moves to the spare.
 struct AllocatorSet {
     /// TA (0) and FS (1) UMA managers and their counters.
     uma_manager: [Arc<FwObject>; 2],
     uma_counter: [Arc<FwObject>; 2],
-    block_ctl: Arc<FwObject>,
-    pb_counter: Arc<FwObject>,
     misc: Arc<FwObject>,
     scene_list: Arc<FwObject>,
-    pb_manager: Arc<FwObject>,
 }
 
 /// One render engine's UMA pools: eight GPU-only 4 MiB pools, the freelist seeded with them and
@@ -132,22 +229,24 @@ struct UmaEngine {
     pool_table: Arc<FwObject>,
 }
 
-/// Firmware VAs of the render allocators in use (after a rebuild possibly the spare set), as
-/// the TA/FS images, the scene and InitBM records name them.
+/// Firmware VAs of the render allocators a prefix of one VM names, as the TA/FS images, the
+/// scene and InitBM records name them.
 #[derive(Copy, Clone, Default)]
 pub(crate) struct AllocatorRefs {
     /// UMA managers of TA (0) and FS (1).
     pub(crate) uma_mgr: [u64; 2],
-    /// PB manager (InitBM +0x14, TA/FS work and sequences), scene list (scene +0x0/+0x8 at
-    /// `+ 4 * (draw % 48)`, TA work) and misc record (scene +0x40).
+    /// The VM's PB manager (InitBM +0x14, TA/FS work and sequences), the scene list (scene
+    /// +0x0/+0x8 at `+ 4 * (draw % 48)`, TA work) and misc record (scene +0x40).
     pub(crate) pb_mgr: u64,
     pub(crate) scene_list: u64,
     pub(crate) mgr_misc: u64,
-    /// Initial PB blocks of the current initialization (InitBM +0x10, TA register #33).
+    /// Initial PB blocks of the PB's current initialization (InitBM +0x10, TA register #33).
     pub(crate) init_blocks: u32,
+    /// The PB's slot (InitBM +0x8).
+    pub(crate) pb_slot: u32,
 }
 
-/// PB growth statistics.
+/// PB statistics over every VM.
 #[derive(Default)]
 pub(crate) struct PbStats {
     pub(crate) requests: u64,
@@ -158,37 +257,38 @@ pub(crate) struct PbStats {
     pub(crate) waits: u64,
     /// Chunks backed after boot.
     pub(crate) refills: u64,
-    /// Idle re-initializations, and the chunks they freed.
+    /// Idle re-initializations, and the chunks unbacked (reclaim and destruction).
     pub(crate) reclaims: u64,
     pub(crate) freed: u64,
+    /// PBs created and destroyed.
+    pub(crate) created: u64,
+    pub(crate) destroyed: u64,
 }
 
-/// Render allocator and PB state: the allocators, the PB ledger and the spare set.
+/// Render allocator and PB state: the shared allocators and their spare set, the block pool
+/// and the PBs.
 pub(crate) struct Pools {
     /// The GPU device, for logging (also used by recovery).
     pub(crate) dev: ARef<device::Device>,
-    /// The driver device, for chunk allocation.
+    /// The driver device, for GEM allocation.
     adev: ARef<AsahiDevice>,
-    /// The heap's backing chunks, from the heap base.
-    heap: KVec<Chunk>,
     uma: [UmaEngine; 2],
-    /// The allocator set in use.
+    /// The shared set in use.
     live: AllocatorSet,
     /// The never-exposed uncached set the first rebuild moves to; afterwards the replaced
     /// cached set, retained (only with `manager_cached`).
     spare: Option<AllocatorSet>,
     /// The spare set has not been used yet.
     spare_ready: bool,
-    pb_pages: Arc<FwObject>,
-    pb_blocks: Arc<FwObject>,
-    /// The PB growth ledger since the last (re)initialization.
-    pub(crate) ledger: Ledger,
-    /// C1 names the current initial pages.
+    /// The pool's accounting and its chunks by index.
+    pool: BlockPool,
+    heap: KVec<Option<Chunk>>,
+    /// The PBs by slot (context).
+    vms: KVec<Option<VmPb>>,
+    /// Manager sets of dead VMs, for the next PB.
+    free_sets: KVec<PbSet>,
+    /// C1 names the initial pages (the same for every PB).
     c1_written: bool,
-    /// The unanswered-at-the-maximum warning was given since the last initialization.
-    exhausted_logged: bool,
-    /// The engine's idle clock (nothing published, nothing pending), for the reclaim.
-    idle: IdleClock,
     pub(crate) stats: PbStats,
 }
 
@@ -226,7 +326,7 @@ fn alloc(
 
 /// Writes `count` little-endian records of `W` bytes, record `i` at `offset + i * W`, in chunks.
 fn write_records<const W: usize>(
-    object: &FwObject,
+    write: impl Fn(usize, &[u8]) -> Result,
     offset: usize,
     count: usize,
     record: impl Fn(usize) -> [u8; W],
@@ -240,7 +340,7 @@ fn write_records<const W: usize>(
         for j in 0..n {
             buf[j * W..(j + 1) * W].copy_from_slice(&record(i + j));
         }
-        object.write(offset + i * W, &buf[..n * W])?;
+        write(offset + i * W, &buf[..n * W])?;
         i += n;
     }
     Ok(())
@@ -311,37 +411,99 @@ fn gva(object: &FwObject) -> Result<u64> {
     object.gva.ok_or(EINVAL)
 }
 
+impl PbSet {
+    /// Allocates one PB's firmware-window records, uncached (a live host producer, and
+    /// rewritten in place at every re-initialization).
+    fn alloc(objects: &mut Objects) -> Result<Self> {
+        let small = |objects: &mut Objects, size: usize| {
+            alloc(objects, size as u64, Class::Fw, None, 0, true)
+        };
+        Ok(Self {
+            manager: small(objects, pb_manager::SIZE)?,
+            block_ctl: small(objects, block_ctl::SIZE)?,
+            counter: small(objects, counter::SIZE)?,
+        })
+    }
+}
+
+impl VmPb {
+    /// The PB's firmware maximum in blocks (`g15_pb_max_blocks`), at least the initial size and
+    /// at most the range.
+    fn soft_max(&self) -> u32 {
+        super::params::pb_max_blocks().clamp(self.ledger.initial, self.ledger.max)
+    }
+
+    /// Writes the PB's records for a (re)initialization: zeroed lists, the initial page and
+    /// block records of heap blocks `0..initial`, the manager image, block_ctl and counter.
+    /// The runs of the initial blocks are already posted by the caller.
+    fn init(&mut self) -> Result {
+        self.ledger.reinit();
+        self.exhausted_logged = false;
+        self.inits += 1;
+        let set = &self.set;
+        set.manager.fill(0, 0, pb_manager::SIZE)?;
+        set.block_ctl.fill(0, 0, block_ctl::SIZE)?;
+        set.counter.fill(0, 0, counter::SIZE)?;
+        self.page_list.fill(0)?;
+        self.block_list.fill(0)?;
+        let heap = client::PB_HEAP;
+        let initial = self.ledger.initial;
+        write_records(
+            |o, b| self.page_list.write(o, b),
+            0,
+            (buffer::PAGES_PER_BLOCK * initial) as usize,
+            |i| buffer::page_record(heap, i as u32).to_le_bytes(),
+        )?;
+        // The high word of every block record is zero (zero-filled, or only ever written 0).
+        write_records(
+            |o, b| self.block_list.write(o, b),
+            0,
+            initial as usize,
+            |i| le64(buffer::block_record(heap, i as u32) as u64),
+        )?;
+        set.manager.write(
+            0,
+            // The maximum the firmware sees is the asynchronous growth limit, below the range:
+            // the blocks above it answer the synchronous requests a partial render makes (the
+            // firmware cannot finish a scene at its maximum without them; refused, its TA
+            // stalls and no kill ends it: ticket malik-na/linux-aurora#69).
+            &buffer::pb_manager_image(
+                initial,
+                self.soft_max(),
+                client::PB_PAGE_LIST,
+                client::PB_BLOCK_LIST,
+                set.block_ctl.va,
+                set.counter.va,
+            ),
+        )?;
+        set.block_ctl.write(0, &buffer::block_ctl_image(initial))?;
+        set.counter.w32(0, 1)?;
+        crate::mem::sync();
+        Ok(())
+    }
+
+    /// Heap blocks posted as runs.
+    fn run_blocks(&self) -> u32 {
+        self.runs.iter().map(|r| r.len).sum()
+    }
+}
+
 impl Pools {
-    /// Allocates the render allocator objects: per engine the UMA pools, freelist, pool table,
-    /// manager and counter; block control, PB counter, misc, scene list and PB manager; the
-    /// uncached spare set; the PB page list and block list; the heap's first chunks (the
-    /// initial posting and one reserve chunk). Contents are written by
-    /// [`Firmware::init_render_pools`].
+    /// Allocates the shared render allocator objects (per engine the UMA pools, freelist, pool
+    /// table, manager and counter; misc and scene list; the uncached spare set) and backs the
+    /// pool's first chunks: one for the first PB's initial posting and the reserve. Contents are
+    /// written by [`Firmware::init_render_pools`].
     pub(crate) fn new(dev: &AsahiDevice, objects: &mut Objects) -> Result<Self> {
         let (uma0, manager0, counter0) = UmaEngine::alloc(objects, 0)?;
         let (uma1, manager1, counter1) = UmaEngine::alloc(objects, 1)?;
         let small = |objects: &mut Objects, size: usize, class| {
             alloc(objects, size as u64, class, None, 0, true)
         };
-        // A live producer with growth: firmware index 2.
-        let block_ctl_class = if tuning::PB_GROW {
-            Class::Fw
-        } else {
-            manager_class(Class::Fw)
-        };
-        let block_ctl = small(objects, block_ctl::SIZE, block_ctl_class)?;
-        let pb_counter = small(objects, counter::SIZE, Class::Fw)?;
-        let misc = small(objects, misc::SIZE, manager_class(Class::Fw))?;
-        let scene_list = small(objects, buffer::SCENE_LIST_SIZE, Class::Shared)?;
-        let pb_manager = small(objects, pb_manager::SIZE, manager_class(Class::Fw))?;
         let live = AllocatorSet {
             uma_manager: [manager0, manager1],
             uma_counter: [counter0, counter1],
-            block_ctl,
-            pb_counter,
-            misc,
-            scene_list,
-            pb_manager,
+            misc: small(objects, misc::SIZE, manager_class(Class::Fw))?,
+            scene_list: small(objects, buffer::SCENE_LIST_SIZE, Class::Shared)?,
         };
         // The uncached spare set for the first rebuild after an abort (manager_cached).
         let spare = if tuning::MANAGER_CACHED {
@@ -352,99 +514,199 @@ impl Pools {
             Some(AllocatorSet {
                 uma_manager: [m0, m1],
                 uma_counter: [c0, c1],
-                block_ctl: small(objects, block_ctl::SIZE, Class::Fw)?,
-                pb_counter: small(objects, counter::SIZE, Class::Fw)?,
                 misc: small(objects, misc::SIZE, Class::Fw)?,
                 scene_list: small(objects, buffer::SCENE_LIST_SIZE, Class::Shared)?,
-                pb_manager: small(objects, pb_manager::SIZE, Class::Fw)?,
             })
         } else {
             None
         };
-        let pb_pages = alloc(
-            objects,
-            buffer::PAGE_LIST_SIZE as u64,
-            Class::Shared,
-            Some((client::PB_PAGE_LIST, pte::LEAF_PB_LIST)),
-            0,
-            true,
-        )?;
-        let pb_blocks = alloc(
-            objects,
-            buffer::BLOCK_LIST_SIZE as u64,
-            Class::Shared,
-            Some((client::PB_BLOCK_LIST, pte::LEAF_PB_LIST)),
-            0,
-            true,
-        )?;
-        let mut ledger = Ledger::new(
-            tuning::PB_GROW,
-            super::params::pb_blocks(),
-            tuning::PB_MAX_BLOCKS,
-        );
-        let chunks = Ledger::chunks_for(ledger.initial) as usize;
-        let mut heap = KVec::with_capacity(growth::MAX_CHUNKS as usize, GFP_KERNEL)?;
-        for _ in 0..chunks {
-            heap.push(Chunk::new(dev)?, GFP_KERNEL)?;
-            ledger.back_chunk();
+        let mut heap = KVec::with_capacity(growth::POOL_CHUNKS as usize, GFP_KERNEL)?;
+        for _ in 0..growth::POOL_CHUNKS {
+            heap.push(None, GFP_KERNEL)?;
         }
-        dev_info!(
-            dev.as_ref(),
-            "G15: PB heap: {} blocks posted at start, {} chunks of {} MiB backed\n",
-            ledger.initial,
-            chunks,
-            CHUNK_BYTES >> 20
-        );
-        Ok(Self {
+        let mut vms = KVec::with_capacity(PB_SLOTS, GFP_KERNEL)?;
+        for _ in 0..PB_SLOTS {
+            vms.push(None, GFP_KERNEL)?;
+        }
+        let mut pools = Self {
             dev: dev.as_ref().into(),
             adev: dev.into(),
-            heap,
             uma: [uma0, uma1],
             live,
             spare_ready: spare.is_some(),
             spare,
-            pb_pages,
-            pb_blocks,
-            ledger,
+            pool: BlockPool::new(),
+            heap,
+            vms,
+            free_sets: KVec::new(),
             c1_written: false,
+            stats: PbStats::default(),
+        };
+        let initial = super::params::pb_blocks();
+        while pools.pool.chunks()
+            < (initial + growth::RESERVE_BLOCKS).div_ceil(growth::CHUNK_BLOCKS)
+        {
+            pools.back_chunk()?;
+        }
+        dev_info!(
+            dev.as_ref(),
+            "G15: PB: {} blocks per VM at its first render, {} chunks of {} MiB backed\n",
+            initial,
+            pools.pool.chunks(),
+            CHUNK_BYTES >> 20
+        );
+        Ok(pools)
+    }
+
+    /// Backs the next chunk.
+    fn back_chunk(&mut self) -> Result {
+        let c = self.pool.next_chunk().ok_or(ENOSPC)?;
+        let chunk = Chunk::new(&self.adev)?;
+        self.heap[c as usize] = Some(chunk);
+        self.pool.back_chunk(c);
+        Ok(())
+    }
+
+    /// Unbacks wholly free chunks above what the used blocks and the reserve need; returns how
+    /// many.
+    fn release_chunks(&mut self) -> u64 {
+        let mut n = 0;
+        while let Some(c) = self.pool.releasable() {
+            if !self.pool.unback_chunk(c) {
+                break;
+            }
+            self.heap[c as usize] = None;
+            n += 1;
+        }
+        self.stats.freed += n;
+        n
+    }
+
+    /// Maps run `run` of the pool as heap blocks `[first, first + len)` of `vm`.
+    fn map_run(&self, vm: &VmState, first: u32, run: Run) -> Result {
+        let c = (run.pool_first / growth::CHUNK_BLOCKS) as usize;
+        let chunk = self.heap[c].as_ref().ok_or(EINVAL)?;
+        let offset =
+            (run.pool_first % growth::CHUNK_BLOCKS) as usize * buffer::BLOCK_BYTES as usize;
+        let bytes = run.len as usize * buffer::BLOCK_BYTES as usize;
+        let gva = client::PB_HEAP + first as u64 * buffer::BLOCK_BYTES;
+        vm.map_pb_blocks(
+            &chunk.gem(),
+            offset..offset + bytes,
+            gva..gva + bytes as u64,
+        )
+    }
+
+    /// Takes and maps `count` blocks of the pool as the next heap blocks of PB `slot`
+    /// (several runs if the pool is fragmented); Ok(None) when the pool is empty. The pool is
+    /// refilled by the caller afterwards.
+    fn take_blocks(&mut self, slot: usize, vm: &VmState, count: u32) -> Result<Option<u32>> {
+        let mut taken = 0;
+        while taken < count {
+            let Some((pool_first, len)) = self.pool.take_run(count - taken) else {
+                break;
+            };
+            let run = Run { pool_first, len };
+            let first = self.vms[slot].as_ref().ok_or(ENOENT)?.run_blocks();
+            if let Err(e) = self.map_run(vm, first, run) {
+                self.pool.free_run(pool_first, len);
+                return Err(e);
+            }
+            let pb = self.vms[slot].as_mut().ok_or(ENOENT)?;
+            pb.runs.push(run, GFP_KERNEL)?;
+            taken += len;
+        }
+        Ok((taken != 0).then_some(taken))
+    }
+
+    /// Returns every block of PB `slot` to the pool and drops the VM's block mappings.
+    fn return_blocks(&mut self, slot: usize, vm: Option<&VmState>) {
+        let Some(pb) = self.vms[slot].as_mut() else {
+            return;
+        };
+        for run in pb.runs.iter() {
+            self.pool.free_run(run.pool_first, run.len);
+        }
+        pb.runs.clear();
+        if let Some(vm) = vm {
+            vm.unmap_pb_blocks();
+        }
+    }
+
+    /// Creates PB `slot` for `vm`: a recycled or new manager set, the VM's lists mapped at
+    /// their fixed GVAs, and the initial blocks taken from the pool (backing a chunk first if
+    /// the pool is short). The records are written and `needs_init` set; the next render prefix
+    /// of the VM carries InitBM.
+    fn create_pb(&mut self, vm: &VmState, objects: &mut Objects) -> Result {
+        let slot = vm.slot as usize;
+        let set = match self.free_sets.pop() {
+            Some(set) => set,
+            None => PbSet::alloc(objects)?,
+        };
+        let page_list = UserObject::new(&self.adev, buffer::PAGE_LIST_SIZE)?;
+        let block_list = UserObject::new(&self.adev, buffer::BLOCK_LIST_SIZE)?;
+        vm.map_pb_list(
+            &page_list.gem(),
+            client::PB_PAGE_LIST,
+            buffer::PAGE_LIST_SIZE,
+        )?;
+        vm.map_pb_list(
+            &block_list.gem(),
+            client::PB_BLOCK_LIST,
+            buffer::BLOCK_LIST_SIZE,
+        )?;
+        let ledger = Ledger::new(
+            tuning::PB_GROW,
+            super::params::pb_blocks(),
+            tuning::PB_MAX_BLOCKS,
+        );
+        self.vms[slot] = Some(VmPb {
+            vm_id: vm.id,
+            slot: vm.slot,
+            set,
+            page_list,
+            block_list,
+            ledger,
+            runs: KVec::new(),
+            needs_init: true,
             exhausted_logged: false,
             idle: IdleClock::default(),
-            stats: PbStats::default(),
-        })
+            requests: 0,
+            grown: 0,
+            refused: 0,
+            inits: 0,
+        });
+        self.stats.created += 1;
+        self.post_initial(slot, vm)
     }
 
-    /// Frees the backing chunks from index `keep` on (their VM mappings are dropped by the
-    /// caller); the RAM returns when the last mapping of a chunk is gone.
-    fn free_chunks(&mut self, keep: usize) -> usize {
-        let freed = self.heap.len().saturating_sub(keep);
-        self.heap.truncate(keep);
-        self.ledger.unback_to(self.heap.len() as u32);
-        freed
-    }
-
-    /// The GEM objects of the backed chunks, in heap order (for a new VM's mappings).
-    pub(crate) fn heap_gems(&self) -> Result<KVec<ARef<gem::Object>>> {
-        let mut gems = KVec::with_capacity(self.heap.len(), GFP_KERNEL)?;
-        for chunk in self.heap.iter() {
-            gems.push(chunk.gem(), GFP_KERNEL)?;
+    /// Takes the initial blocks of PB `slot` from the pool (backing chunks as needed) and
+    /// writes its records.
+    fn post_initial(&mut self, slot: usize, vm: &VmState) -> Result {
+        let initial = self.vms[slot].as_ref().ok_or(ENOENT)?.ledger.initial;
+        while self.pool.free_blocks() < initial {
+            self.back_chunk()?;
         }
-        Ok(gems)
-    }
-
-    /// Maps the backed chunks `vm` does not have yet.
-    pub(crate) fn map_heap(&self, vm: &VmState) -> Result {
-        vm.map_heap(self.heap.iter().map(Chunk::gem))
-    }
-
-    /// Backs one more chunk; the caller maps it where needed before posting from it.
-    fn back_chunk(&mut self) -> Result<ARef<gem::Object>> {
-        if self.heap.len() >= growth::MAX_CHUNKS as usize {
-            return Err(ENOSPC);
+        let mut have = 0;
+        while have < initial {
+            have += self.take_blocks(slot, vm, initial - have)?.ok_or(ENOSPC)?;
         }
-        let chunk = Chunk::new(&self.adev)?;
-        let gem = chunk.gem();
-        self.heap.push(chunk, GFP_KERNEL)?;
-        Ok(gem)
+        let pb = self.vms[slot].as_mut().ok_or(ENOENT)?;
+        pb.init()?;
+        pb.needs_init = true;
+        Ok(())
+    }
+
+    /// Destroys PB `slot` (its VM is gone or being replaced): blocks to the pool, lists freed,
+    /// the manager set recycled.
+    fn destroy_pb(&mut self, slot: usize) {
+        self.return_blocks(slot, None);
+        if let Some(pb) = self.vms[slot].take() {
+            // Recycling may fail only for lack of memory: then the set is retained with the
+            // Objects allocator, like every firmware object.
+            let _ = self.free_sets.push(pb.set, GFP_KERNEL);
+            self.stats.destroyed += 1;
+        }
     }
 
     /// First rebuild after an abort with cached managers: the cached set may still have dirty
@@ -462,9 +724,9 @@ impl Pools {
         );
     }
 
-    /// Writes the initial allocator state: UMA pools, freelists and managers; the PB lists,
-    /// manager and counters. The firmware owns them once published; rewritten (zeroed first)
-    /// only after a recovered render abort, followed by a fresh InitBM.
+    /// Writes the shared allocator state: UMA pools, freelists, managers, misc and scene list.
+    /// The firmware owns them once published; rewritten (zeroed first) only after a recovered
+    /// render abort, followed by a fresh InitBM of every PB.
     fn init(&mut self) -> Result {
         for e in 0..2 {
             let uma = &self.uma[e];
@@ -478,9 +740,12 @@ impl Pools {
             for (k, pool) in uma.pools.iter().enumerate() {
                 bases[k] = gva(pool)?;
             }
-            write_records(&uma.freelist, 0, uma_pools::POOLS * per_pool, |i| {
-                le64(bases[i / per_pool] + (i % per_pool) as u64 * uma_pools::SEED_BYTES)
-            })?;
+            write_records(
+                |o, b| uma.freelist.write(o, b),
+                0,
+                uma_pools::POOLS * per_pool,
+                |i| le64(bases[i / per_pool] + (i % per_pool) as u64 * uma_pools::SEED_BYTES),
+            )?;
             for (k, base) in bases.iter().enumerate() {
                 uma.pool_table
                     .w64(uma_pools::POOL_TABLE_STRIDE * k, uma_pools::row(*base))?;
@@ -497,137 +762,179 @@ impl Pools {
             )?;
             count.w32(0, 1)?;
         }
-
-        // PB: the initial blocks of the heap range posted, page limits at the maximum, the
-        // backing kept. In every profile the block list declares its real 4096-record capacity.
-        self.ledger.reinit();
-        self.exhausted_logged = false;
-        if tuning::PB_GROW {
-            // C1 names the initial pages again.
-            self.c1_written = false;
-        }
         let set = &self.live;
-        set.pb_manager.fill(0, 0, pb_manager::SIZE)?;
-        set.block_ctl.fill(0, 0, block_ctl::SIZE)?;
         set.misc.fill(0, 0, misc::SIZE)?;
-        set.pb_counter.fill(0, 0, counter::SIZE)?;
         set.scene_list.fill(0, 0, buffer::SCENE_LIST_SIZE)?;
-        if tuning::PB_GROW {
-            self.pb_pages.fill(0, 0, buffer::PAGE_LIST_SIZE)?;
-            self.pb_blocks.fill(0, 0, buffer::BLOCK_LIST_SIZE)?;
-        }
-        let heap = client::PB_HEAP;
-        let initial = self.ledger.initial;
-        write_records(
-            &self.pb_pages,
-            0,
-            (buffer::PAGES_PER_BLOCK * initial) as usize,
-            |i| buffer::page_record(heap, i as u32).to_le_bytes(),
-        )?;
-        // The high word of every block record is zero (zero-filled, or only ever written 0).
-        write_records(&self.pb_blocks, 0, initial as usize, |i| {
-            le64(buffer::block_record(heap, i as u32) as u64)
-        })?;
-        set.pb_manager.write(
-            0,
-            // The maximum the firmware sees is the asynchronous growth limit, below the mapped
-            // heap: the blocks above it answer the synchronous requests a partial render makes
-            // (the firmware cannot finish a scene at its maximum without them; refused, its TA
-            // stalls and no kill ends it: ticket malik-na/linux-aurora#69).
-            &buffer::pb_manager_image(
-                initial,
-                self.soft_max(),
-                gva(&self.pb_pages)?,
-                gva(&self.pb_blocks)?,
-                set.block_ctl.va,
-                set.pb_counter.va,
-            ),
-        )?;
-        set.block_ctl.write(0, &buffer::block_ctl_image(initial))?;
         set.misc.w32(misc::ENABLE, 1)?;
-        set.pb_counter.w32(0, 1)?;
         crate::mem::sync();
         Ok(())
     }
 
-    /// The allocator addresses the render encoders name (the live set: after the first
-    /// rebuild, the spare).
-    pub(crate) fn allocator_refs(&self) -> AllocatorRefs {
+    /// The allocator addresses the render encoders name for the VM of context `slot` (the
+    /// live shared set, after the first rebuild the spare); a VM without a PB (a compute-only
+    /// prefix) gets zero PB words.
+    pub(crate) fn allocator_refs(&self, slot: u32) -> AllocatorRefs {
         let set = &self.live;
+        let pb = self.vms.get(slot as usize).and_then(Option::as_ref);
         AllocatorRefs {
             uma_mgr: [set.uma_manager[0].va, set.uma_manager[1].va],
-            pb_mgr: set.pb_manager.va,
+            pb_mgr: pb.map_or(0, |pb| pb.set.manager.va),
             scene_list: set.scene_list.va,
             mgr_misc: set.misc.va,
-            init_blocks: self.ledger.initial,
+            init_blocks: pb.map_or(0, |pb| pb.ledger.initial),
+            pb_slot: pb.map_or(0, |pb| pb.slot),
         }
     }
 
-    /// The firmware's growth maximum in blocks (`g15_pb_max_blocks`), at least the initial size
-    /// and at most the mapped heap.
-    pub(crate) fn soft_max(&self) -> u32 {
-        super::params::pb_max_blocks().clamp(self.ledger.initial, self.ledger.max)
+    /// Whether PB `slot` exists and carries InitBM at its next render.
+    pub(crate) fn needs_init(&self, slot: u32) -> bool {
+        self.vms[slot as usize]
+            .as_ref()
+            .is_some_and(|pb| pb.needs_init)
     }
 
-    /// The debugfs line `pb: blocks initial/posted/firmware-max/max requests grown refused bad
-    /// backed chunks waits refills` (the first eight keys are stable; new ones are appended).
+    /// Posted blocks over every PB.
+    fn posted_total(&self) -> u32 {
+        self.vms.iter().flatten().map(|pb| pb.ledger.posted).sum()
+    }
+
+    /// The debugfs lines: `pb: blocks initial/posted/firmware-max/max requests grown refused bad
+    /// backed chunks waits refills reclaims freed pbs created destroyed` (posted summed over
+    /// the PBs; the first eight keys are stable, new ones are appended) and one `pbvm:` line per
+    /// PB.
     pub(crate) fn write_stats(&self, f: &mut impl fmt::Write) -> fmt::Result {
+        let initial = super::params::pb_blocks();
         writeln!(
             f,
-            "pb: blocks {}/{}/{}/{} requests {} grown {} refused {} bad {} backed {} chunks {} waits {} refills {} reclaims {} freed {}",
-            self.ledger.initial,
-            self.ledger.posted,
-            self.soft_max(),
-            self.ledger.max,
+            "pb: blocks {}/{}/{}/{} requests {} grown {} refused {} bad {} backed {} chunks {} waits {} refills {} reclaims {} freed {} pbs {} created {} destroyed {}",
+            initial,
+            self.posted_total(),
+            super::params::pb_max_blocks().clamp(initial, tuning::PB_MAX_BLOCKS),
+            tuning::PB_MAX_BLOCKS,
             self.stats.requests,
             self.stats.grown,
             self.stats.refused,
             self.stats.bad,
-            self.ledger.backed,
-            self.heap.len(),
+            self.pool.chunks() * growth::CHUNK_BLOCKS,
+            self.pool.chunks(),
             self.stats.waits,
             self.stats.refills,
             self.stats.reclaims,
-            self.stats.freed
-        )
+            self.stats.freed,
+            self.vms.iter().flatten().count(),
+            self.stats.created,
+            self.stats.destroyed
+        )?;
+        for pb in self.vms.iter().flatten() {
+            writeln!(
+                f,
+                "pbvm: ctx {} vm {} blocks {}/{}/{} requests {} grown {} refused {} inits {} init_pending {}",
+                pb.slot,
+                pb.vm_id,
+                pb.ledger.initial,
+                pb.ledger.posted,
+                pb.soft_max(),
+                pb.requests,
+                pb.grown,
+                pb.refused,
+                pb.inits,
+                pb.needs_init as u32
+            )?;
+        }
+        Ok(())
     }
 }
 
 impl Firmware {
-    /// (Re)initializes the render UMA managers, PB lists and PB manager. `rebuild`: the priming
-    /// prefix after a recovered abort: the first one moves to the uncached spare set, later
-    /// ones rewrite it in place.
+    /// (Re)initializes the shared render allocators. `rebuild`: after a recovered abort: the
+    /// first one moves to the uncached spare set, later ones rewrite it in place; every PB is
+    /// re-initialized at its VM's next render (its blocks return to the pool now).
     pub(crate) fn init_render_pools(&mut self, rebuild: bool) -> Result {
         if rebuild && self.pools.spare_ready {
             self.pools.take_spare();
         }
-        self.pools.init()
+        self.pools.init()?;
+        if rebuild {
+            for slot in 0..PB_SLOTS {
+                if self.pools.vms[slot].is_some() {
+                    self.pools.return_blocks(slot, None);
+                    let pb = self.pools.vms[slot].as_mut().ok_or(ENOENT)?;
+                    pb.needs_init = true;
+                    // The VM's block mappings stay until it posts again (`map_pb_blocks`
+                    // replaces them from heap block 0).
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The PB of `vm`, created at its first render; a PB of a dead VM that held the same
+    /// context is destroyed first. Returns the PB's slot. Called at publication, under the
+    /// device lock.
+    pub(crate) fn ensure_pb(&mut self, vm: &VmState) -> Result<u32> {
+        let slot = vm.slot as usize;
+        if let Some(pb) = self.pools.vms[slot].as_ref() {
+            if pb.vm_id == vm.id {
+                return Ok(vm.slot);
+            }
+            self.pools.destroy_pb(slot);
+        }
+        self.pools.create_pb(vm, &mut self.objects)?;
+        self.refill_backing();
+        dev_info!(
+            self.dev(),
+            "PB: ctx {} (VM {}) gets a parameter buffer of {} blocks; {} chunks backed\n",
+            vm.slot,
+            vm.id,
+            self.pools.vms[slot]
+                .as_ref()
+                .map_or(0, |pb| pb.ledger.initial),
+            self.pools.pool.chunks()
+        );
+        Ok(vm.slot)
+    }
+
+    /// Prepares the PB of `vm` for the InitBM its next render carries: a PB whose blocks were
+    /// returned (reclaim, recovery) gets its initial blocks from the pool again, its old block
+    /// mappings replaced from heap block 0, and its records rewritten; a fresh PB is already
+    /// prepared. Called at the publication of that render, before InitBM is encoded.
+    pub(crate) fn prepare_pb(&mut self, vm: &VmState) -> Result {
+        let slot = vm.slot as usize;
+        let pb = self.pools.vms[slot].as_ref().ok_or(ENOENT)?;
+        if !pb.runs.is_empty() {
+            return Ok(());
+        }
+        vm.unmap_pb_blocks();
+        self.pools.post_initial(slot, vm)?;
+        self.refill_backing();
+        Ok(())
     }
 
     /// The PB counters of a publication with renders, after the render threshold: the PB
     /// counter names the prefix's last draw, and C1 = {0x07400000, 4 * initial blocks} is
-    /// written once per (re)initialization. An error leaves the prefix unpublished.
-    pub(crate) fn publish_pb(&mut self, draw: u32) -> Result {
-        self.pools.live.pb_counter.w32(0, draw)?;
+    /// written once (every PB posts the same initial size). An error leaves the prefix
+    /// unpublished.
+    pub(crate) fn publish_pb(&mut self, slot: u32, draw: u32) -> Result {
+        let pb = self.pools.vms[slot as usize].as_mut().ok_or(ENOENT)?;
+        pb.set.counter.w32(0, draw)?;
+        let initial = pb.ledger.initial;
         if !self.pools.c1_written {
-            self.write_c1(&buffer::c1_record(self.pools.ledger.initial))?;
+            self.write_c1(&buffer::c1_record(initial))?;
             self.pools.c1_written = true;
         }
         Ok(())
     }
 
-    /// Answers the firmware's PB-growth requests, outside the event drain.
-    /// A request names PB slot 0, the context of a published render prefix and the next
-    /// request counter; anything else is logged and left unanswered (its TA then stays stalled
-    /// and the deadline applies). With growth up to ten more backed blocks of the heap are
-    /// written to unposted block-list records, then the live block_ctl+4 producer advances and
-    /// DEVCTL 7 reports success; at the maximum the reply is the refusal (+4 = 0), which lets
-    /// the firmware continue without new pages. The firmware imports the blocks itself: P is
-    /// never rewritten. A request with no backed block left waits: it stays at the head of the
-    /// queue for the next pass while this one backs a chunk. After the answers, the reserve is
-    /// refilled. A failed reply is logged; a request that cannot be processed at all (a
-    /// firmware object access failed) is logged and left unanswered like an invalid one. Never
-    /// fails: the poll pass continues.
+    /// Marks PB `slot` initialized: its InitBM was published.
+    pub(crate) fn pb_initialized(&mut self, slot: u32) {
+        if let Some(pb) = self.pools.vms[slot as usize].as_mut() {
+            pb.needs_init = false;
+        }
+    }
+
+    /// Answers the firmware's PB-growth requests, outside the event drain. A request that finds
+    /// the pool empty waits at the head of the queue for the next pass while this one backs a
+    /// chunk; after the answers the reserve is refilled. Never fails: the poll pass continues.
     pub(crate) fn answer_growth(&mut self) -> Result {
         // Only the requests queued before this pass: a reply's wait drains the rings and may
         // queue the next request, which the next pass answers (the device lock is released in
@@ -665,44 +972,27 @@ impl Firmware {
         Ok(())
     }
 
-    /// Backs chunks until the reserve is whole, mapping each into the VMs of the flights before
-    /// the ledger may post from it (a job's VM is mapped at publication, a new VM at creation).
-    /// A failure is logged and leaves the reserve short: requests then wait and the next pass
-    /// tries again.
+    /// Backs chunks until the pool's reserve is whole. A failure is logged and leaves the
+    /// reserve short: requests then wait and the next pass tries again.
     pub(crate) fn refill_backing(&mut self) {
-        // A pending re-initialization is about to drop the posted count: nothing to back for.
-        if self.recovery.reinit {
-            return;
-        }
-        while self.pools.ledger.refill_due() {
-            let result = (|| -> Result {
-                let gem = self.pools.back_chunk()?;
-                let i = self.pools.heap.len() - 1;
-                for flight in self.engine.flights.iter() {
-                    flight.job.vm.map_chunk(i, gem.clone())?;
-                }
-                Ok(())
-            })();
-            match result {
+        while self.pools.pool.refill_due() {
+            match self.pools.back_chunk() {
                 Ok(()) => {
-                    self.pools.ledger.back_chunk();
                     self.pools.stats.refills += 1;
                     dev_dbg!(
                         self.dev(),
-                        "PB heap: chunk {} backed ({} of {} blocks posted)\n",
-                        self.pools.heap.len() - 1,
-                        self.pools.ledger.posted,
-                        self.pools.ledger.backed
+                        "PB pool: {} chunks backed, {} blocks used\n",
+                        self.pools.pool.chunks(),
+                        self.pools.pool.used_blocks()
                     );
                 }
                 Err(e) => {
                     dev_warn!(
                         self.dev(),
-                        "PB heap: backing chunk {} failed: {} ({} of {} blocks posted)\n",
-                        self.pools.heap.len(),
+                        "PB pool: backing a chunk failed: {} ({} chunks, {} blocks used)\n",
                         e.to_errno(),
-                        self.pools.ledger.posted,
-                        self.pools.ledger.backed
+                        self.pools.pool.chunks(),
+                        self.pools.pool.used_blocks()
                     );
                     return;
                 }
@@ -710,32 +1000,74 @@ impl Firmware {
         }
     }
 
-    /// Maps the backed heap chunks into a job's VM before its publication.
-    pub(crate) fn map_heap(&self, vm: &VmState) -> Result {
-        self.pools.map_heap(vm)
+    /// Whether a flight or a pending job of VM `id` exists.
+    fn vm_busy(&self, id: u64) -> bool {
+        self.engine.flights.iter().any(|f| f.job.vm.id == id)
+            || self.engine.pending.iter().any(|j| j.vm.id == id)
     }
 
-    /// Notes the engine idle (nothing published, nothing pending) or busy; the idle time is
-    /// what [`Self::reclaim_check`] measures. Called at the end of every poll pass and
-    /// publication (the pass that retires the last flight is not re-armed) and at a job's
-    /// arrival.
+    /// Notes every PB's VM idle (nothing of it published or pending) or busy. Called at the
+    /// end of every poll pass and publication (the pass that retires the last flight is not
+    /// re-armed) and at a job's arrival.
     pub(crate) fn note_idle(&mut self) {
-        let idle = self.engine.flights.is_empty() && self.engine.pending.is_empty();
-        self.pools.idle.note(idle, super::engine::now_ns());
+        let now = super::engine::now_ns();
+        for slot in 0..PB_SLOTS {
+            let Some(pb) = self.pools.vms[slot].as_ref() else {
+                continue;
+            };
+            let busy = self.vm_busy(pb.vm_id);
+            if let Some(pb) = self.pools.vms[slot].as_mut() {
+                pb.idle.note(!busy, now);
+            }
+        }
     }
 
-    /// Reclaims the PB when the engine has been idle for `g15_pb_idle_ms` with more than
-    /// `g15_pb_reclaim_blocks` posted: the next render prefix re-initializes the render
-    /// allocators and the PB (InitBM of the initial blocks; `recovery.reinit`, as after a
-    /// recovered abort but with no halt), and with `g15_pb_reclaim` 2 the backing chunks above
-    /// those of the initial posting and the reserve are freed now, unmapped from every open VM
-    /// (a VM that publishes later drops its stale mappings at [`VmState::map_heap`]). Called
-    /// under the device lock when a job arrives at an idle engine and in idle poll passes.
+    /// Returns the blocks of dead VMs (`VmState` dropped: handle closed, no queue, no job) to
+    /// the pool and recycles their manager sets; with reclaim level 2 unbacks the chunks that
+    /// became wholly free above the reserve's need. Called under the device lock in idle poll
+    /// passes and at a job's arrival.
+    pub(crate) fn drain_dead_vms(&mut self) {
+        let dead = self.vms.take_dead();
+        if dead.is_empty() {
+            return;
+        }
+        let mut n = 0;
+        for id in dead.iter() {
+            for slot in 0..PB_SLOTS {
+                if self.pools.vms[slot]
+                    .as_ref()
+                    .is_some_and(|pb| pb.vm_id == *id)
+                {
+                    self.pools.destroy_pb(slot);
+                    n += 1;
+                }
+            }
+        }
+        if n != 0 {
+            let freed = if super::params::pb_reclaim() >= 2 {
+                self.pools.release_chunks()
+            } else {
+                0
+            };
+            dev_dbg!(
+                self.dev(),
+                "PB: {} parameter buffers of dead VMs destroyed, {} chunks unbacked, {} backed\n",
+                n,
+                freed,
+                self.pools.pool.chunks()
+            );
+        }
+    }
+
+    /// Reclaims the PBs of idle VMs (`g15_pb_reclaim`): a PB whose VM has had nothing published
+    /// and nothing pending for `g15_pb_idle_ms` with more than `g15_pb_reclaim_blocks` posted is
+    /// marked for re-initialization at its VM's next render and its blocks return to the pool
+    /// now; with level 2 the chunks that became wholly free above the reserve's need are
+    /// unbacked. Not while a recovery is pending. Called under the device lock when a job
+    /// arrives and in idle poll passes.
     pub(crate) fn reclaim_check(&mut self) {
         let level = super::params::pb_reclaim();
         if level == 0
-            || !self.engine.flights.is_empty()
-            || !self.engine.pending.is_empty()
             || self.recovery.reinit
             || self.recovery.armed.is_some()
             || self.engine.frozen
@@ -743,46 +1075,55 @@ impl Firmware {
         {
             return;
         }
-        let idle_ns = self.pools.idle.idle_ns(super::engine::now_ns());
+        let now = super::engine::now_ns();
         let floor = super::params::pb_reclaim_blocks();
-        if !self
-            .pools
-            .ledger
-            .reclaim_due(floor, idle_ns, super::params::pb_idle_ns())
-        {
-            return;
-        }
-        self.recovery.reinit = true;
-        self.pools.stats.reclaims += 1;
-        let posted = self.pools.ledger.posted;
-        let mut freed = 0;
-        if level >= 2 {
-            let keep = self.pools.ledger.keep_chunks() as usize;
-            freed = self.pools.free_chunks(keep);
-            self.pools.stats.freed += freed as u64;
-            // The mappings hold the chunks' pages: drop them in every VM that could publish.
-            match self.vms.open() {
-                Ok(states) => {
-                    for state in states.iter() {
-                        state.unmap_heap_above(keep);
-                    }
-                }
-                Err(e) => dev_warn!(
-                    self.dev(),
-                    "PB heap: reclaim could not walk the VMs: {}\n",
-                    e.to_errno()
-                ),
+        let min_idle = super::params::pb_idle_ns();
+        let mut reclaimed = 0;
+        for slot in 0..PB_SLOTS {
+            let Some(pb) = self.pools.vms[slot].as_ref() else {
+                continue;
+            };
+            if pb.needs_init
+                || self.vm_busy(pb.vm_id)
+                || !pb.ledger.reclaim_due(floor, pb.idle.idle_ns(now), min_idle)
+            {
+                continue;
             }
+            let (ctx, posted, idle_ns) = (pb.slot, pb.ledger.posted, pb.idle.idle_ns(now));
+            self.pools.return_blocks(slot, None);
+            if let Some(pb) = self.pools.vms[slot].as_mut() {
+                pb.needs_init = true;
+            }
+            self.pools.stats.reclaims += 1;
+            reclaimed += 1;
+            dev_info!(
+                self.dev(),
+                "PB: ctx {} idle {} ms with {} blocks posted: re-initialization at its next render\n",
+                ctx,
+                idle_ns / 1_000_000,
+                posted
+            );
         }
-        dev_info!(
-            self.dev(),
-            "PB heap: idle {} ms with {} blocks posted: re-initialization to {} at the next render, {} chunks freed, {} backed\n",
-            idle_ns / 1_000_000,
-            posted,
-            self.pools.ledger.initial,
-            freed,
-            self.pools.heap.len()
-        );
+        if reclaimed != 0 && level >= 2 {
+            let freed = self.pools.release_chunks();
+            dev_info!(
+                self.dev(),
+                "PB pool: {} chunks unbacked after reclaim, {} backed ({} blocks used)\n",
+                freed,
+                self.pools.pool.chunks(),
+                self.pools.pool.used_blocks()
+            );
+        }
+    }
+
+    /// The VM of PB `slot` among the flights (for mapping a grant), if it is rendering.
+    fn rendering_vm(&self, slot: u32) -> Option<Arc<VmState>> {
+        self.engine
+            .flights
+            .iter()
+            .enumerate()
+            .find(|(i, f)| self.receipts(*i).renders != 0 && f.job.vm.slot == slot)
+            .map(|(_, f)| f.job.vm.clone())
     }
 
     /// Processes one growth request: Ok(false) when it waits for backing.
@@ -791,90 +1132,106 @@ impl Firmware {
         let epoch =
             ctl.r32(control::HALT_COUNT)? as u64 | (ctl.r32(control::HALT_COUNT + 4)? as u64) << 32;
         let ctx = request[buffer::grow_request::CONTEXT];
-        let live = self
-            .engine
-            .flights
-            .iter()
-            .enumerate()
-            .any(|(i, f)| self.receipts(i).renders != 0 && f.job.vm.slot == ctx);
+        let slot_word = request[buffer::grow_request::SLOT];
+        let counter = request[buffer::grow_request::COUNTER];
+        let position = request[buffer::grow_request::POSITION];
+        let target = growth::route(request).filter(|&s| (s as usize) < PB_SLOTS);
+        let vm = target.and_then(|s| self.rendering_vm(s));
+        let (slot, vm) = match (target, vm) {
+            (Some(s), Some(vm)) if self.pools.vms[s as usize].is_some() => (s as usize, vm),
+            _ => {
+                self.pools.stats.bad += 1;
+                dev_warn!(
+                    self.dev(),
+                    "PB growth request not answered: ctx {} slot {} counter {}: no rendering PB for it\n",
+                    ctx,
+                    slot_word,
+                    counter
+                );
+                return Ok(true);
+            }
+        };
+        let pb = self.pools.vms[slot].as_ref().ok_or(ENOENT)?;
         // At the maximum, after the refusals, the request is left to the deadline: a scene the
         // firmware cannot finish without more PB stalls its TA, and the host deadline recovers.
-        if self.pools.ledger.exhausted() {
+        if pb.ledger.exhausted() {
             self.pools.stats.bad += 1;
-            if !self.pools.exhausted_logged {
-                self.pools.exhausted_logged = true;
+            let (refusals, max) = (pb.ledger.refusals, pb.ledger.max);
+            let pb = self.pools.vms[slot].as_mut().ok_or(ENOENT)?;
+            if !pb.exhausted_logged {
+                pb.exhausted_logged = true;
                 dev_warn!(
                     self.dev(),
                     "PB growth request {} ctx {} left unanswered: {} refusals at the maximum ({} blocks); the host deadline applies\n",
-                    request[buffer::grow_request::COUNTER],
+                    counter,
                     ctx,
-                    self.pools.ledger.refusals,
-                    self.pools.ledger.max
+                    refusals,
+                    max
                 );
             }
             return Ok(true);
         }
         // A request from before a halt has no authority over the PB now.
-        if !self
-            .pools
-            .ledger
-            .admits(request, tuning::PB_GROW, live, epoch)
-        {
+        if !pb.ledger.admits(request, tuning::PB_GROW, true, epoch) {
             self.pools.stats.bad += 1;
             dev_warn!(
                 self.dev(),
-                "PB growth request not answered: ctx {} slot {} counter {} (next {}) epoch {:#x} (now {:#x}) live {} pb_grow {}\n",
+                "PB growth request not answered: ctx {} slot {} counter {} (next {}) epoch {:#x} (now {:#x}) pb_grow {}\n",
                 ctx,
-                request[buffer::grow_request::SLOT],
-                request[buffer::grow_request::COUNTER],
-                self.pools.ledger.next_request,
+                slot_word,
+                counter,
+                pb.ledger.next_request,
                 growth::request_epoch(request),
                 epoch,
-                live as u32,
                 tuning::PB_GROW as u32
             );
             return Ok(true);
         }
-        let (first, n) = match self.pools.ledger.accept(request) {
+        let free = self.pools.pool.free_blocks();
+        let pb = self.pools.vms[slot].as_mut().ok_or(ENOENT)?;
+        let (first, want) = match pb.ledger.accept(request, free) {
             Answer::Grant { first, count } => (first, count),
-            Answer::Refuse => (self.pools.ledger.posted, 0),
+            Answer::Refuse => (pb.ledger.posted, 0),
             Answer::Wait => return Ok(false),
         };
+        pb.requests += 1;
+        // Take and map the run(s), then the records before their producer, the producer
+        // before the reply.
+        let n = if want != 0 {
+            self.pools.take_blocks(slot, &vm, want)?.unwrap_or(0)
+        } else {
+            0
+        };
         let heap = client::PB_HEAP;
+        let pb = self.pools.vms[slot].as_mut().ok_or(ENOENT)?;
         for b in first..first + n {
-            self.pools.pb_blocks.w64(
+            pb.block_list.w64(
                 buffer::block_record_offset(b),
                 buffer::block_record(heap, b) as u64,
             )?;
         }
         if n != 0 {
-            // Records before their producer.
             crate::mem::sync();
-            let producer = self.pools.ledger.post(n);
-            self.pools
-                .live
-                .block_ctl
-                .w32(block_ctl::PRODUCER, producer)?;
-            // Producer before the reply.
+            let producer = pb.ledger.post(n);
+            pb.set.block_ctl.w32(block_ctl::PRODUCER, producer)?;
             crate::mem::sync();
+            pb.grown += n as u64;
             self.pools.stats.grown += n as u64;
         } else {
+            pb.refused += 1;
             self.pools.stats.refused += 1;
         }
         let reply = DevCtl {
             words: buffer::grow_reply_words(request, n != 0),
         };
         let ret = self.devctl(&reply, true);
-        let ledger = self.pools.ledger;
-        let soft = self.pools.soft_max();
+        let pb = self.pools.vms[slot].as_mut().ok_or(ENOENT)?;
+        let soft = pb.soft_max();
+        let ledger = pb.ledger;
         // Every answer past the firmware's maximum is logged with its TA position: a scene
         // that keeps asking at one position is a runaway, one that advances is large.
         let past_soft = n != 0 && ledger.posted > soft;
-        let info = self.pools.ledger.log_answer(request, n, ret.is_err()) || past_soft;
-        let (counter, position) = (
-            request[buffer::grow_request::COUNTER],
-            request[buffer::grow_request::POSITION],
-        );
+        let info = pb.ledger.log_answer(request, n, ret.is_err()) || past_soft;
         let ret = match ret {
             Ok(()) => 0,
             Err(e) => e.to_errno(),
@@ -882,9 +1239,10 @@ impl Firmware {
         if info {
             dev_info!(
                 self.dev(),
-                "PB growth request {} ctx {} position {}: +{} blocks ({} of {}), DEVCTL 7: {}\n",
+                "PB growth request {} ctx {} slot {} position {}: +{} blocks ({} of {}), DEVCTL 7: {}\n",
                 counter,
                 ctx,
+                slot_word,
                 position,
                 n,
                 ledger.posted,
@@ -894,9 +1252,10 @@ impl Firmware {
         } else {
             dev_dbg!(
                 self.dev(),
-                "PB growth request {} ctx {} position {}: +{} blocks ({} of {}), DEVCTL 7: {}\n",
+                "PB growth request {} ctx {} slot {} position {}: +{} blocks ({} of {}), DEVCTL 7: {}\n",
                 counter,
                 ctx,
+                slot_word,
                 position,
                 n,
                 ledger.posted,

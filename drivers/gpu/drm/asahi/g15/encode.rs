@@ -515,6 +515,8 @@ pub(crate) struct RenderRefs {
     pub(crate) scene_list: u64,
     pub(crate) mgr_misc: u64,
     pub(crate) pb_init_blocks: u32,
+    /// The PB's slot (InitBM +0x8).
+    pub(crate) pb_slot: u32,
 }
 
 /// Addresses of one pass slot.
@@ -1004,12 +1006,20 @@ pub(crate) fn scene(r: &RenderRefs, p: &PassRefs, n: u64) -> [u8; scene::SIZE] {
     x
 }
 
-/// The InitBM record that (re)initializes the PB before a render.
-pub(crate) fn initbm(ctx: u32, pb_init_blocks: u32, pb_mgr: u64, tta: u32) -> [u8; initbm::SIZE] {
+/// The InitBM record that (re)initializes a PB before a render: the context, the PB's slot
+/// (the firmware's growth requests echo it), the initial blocks and the manager.
+pub(crate) fn initbm(
+    ctx: u32,
+    slot: u32,
+    pb_init_blocks: u32,
+    pb_mgr: u64,
+    tta: u32,
+) -> [u8; initbm::SIZE] {
     let mut x = [0u8; initbm::SIZE];
 
     put32(&mut x, 0x0, work::op::INIT_BM);
     put32(&mut x, initbm::CTX, ctx);
+    put32(&mut x, initbm::SLOT, slot);
     put32(&mut x, initbm::BLOCKS, pb_init_blocks);
     put64(&mut x, initbm::PB_MANAGER, pb_mgr);
     put32(&mut x, initbm::STAMP, tta);

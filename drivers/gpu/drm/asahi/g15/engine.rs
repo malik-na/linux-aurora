@@ -515,8 +515,10 @@ impl Firmware {
         if self.engine.flights.capacity() < sizes::FLIGHTS {
             self.engine.flights.reserve(sizes::FLIGHTS, GFP_KERNEL)?;
         }
-        // A job arriving at an idle engine: the PB reclaim, if due, happens before its
-        // publication (idle polls are not re-armed, so this is where a long idle ends).
+        // A job arriving at an idle engine: dead VMs are drained and the PB reclaims that are
+        // due happen before its publication (idle polls are not re-armed, so this is where a
+        // long idle ends).
+        self.drain_dead_vms();
         self.reclaim_check();
         self.engine.pending.push(job.clone(), GFP_KERNEL)?;
         job.progress.set_pending(true);
@@ -643,10 +645,11 @@ impl Firmware {
         n
     }
 
-    /// The allocator and graph addresses the render encoders name.
-    fn render_refs(&self) -> RenderRefs {
+    /// The allocator and graph addresses the render encoders name for the VM of context
+    /// `slot`.
+    fn render_refs(&self, slot: u32) -> RenderRefs {
         let r = &self.graph.render;
-        let a = self.pools.allocator_refs();
+        let a = self.pools.allocator_refs(slot);
         RenderRefs {
             hwdata: self.cfg.layout.hwdata_va,
             notifier: r.notifier.va,
@@ -659,6 +662,7 @@ impl Firmware {
             scene_list: a.scene_list,
             mgr_misc: a.mgr_misc,
             pb_init_blocks: a.init_blocks,
+            pb_slot: a.pb_slot,
         }
     }
 
@@ -692,8 +696,14 @@ impl Firmware {
     }
 
     fn publish_prefix_into(&mut self, job: &Arc<Job>, f: &mut Flight) -> Result {
-        // Every backed PB chunk is mapped in the job's VM before anything of it is visible.
-        self.map_heap(&job.vm)?;
+        // A job with renders uses its VM's parameter buffer, made at the VM's first render;
+        // one that carries InitBM at this prefix primes it alone.
+        let pb_init = if (job.progress.sent()..job.progress.count()).any(|k| is_render(job, k)) {
+            self.ensure_pb(&job.vm)?;
+            self.pools.needs_init(job.vm.slot)
+        } else {
+            false
+        };
         let overlap = !self.engine.flights.is_empty();
         let mut mixed = tuning::MIXED_PREFIX;
         let mut pf = Prefix {
@@ -745,7 +755,7 @@ impl Firmware {
                     // registered manager until it completes, and the firmware's
                     // progress/preemption path dereferences the missing manager: RTKit crash
                     // at F+0x35568, FAR 0x58.
-                    if renders != 0 && (self.recovery.reinit || self.engine.draw == 0) {
+                    if renders != 0 && (self.recovery.reinit || pb_init) {
                         break;
                     }
                     let geo = Geometry::new(&r.cmd, 0);
@@ -816,7 +826,6 @@ impl Firmware {
             // After a recovered render abort the allocator state is not trusted. The priming
             // prefix (also the first after boot) retires before anything is published behind
             // it.
-            rebuild = self.recovery.reinit || self.engine.draw == 0;
             if self.recovery.reinit {
                 self.init_render_pools(true)?;
                 dev_info!(
@@ -824,6 +833,12 @@ impl Firmware {
                     "G15: render allocators re-initialized; InitBM at draw {}\n",
                     self.engine.draw + 1
                 );
+            }
+            // The VM's PB is (re)initialized at this render: first use, reclaim or recovery.
+            let pb_init = self.pools.needs_init(job.vm.slot);
+            rebuild = self.recovery.reinit || pb_init;
+            if pb_init {
+                self.prepare_pb(&job.vm)?;
             }
         }
         if self.engine.scratch.is_none() {
@@ -846,7 +861,7 @@ impl Firmware {
                 last_render = Some(k);
             }
         }
-        let refs = self.render_refs();
+        let refs = self.render_refs(job.vm.slot);
         lap.lap(&mut self.engine.prof.select_ns);
         for k in i..end {
             match command(job, k).ok_or(EINVAL)? {
@@ -919,8 +934,8 @@ impl Firmware {
                 .render
                 .threshold
                 .w32(0, 2u32.wrapping_mul(pf.draw as u32))?;
-            // pb_counter = draw, then C1 once per (re)initialization.
-            self.publish_pb(pf.draw as u32)?;
+            // The VM's PB counter = draw, then C1 once.
+            self.publish_pb(job.vm.slot, pf.draw as u32)?;
         }
         wmb();
         // The queue WRITEs: from here on a failure is uncertain (EIO).
@@ -959,6 +974,9 @@ impl Firmware {
             self.engine.draw = pf.draw;
             self.recovery.fs_resync = false;
             self.recovery.reinit = false;
+            if pf.initbm {
+                self.pb_initialized(job.vm.slot);
+            }
         }
         self.engine.tail_prev = pf.prev;
         self.engine.tail_ct = pf.last_ct;
@@ -1312,8 +1330,7 @@ impl Firmware {
             let type0 = pf.computes != 0
                 && !pf.initbm
                 && !self.recovery.fs_resync
-                && n != 1
-                && !(pf.renders == 0 && self.recovery.reinit)
+                && !(pf.renders == 0 && self.pools.needs_init(ctx))
                 && !pf.ct_ts
                 && ts.iter().all(|t| *t == 0)
                 && tuning::CROSS_ENGINE_HOLD & 2 == 0
@@ -1386,9 +1403,9 @@ impl Firmware {
         );
         p.own_barrier.write(0, &b)?;
         let cap = sizes::QUEUE_CAP;
-        if n == 1 || (pf.renders == 0 && self.recovery.reinit) {
+        if pf.renders == 0 && self.pools.needs_init(ctx) {
             pf.initbm = true;
-            let bm = encode::initbm(ctx, refs.pb_init_blocks, refs.pb_mgr, tta);
+            let bm = encode::initbm(ctx, refs.pb_slot, refs.pb_init_blocks, refs.pb_mgr, tta);
             r.initbm.write(0, &bm)?;
             r.ring[0].w64(8 * pf.ta_head as usize, r.initbm.va)?;
             pf.ta_head = (pf.ta_head + 1) % cap;

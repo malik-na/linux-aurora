@@ -10,8 +10,10 @@
 //!   ([`object::Objects::clients`]) as driver mappings at their fixed GVAs, and reserve
 //!   [`super::hw::client::CLIENT_APERTURE`], the pass-slot range and the PB page list
 //!   (`vm.install_driver_mappings`): user binds there fail (EINVAL);
-//! - map the PB heap's backed chunks at their fixed GVAs ([`VmState::map_heap`]; chunks backed
-//!   later are mapped at the VM's publications and, for a VM with a flight, at the refill);
+//! - hold the VM's parameter-buffer mappings ([`VmState::map_pb_list`],
+//!   [`VmState::map_pb_blocks`]): its page and block lists at their fixed GVAs and its pool
+//!   blocks at the heap GVAs, mapped by the PB code at the VM's first render and at every grant,
+//!   in this VM only;
 //! - bind it to an exclusive TTBAT slot ([`mmu::Uat::bind`]) for as long as its [`VmState`]
 //!   lives; at most [`super::hw::sizes::MAX_VMS`] such VMs (ENOSPC beyond, checked before
 //!   binding so the slot allocator never blocks).
@@ -104,18 +106,19 @@ impl ClientAlias {
     }
 }
 
-/// A PB heap chunk mapped in a VM at its fixed GVA ([`super::pools::chunk_gva`]).
-struct HeapMapping {
-    gem: ARef<gem::Object>,
-    _mapping: mmu::KernelMapping,
+/// The parameter-buffer mappings of a VM: its lists (fixed GVAs) and its pool blocks (heap
+/// GVAs, in posting order). Taken under the device lock (publication, growth, reclaim) or by
+/// the creating thread.
+#[pin_data]
+struct PbMaps {
+    #[pin]
+    maps: Mutex<PbMapLists>,
 }
 
-/// The PB heap chunks mapped in a VM, in heap order (chunk `i` at `chunk_gva(i)`). Taken
-/// under the device lock (refill, publication, reclaim) or by the creating thread.
-#[pin_data]
-struct HeapMappings {
-    #[pin]
-    list: Mutex<KVec<HeapMapping>>,
+#[derive(Default)]
+struct PbMapLists {
+    lists: KVec<mmu::KernelMapping>,
+    blocks: KVec<mmu::KernelMapping>,
 }
 
 /// G15 state of one user VM, shared by the registry, its queues and its jobs.
@@ -128,8 +131,8 @@ pub(crate) struct VmState {
     pub(crate) status: Arc<VmStatus>,
     /// The VM: span checks, stream reads and job guards.
     pub(crate) vm: mmu::Vm,
-    /// The PB heap chunks mapped in this VM.
-    heap: Arc<HeapMappings>,
+    /// The VM's parameter-buffer mappings.
+    pb: Arc<PbMaps>,
     /// The exclusive slot binding, released before the live count drops.
     bind: Option<mmu::VmBind>,
     registry: Arc<Registry>,
@@ -138,73 +141,54 @@ pub(crate) struct VmState {
 impl Drop for VmState {
     fn drop(&mut self) {
         mod_pr_debug!("G15: VM {} releases context {}\n", self.id, self.slot);
+        // Its PB mappings go with it; the PB code learns of the death from the dead list.
+        drop(core::mem::take(&mut self.pb.maps.lock().blocks));
+        drop(core::mem::take(&mut self.pb.maps.lock().lists));
         drop(self.bind.take());
+        self.registry.note_dead(self.id);
         self.registry.live.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
 impl VmState {
-    /// Maps PB heap chunk `i` (a chunk this VM has not seen: the next one) at its GVA.
-    fn map_one(
-        vm: &mmu::Vm,
-        heap: &mut KVec<HeapMapping>,
-        i: usize,
-        gem: ARef<gem::Object>,
+    /// Maps one of the VM's PB lists (`size` bytes of `gem`) at its fixed GVA.
+    pub(crate) fn map_pb_list(&self, gem: &gem::Object, gva: u64, size: usize) -> Result {
+        let mapping = self.vm.map_at(
+            gva,
+            size,
+            gem.into(),
+            mmu::Prot::from_pte(hw::pte::LEAF_PB_LIST),
+            false,
+        )?;
+        self.pb.maps.lock().lists.push(mapping, GFP_KERNEL)?;
+        Ok(())
+    }
+
+    /// Maps the pool blocks `object_range` of chunk `gem` at the heap GVAs `gvas` of this VM
+    /// (a posted run).
+    pub(crate) fn map_pb_blocks(
+        &self,
+        gem: &gem::Object,
+        object_range: Range<usize>,
+        gvas: Range<u64>,
     ) -> Result {
-        if i != heap.len() {
-            return Err(EINVAL);
-        }
-        let mapping = vm.map_at(
-            super::pools::chunk_gva(i),
-            super::pools::CHUNK_BYTES as usize,
-            gem.clone(),
+        let mapping = self.vm.map_in_range(
+            gem,
+            object_range,
+            hw::PAGE,
+            gvas,
             mmu::Prot::from_pte(hw::pte::LEAF_CACHED),
             false,
         )?;
-        heap.push(
-            HeapMapping {
-                gem,
-                _mapping: mapping,
-            },
-            GFP_KERNEL,
-        )?;
+        self.pb.maps.lock().blocks.push(mapping, GFP_KERNEL)?;
         Ok(())
     }
 
-    /// Maps the backed chunks (`gems`, in heap order) this VM does not have yet. A chunk whose
-    /// object changed since (freed and backed again) is unmapped first, with everything above
-    /// it.
-    pub(crate) fn map_heap(&self, gems: impl Iterator<Item = ARef<gem::Object>>) -> Result {
-        let mut heap = self.heap.list.lock();
-        let mut n = 0;
-        for (i, gem) in gems.enumerate() {
-            n = i + 1;
-            if let Some(have) = heap.get(i) {
-                if core::ptr::eq(&*have.gem, &*gem) {
-                    continue;
-                }
-                heap.truncate(i);
-            }
-            Self::map_one(&self.vm, &mut heap, i, gem)?;
-        }
-        // Chunks freed since this VM last mapped the heap.
-        heap.truncate(n);
-        Ok(())
-    }
-
-    /// Unmaps the heap chunks from index `keep` on (freed by a reclaim).
-    pub(crate) fn unmap_heap_above(&self, keep: usize) {
-        self.heap.list.lock().truncate(keep);
-    }
-
-    /// Maps the newly backed chunk `i` into this VM (a VM with a flight at a refill).
-    pub(crate) fn map_chunk(&self, i: usize, gem: ARef<gem::Object>) -> Result {
-        let mut heap = self.heap.list.lock();
-        if i < heap.len() {
-            // Already mapped (publication caught up first).
-            return Ok(());
-        }
-        Self::map_one(&self.vm, &mut heap, i, gem)
+    /// Unmaps every pool block of this VM (its blocks returned to the pool).
+    pub(crate) fn unmap_pb_blocks(&self) {
+        let blocks = core::mem::take(&mut self.pb.maps.lock().blocks);
+        // Unmapping takes GPUVM and reservation locks: outside the list lock.
+        drop(blocks);
     }
 }
 
@@ -216,6 +200,10 @@ pub(crate) struct Registry {
     vms: Mutex<KVec<Arc<VmState>>>,
     /// Live [`VmState`]s (each holds a TTBAT slot) plus reservations being created.
     live: AtomicU32,
+    /// Ids of VMs whose state was dropped, until the PB code took note (capacity reserved: a
+    /// drop never allocates).
+    #[pin]
+    dead: Mutex<KVec<u64>>,
 }
 
 /// A reserved place among the live VMs, released unless a [`VmState`] takes it over.
@@ -237,10 +225,13 @@ impl Drop for Reservation<'_> {
 
 impl Registry {
     pub(crate) fn new() -> Result<Arc<Self>> {
+        let mut dead = KVec::new();
+        dead.reserve(2 * hw::sizes::MAX_VMS as usize, GFP_KERNEL)?;
         Arc::pin_init(
             pin_init!(Self {
                 vms <- new_mutex!(KVec::new(), "g15::Registry::vms"),
                 live: AtomicU32::new(0),
+                dead <- new_mutex!(dead, "g15::Registry::dead"),
             }),
             GFP_KERNEL,
         )
@@ -320,15 +311,23 @@ impl Registry {
             .ok_or(ENOENT)
     }
 
-    /// The VMs whose client handle is open (and the closed ones not pruned yet), for a walk
-    /// that takes VM locks: not under the registry lock.
-    pub(crate) fn open(&self) -> Result<KVec<Arc<VmState>>> {
-        let vms = self.vms.lock();
-        let mut out = KVec::with_capacity(vms.len(), GFP_KERNEL)?;
-        for state in vms.iter() {
-            out.push(state.clone(), GFP_KERNEL)?;
+    /// Notes a VM dead (its state dropped). Without room (more than 126 deaths unnoted) the id
+    /// is lost and its PB stays until its context is reused.
+    fn note_dead(&self, id: u64) {
+        let _ = self.dead.lock().push_within_capacity(id);
+    }
+
+    /// Takes the ids of the VMs that died since the last call.
+    pub(crate) fn take_dead(&self) -> KVec<u64> {
+        let mut dead = self.dead.lock();
+        let mut out = KVec::new();
+        if dead.is_empty() || out.reserve(dead.len(), GFP_KERNEL).is_err() {
+            return out;
         }
-        Ok(out)
+        for id in dead.drain_all() {
+            let _ = out.push_within_capacity(id);
+        }
+        out
     }
 
     /// Latches `error` on every VM whose client handle is open. The fail-stop path calls it under
@@ -357,16 +356,14 @@ pub(crate) fn new_vm(gpu: &Gpu, kernel_range: Range<u64>) -> Result<mmu::Vm> {
     if gpu.shared.crashed.load(Ordering::Acquire) {
         return Err(EIO);
     }
-    // Snapshot the registry, the client aliases and the backed PB heap chunks; map them without
-    // the device lock (a chunk backed after the snapshot is mapped at the VM's first
-    // publication).
-    let (registry, aliases, chunks) = {
+    // Snapshot the registry and the client aliases; map them without the device lock. The
+    // VM's parameter buffer is made at its first render.
+    let (registry, aliases) = {
         let state = gpu.shared.state.lock();
         let firmware = state.as_ref().ok_or(ENODEV)?;
         (
             firmware.vms.clone(),
             ClientAlias::collect(&firmware.objects)?,
-            firmware.pools.heap_gems()?,
         )
     };
     let reservation = registry.reserve()?;
@@ -375,13 +372,9 @@ pub(crate) fn new_vm(gpu: &Gpu, kernel_range: Range<u64>) -> Result<mmu::Vm> {
     let status = vm.status().ok_or(EINVAL)?.clone();
     let (mappings, reserved) = Registry::driver_mappings(&vm, aliases)?;
     vm.install_driver_mappings(mappings, reserved)?;
-    let mut list = KVec::with_capacity(chunks.len(), GFP_KERNEL)?;
-    for (i, gem) in chunks.into_iter().enumerate() {
-        VmState::map_one(&vm, &mut list, i, gem)?;
-    }
-    let heap = Arc::pin_init(
-        pin_init!(HeapMappings {
-            list <- new_mutex!(list, "g15::HeapMappings::list"),
+    let pb = Arc::pin_init(
+        pin_init!(PbMaps {
+            maps <- new_mutex!(PbMapLists::default(), "g15::PbMaps::maps"),
         }),
         GFP_KERNEL,
     )?;
@@ -396,7 +389,7 @@ pub(crate) fn new_vm(gpu: &Gpu, kernel_range: Range<u64>) -> Result<mmu::Vm> {
             slot,
             status,
             vm: vm.clone(),
-            heap,
+            pb,
             bind: Some(bind),
             registry: registry.clone(),
         },

@@ -207,7 +207,8 @@ impl Firmware {
         // prefixes published the retirement loop below drains first.
         if self.engine.flights.is_empty() {
             self.drain_rings()?;
-            // Idle bookkeeping of the PB: when the idle began, and the reclaim once it is due.
+            // PB bookkeeping: dead VMs, the idle clocks, and the reclaims that are due.
+            self.drain_dead_vms();
             self.note_idle();
             self.reclaim_check();
             if self.recovery_idle() {
