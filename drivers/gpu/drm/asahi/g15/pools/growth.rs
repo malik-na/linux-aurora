@@ -389,6 +389,33 @@ impl Grave {
     }
 }
 
+/// Blocks the graveyard may hold at most (one chunk): beyond it the oldest graves are buried at
+/// once, so the memory of dead PBs stays bounded whatever the VM churn.
+pub(crate) const GRAVE_BLOCKS: u32 = CHUNK_BLOCKS;
+
+/// The graveyard's block account.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct GraveLedger {
+    pub(crate) blocks: u32,
+}
+
+impl GraveLedger {
+    /// Adds a grave of `blocks`.
+    pub(crate) const fn add(&mut self, blocks: u32) {
+        self.blocks += blocks;
+    }
+
+    /// Removes a buried grave of `blocks`.
+    pub(crate) const fn remove(&mut self, blocks: u32) {
+        self.blocks = self.blocks.saturating_sub(blocks);
+    }
+
+    /// Whether graves must be buried now to stay within [`GRAVE_BLOCKS`].
+    pub(crate) const fn over_cap(&self) -> bool {
+        self.blocks > GRAVE_BLOCKS
+    }
+}
+
 /// The halt epoch a request names (u64 at words 5..6).
 pub(crate) const fn request_epoch(request: &[u32; 14]) -> u64 {
     request[grow_request::EPOCH] as u64 | (request[grow_request::EPOCH + 1] as u64) << 32
@@ -552,6 +579,18 @@ mod tests {
         assert!(!g.due(109 * s, 10 * s));
         assert!(g.due(110 * s, 10 * s));
         assert!(g.due(u64::MAX, 10 * s));
+        // The graveyard holds at most one chunk of blocks: two dead 64-block PBs fit, the
+        // third pushes it over the cap until one is buried.
+        let mut l = GraveLedger::default();
+        l.add(64);
+        l.add(64);
+        assert!(!l.over_cap());
+        l.add(64);
+        assert!(l.over_cap());
+        l.remove(64);
+        assert!(!l.over_cap());
+        l.remove(1000);
+        assert_eq!(l.blocks, 0);
     }
 
     #[test]

@@ -6,12 +6,15 @@
 //! clock: [`growth`] (host-tested).
 //!
 //! - **One PB per VM** ([`VmPb`]): a manager, block_ctl and counter in the firmware window
-//!   (uncached, recycled when the VM dies), a page list and a block list of the VM's own at the
-//!   fixed client GVAs [`client::PB_PAGE_LIST`] and [`client::PB_BLOCK_LIST`], mapped in that VM
-//!   only, and a ledger. Created at the VM's first render (compute-only VMs have none), with an
-//!   InitBM naming the VM's context at +0x4 and as the PB's slot at +0x8; the firmware's
-//!   growth requests name the PB by that slot ([`growth::route`]). The native driver keeps one
-//!   manager per render queue the same way. The UMA managers, misc record and scene list stay
+//!   (uncached, recycled when the VM dies), the page list and block list of its context slot
+//!   ([`SlotLists`]: at the slot's own GVAs `client::pb_page_list(slot)` and
+//!   `client::pb_block_list(slot)`, mapped in **every** VM, because the firmware reads a PB's
+//!   lists through whatever context is current: with every PB's lists at one GVA, a render of
+//!   one VM read another PB's manager with its own VM's lists), and a ledger. Created at the
+//!   VM's first render (compute-only VMs have none), with an InitBM naming the VM's context at
+//!   +0x4 and as the PB's slot at +0x8; the firmware's growth requests name the PB by that slot
+//!   ([`growth::route`]). The native driver keeps one manager per render queue the same way.
+//!   The UMA managers, misc record and scene list stay
 //!   shared.
 //! - **One block pool** ([`growth::BlockPool`]): chunks of 128 blocks (16 MiB), each a GPU-only
 //!   GEM object, backed on demand and kept one reserve chunk ahead of the sum of the posted
@@ -33,17 +36,17 @@
 //!   re-initialized at its next render (its own InitBM, no halt; proven on the one-PB driver)
 //!   and its blocks return to the pool now; with level 2 wholly free chunks above the reserve's
 //!   need are unbacked. A VM's death ([`Firmware::drain_dead_vms`]) moves its PB to the
-//!   graveyard for `g15_pb_grace_ms` with its blocks out of the pool and its lists and manager
+//!   graveyard for `g15_pb_grace_ms` with its blocks out of the pool, at most one chunk of
+//!   blocks over all graves (older graves are buried at once beyond that), its manager
 //!   untouched (the native driver frees a torn-down queue's lists and blocks within about
-//!   30 s and keeps the manager image mapped); then its blocks return, its lists are freed and
-//!   its manager set rests for minutes before a new PB is written into it.
+//!   30 s and keeps the manager image mapped); then its blocks return and its manager set
+//!   rests for minutes before a new PB is written into it. The slot's lists stay allocated.
 //! - UMA managers ASC-cached with an uncached spare set; the first recovered render abort swaps
 //!   to the spare and never rewrites the cached set (the ASC may still hold dirty lines of it).
 
 mod growth;
 
 use core::fmt;
-use core::ptr::NonNull;
 use kernel::{
     device,
     prelude::*,
@@ -60,7 +63,7 @@ use super::Firmware;
 use crate::driver::AsahiDevice;
 use crate::gem;
 
-pub(crate) use growth::{Answer, BlockPool, Grave, IdleClock, Ledger};
+pub(crate) use growth::{Answer, BlockPool, Grave, GraveLedger, IdleClock, Ledger};
 
 static_assert!(buffer::MAX_BLOCKS == sizes::PB_BLOCKS);
 static_assert!(buffer::MAX_PAGES == sizes::PB_PAGES);
@@ -68,6 +71,8 @@ static_assert!(buffer::BLOCK_LIST_RECORDS == sizes::PB_LIST_RECORDS);
 static_assert!(buffer::GROW_STEP == sizes::PB_GROW_STEP);
 static_assert!(buffer::MAX_BLOCKS as u64 * buffer::BLOCK_BYTES == client::PB_HEAP_SIZE);
 static_assert!(buffer::PAGE_LIST_SIZE as u64 == client::PB_PAGE_LIST_SIZE);
+static_assert!(buffer::BLOCK_LIST_SIZE as u64 == client::PB_BLOCK_LIST_SIZE);
+static_assert!(PB_SLOTS as u64 <= client::PB_LIST_SLOTS);
 static_assert!(uma_manager::SEEDS == sizes::FREELIST_SEED);
 static_assert!(uma_pools::POOL_SIZE == sizes::POOL_SIZE);
 static_assert!(CHUNK_BYTES % hw::PAGE == 0);
@@ -114,69 +119,36 @@ impl Chunk {
     }
 }
 
-/// A CPU-written, GPU/firmware-read record object of one VM (its PB lists): a GEM object with
-/// a write-combined CPU mapping, mapped in that VM only.
-pub(crate) struct UserObject {
-    backing: gem::ObjectRef,
-    cpu: NonNull<u8>,
-    size: usize,
+/// The page list and block list of one context slot: firmware objects with client aliases at
+/// the slot's own GVAs in every VM (new VMs at creation, live VMs when the slot is first used),
+/// allocated at the slot's first PB and kept for the slot's later PBs.
+pub(crate) struct SlotLists {
+    page_list: Arc<FwObject>,
+    block_list: Arc<FwObject>,
 }
 
-// SAFETY: The object refers to kernel memory shared with the GPU; every host access goes
-// through raw pointers with volatile or byte-copy semantics, serialized by the device lock.
-unsafe impl Send for UserObject {}
-// SAFETY: See `Send`.
-unsafe impl Sync for UserObject {}
-
-impl UserObject {
-    /// Allocates a zeroed object of `size` bytes (whole pages).
-    fn new(dev: &AsahiDevice, size: usize) -> Result<Self> {
-        let mut backing = gem::new_kernel_object_wc(dev, size)?;
-        check_pages(&backing)?;
-        let mut vmap = backing.vmap()?;
-        vmap.memset(0);
-        let cpu = NonNull::new(vmap.as_mut_ptr()).ok_or(ENOMEM)?;
-        core::mem::drop(vmap);
-        // INVARIANT: `cpu` came from the owned vmap that `backing` keeps for its lifetime.
-        Ok(Self { backing, cpu, size })
-    }
-
-    fn ptr(&self, offset: usize, len: usize) -> Result<*mut u8> {
-        if offset.checked_add(len).ok_or(EINVAL)? > self.size {
-            return Err(EINVAL);
-        }
-        // SAFETY: By the invariant `cpu` maps `size` bytes; `offset + len` was checked.
-        Ok(unsafe { self.cpu.as_ptr().add(offset) })
-    }
-
-    fn write(&self, offset: usize, bytes: &[u8]) -> Result {
-        let p = self.ptr(offset, bytes.len())?;
-        // SAFETY: `p` is valid for `bytes.len()` bytes of the mapping, which no Rust reference
-        // aliases.
-        unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len()) };
-        Ok(())
-    }
-
-    fn fill(&self, value: u8) -> Result {
-        let p = self.ptr(0, self.size)?;
-        // SAFETY: As for `write`.
-        unsafe { core::ptr::write_bytes(p, value, self.size) };
-        Ok(())
-    }
-
-    fn w64(&self, offset: usize, value: u64) -> Result {
-        let p = self.ptr(offset, 8)?;
-        if p as usize % 8 == 0 {
-            // SAFETY: `p` is valid and aligned for a u64.
-            unsafe { (p as *mut u64).write_volatile(value.to_le()) };
-            Ok(())
-        } else {
-            self.write(offset, &value.to_le_bytes())
-        }
-    }
-
-    pub(crate) fn gem(&self) -> ARef<gem::Object> {
-        self.backing.gem.clone()
+impl SlotLists {
+    fn alloc(objects: &mut Objects, slot: u32) -> Result<Self> {
+        let page_list = alloc(
+            objects,
+            buffer::PAGE_LIST_SIZE as u64,
+            Class::Shared,
+            Some((client::pb_page_list(slot), pte::LEAF_PB_LIST)),
+            0,
+            true,
+        )?;
+        let block_list = alloc(
+            objects,
+            buffer::BLOCK_LIST_SIZE as u64,
+            Class::Shared,
+            Some((client::pb_block_list(slot), pte::LEAF_PB_LIST)),
+            0,
+            true,
+        )?;
+        Ok(Self {
+            page_list,
+            block_list,
+        })
     }
 }
 
@@ -202,8 +174,6 @@ pub(crate) struct VmPb {
     vm_id: u64,
     slot: u32,
     set: PbSet,
-    page_list: UserObject,
-    block_list: UserObject,
     pub(crate) ledger: Ledger,
     /// The posted runs, in heap order.
     runs: KVec<Run>,
@@ -289,12 +259,14 @@ pub(crate) struct Pools {
     /// The pool's accounting and its chunks by index.
     pool: BlockPool,
     heap: KVec<Option<Chunk>>,
-    /// The PBs by slot (context).
+    /// The PBs by slot (context), and the slots' lists.
     vms: KVec<Option<VmPb>>,
+    lists: KVec<Option<SlotLists>>,
     /// Manager sets of buried PBs with their burial time, for a later PB.
     free_sets: KVec<(u64, PbSet)>,
-    /// PBs of dead VMs, kept until their grace period passed.
+    /// PBs of dead VMs, kept until their grace period passed, and their block account.
     graveyard: KVec<(Grave, VmPb)>,
+    graves: GraveLedger,
     /// C1 names the initial pages (the same for every PB).
     c1_written: bool,
     pub(crate) stats: PbStats,
@@ -441,10 +413,10 @@ impl VmPb {
         super::params::pb_max_blocks().clamp(self.ledger.initial, self.ledger.max)
     }
 
-    /// Writes the PB's records for a (re)initialization: zeroed lists, the initial page and
-    /// block records of heap blocks `0..initial`, the manager image, block_ctl and counter.
-    /// The runs of the initial blocks are already posted by the caller.
-    fn init(&mut self) -> Result {
+    /// Writes the PB's records for a (re)initialization: its slot's lists zeroed, the initial
+    /// page and block records of heap blocks `0..initial`, the manager image, block_ctl and
+    /// counter. The runs of the initial blocks are already posted by the caller.
+    fn init(&mut self, lists: &SlotLists) -> Result {
         self.ledger.reinit();
         self.exhausted_logged = false;
         self.inits += 1;
@@ -452,19 +424,19 @@ impl VmPb {
         set.manager.fill(0, 0, pb_manager::SIZE)?;
         set.block_ctl.fill(0, 0, block_ctl::SIZE)?;
         set.counter.fill(0, 0, counter::SIZE)?;
-        self.page_list.fill(0)?;
-        self.block_list.fill(0)?;
+        lists.page_list.fill(0, 0, buffer::PAGE_LIST_SIZE)?;
+        lists.block_list.fill(0, 0, buffer::BLOCK_LIST_SIZE)?;
         let heap = client::PB_HEAP;
         let initial = self.ledger.initial;
         write_records(
-            |o, b| self.page_list.write(o, b),
+            |o, b| lists.page_list.write(o, b),
             0,
             (buffer::PAGES_PER_BLOCK * initial) as usize,
             |i| buffer::page_record(heap, i as u32).to_le_bytes(),
         )?;
         // The high word of every block record is zero (zero-filled, or only ever written 0).
         write_records(
-            |o, b| self.block_list.write(o, b),
+            |o, b| lists.block_list.write(o, b),
             0,
             initial as usize,
             |i| le64(buffer::block_record(heap, i as u32) as u64),
@@ -478,8 +450,8 @@ impl VmPb {
             &buffer::pb_manager_image(
                 initial,
                 self.soft_max(),
-                client::PB_PAGE_LIST,
-                client::PB_BLOCK_LIST,
+                client::pb_page_list(self.slot),
+                client::pb_block_list(self.slot),
                 set.block_ctl.va,
                 set.counter.va,
             ),
@@ -533,8 +505,10 @@ impl Pools {
             heap.push(None, GFP_KERNEL)?;
         }
         let mut vms = KVec::with_capacity(PB_SLOTS, GFP_KERNEL)?;
+        let mut lists = KVec::with_capacity(PB_SLOTS, GFP_KERNEL)?;
         for _ in 0..PB_SLOTS {
             vms.push(None, GFP_KERNEL)?;
+            lists.push(None, GFP_KERNEL)?;
         }
         let mut pools = Self {
             dev: dev.as_ref().into(),
@@ -546,8 +520,10 @@ impl Pools {
             pool: BlockPool::new(),
             heap,
             vms,
+            lists,
             free_sets: KVec::new(),
             graveyard: KVec::new(),
+            graves: GraveLedger::default(),
             c1_written: false,
             stats: PbStats::default(),
         };
@@ -642,12 +618,17 @@ impl Pools {
         }
     }
 
-    /// Creates PB `slot` for `vm`: a recycled or new manager set, the VM's lists mapped at
-    /// their fixed GVAs, and the initial blocks taken from the pool (backing a chunk first if
-    /// the pool is short). The records are written and `needs_init` set; the next render prefix
-    /// of the VM carries InitBM.
-    fn create_pb(&mut self, vm: &VmState, objects: &mut Objects) -> Result {
+    /// Creates PB `slot` for `vm`: a rested or new manager set, the slot's lists (allocated at
+    /// the slot's first PB: the caller maps new lists into the live VMs), and the initial blocks
+    /// taken from the pool (backing a chunk first if the pool is short). The records are written
+    /// and `needs_init` set; the next render prefix of the VM carries InitBM. Returns whether
+    /// the slot's lists were allocated now.
+    fn create_pb(&mut self, vm: &VmState, objects: &mut Objects) -> Result<bool> {
         let slot = vm.slot as usize;
+        let new_lists = self.lists[slot].is_none();
+        if new_lists {
+            self.lists[slot] = Some(SlotLists::alloc(objects, vm.slot)?);
+        }
         let now = super::engine::now_ns();
         let rested = self
             .free_sets
@@ -657,18 +638,6 @@ impl Pools {
             Some((_, set)) => set,
             None => PbSet::alloc(objects)?,
         };
-        let page_list = UserObject::new(&self.adev, buffer::PAGE_LIST_SIZE)?;
-        let block_list = UserObject::new(&self.adev, buffer::BLOCK_LIST_SIZE)?;
-        vm.map_pb_list(
-            &page_list.gem(),
-            client::PB_PAGE_LIST,
-            buffer::PAGE_LIST_SIZE,
-        )?;
-        vm.map_pb_list(
-            &block_list.gem(),
-            client::PB_BLOCK_LIST,
-            buffer::BLOCK_LIST_SIZE,
-        )?;
         let ledger = Ledger::new(
             tuning::PB_GROW,
             super::params::pb_blocks(),
@@ -678,8 +647,6 @@ impl Pools {
             vm_id: vm.id,
             slot: vm.slot,
             set,
-            page_list,
-            block_list,
             ledger,
             runs: KVec::new(),
             needs_init: true,
@@ -691,7 +658,25 @@ impl Pools {
             inits: 0,
         });
         self.stats.created += 1;
-        self.post_initial(slot, vm)
+        self.post_initial(slot, vm)?;
+        Ok(new_lists)
+    }
+
+    /// The lists of slot `slot` (GEM objects, GVAs and sizes), for mapping into a live VM.
+    fn slot_lists(&self, slot: usize) -> Option<[(ARef<gem::Object>, u64, usize); 2]> {
+        let lists = self.lists[slot].as_ref()?;
+        Some([
+            (
+                lists.page_list.gem(),
+                client::pb_page_list(slot as u32),
+                buffer::PAGE_LIST_SIZE,
+            ),
+            (
+                lists.block_list.gem(),
+                client::pb_block_list(slot as u32),
+                buffer::BLOCK_LIST_SIZE,
+            ),
+        ])
     }
 
     /// Takes the initial blocks of PB `slot` from the pool (backing chunks as needed) and
@@ -705,15 +690,17 @@ impl Pools {
         while have < initial {
             have += self.take_blocks(slot, vm, initial - have)?.ok_or(ENOSPC)?;
         }
+        let lists = self.lists[slot].as_ref().ok_or(ENOENT)?;
         let pb = self.vms[slot].as_mut().ok_or(ENOENT)?;
-        pb.init()?;
+        pb.init(lists)?;
         pb.needs_init = true;
         Ok(())
     }
 
-    /// Moves PB `slot` (its VM is gone) to the graveyard: nothing of it is touched until its
-    /// grace period passed ([`Self::bury`]). Without memory for the entry the PB is buried at
-    /// once.
+    /// Moves PB `slot` (its VM is gone) to the graveyard: its blocks and manager are not
+    /// touched until its grace period passed ([`Self::bury`]). Beyond one chunk of blocks over
+    /// all graves the oldest are buried at once; without memory for the entry the PB is buried
+    /// at once.
     fn entomb(&mut self, slot: usize, now_ns: u64) {
         let Some(pb) = self.vms[slot].take() else {
             return;
@@ -723,17 +710,25 @@ impl Pools {
             self.bury(pb);
             return;
         }
+        self.graves.add(pb.run_blocks());
         if let Err(e) = self
             .graveyard
             .push_within_capacity((Grave { death_ns: now_ns }, pb))
         {
             self.bury(e.0 .1);
         }
+        while self.graves.over_cap() {
+            match self.graveyard.remove(0) {
+                Ok((_, pb)) => self.bury(pb),
+                Err(_) => break,
+            }
+        }
     }
 
-    /// Frees a dead PB: blocks to the pool, lists dropped, the manager set kept for a later PB
-    /// once it has rested [`SET_GRACE_NS`].
+    /// Frees a dead PB: blocks to the pool, the manager set kept for a later PB once it has
+    /// rested [`SET_GRACE_NS`].
     fn bury(&mut self, pb: VmPb) {
+        self.graves.remove(pb.run_blocks());
         for run in pb.runs.iter() {
             self.pool.free_run(run.pool_first, run.len);
         }
@@ -935,7 +930,36 @@ impl Firmware {
             // The context's previous VM is dead and not drained yet.
             self.pools.entomb(slot, super::engine::now_ns());
         }
-        self.pools.create_pb(vm, &mut self.objects)?;
+        let new_lists = self.pools.create_pb(vm, &mut self.objects)?;
+        if new_lists {
+            // The slot's lists are new: every live VM maps them now (VMs created later map
+            // them at creation through the client aliases).
+            if let Some(lists) = self.pools.slot_lists(slot) {
+                match self.vms.open() {
+                    Ok(states) => {
+                        for state in states.iter() {
+                            for (gem, gva, size) in lists.iter() {
+                                if let Err(e) = state.map_pb_list(gem, *gva, *size) {
+                                    dev_warn!(
+                                        self.dev(),
+                                        "PB: ctx {} lists not mapped in VM {}: {}\n",
+                                        slot,
+                                        state.id,
+                                        e.to_errno()
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => dev_warn!(
+                        self.dev(),
+                        "PB: ctx {} lists: VM walk failed: {}\n",
+                        slot,
+                        e.to_errno()
+                    ),
+                }
+            }
+        }
         self.refill_backing();
         dev_info!(
             self.dev(),
@@ -1263,13 +1287,14 @@ impl Firmware {
             0
         };
         let heap = client::PB_HEAP;
-        let pb = self.pools.vms[slot].as_mut().ok_or(ENOENT)?;
+        let lists = self.pools.lists[slot].as_ref().ok_or(ENOENT)?;
         for b in first..first + n {
-            pb.block_list.w64(
+            lists.block_list.w64(
                 buffer::block_record_offset(b),
                 buffer::block_record(heap, b) as u64,
             )?;
         }
+        let pb = self.pools.vms[slot].as_mut().ok_or(ENOENT)?;
         if n != 0 {
             crate::mem::sync();
             let producer = pb.ledger.post(n);

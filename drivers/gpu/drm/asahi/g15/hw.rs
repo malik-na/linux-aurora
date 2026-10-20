@@ -466,8 +466,19 @@ pub(crate) mod client {
     pub(crate) const SCENE_USER: u64 = 0x1006158000;
     pub(crate) const FS_SCRATCH: u64 = 0x1006178000;
     pub(crate) const PASS_STRIDE: u64 = 0x118000;
+    /// Page lists of the PBs, one per context slot (64 x 0x28000 = 10 MiB of compact window),
+    /// and the block lists (64 x 0x8000), each PB's lists at its own GVAs in every VM: the
+    /// firmware reads a PB's lists through whatever context is current.
     pub(crate) const PB_PAGE_LIST: u64 = 0x1074000000;
     pub(crate) const PB_PAGE_LIST_SIZE: u64 = 0x28000;
+    pub(crate) const PB_BLOCK_LIST_SIZE: u64 = 0x8000;
+    pub(crate) const PB_LIST_SLOTS: u64 = 64;
+    pub(crate) const fn pb_page_list(slot: u32) -> u64 {
+        PB_PAGE_LIST + slot as u64 * PB_PAGE_LIST_SIZE
+    }
+    pub(crate) const fn pb_block_list(slot: u32) -> u64 {
+        PB_BLOCK_LIST + slot as u64 * PB_BLOCK_LIST_SIZE
+    }
 }
 
 /// Sizes and counts of the engine's objects.

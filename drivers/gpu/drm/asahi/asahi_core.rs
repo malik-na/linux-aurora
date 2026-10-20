@@ -168,7 +168,7 @@ module! {
             description: "G15: parameter-buffer blocks posted above which an idle VM's PB is reclaimed (a desktop stays below 1024)",
         },
         g15_pb_grace_ms: u32 {
-            default: 10000,
+            default: 2000,
             description: "G15: time a dead VM's parameter buffer is kept (blocks, lists, manager untouched) before it is freed, ms",
         },
         g15_early_tiling: u32 {
