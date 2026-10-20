@@ -240,10 +240,16 @@ Why this is better than both A and a straight M1/M2 port, from the measurements:
 M1/M2 returns only when the queue dies); the synchronous path stays allocation-free (M1/M2 allocates while
 the firmware waits); and the per-boot accumulation that killed the 512 MiB heap today is reset at idle.
 
-### 3.3 Implementation (fork branch `t6031/pb-adaptive`, on 027bd762)
+### 3.3 Implementation (fork branch `t6031/pb-adaptive`, head c998bc9f on 027bd762)
 
-Four commits, SOB only, host tests 12/12 (`tools/g15-host-tests/run.sh <tree>`), rustfmt clean, checkpatch
+Four commits (d2c2bfb8, b01cca13, 473e4e87, c998bc9f), SOB only, host tests 12/12 (`tools/g15-host-tests/run.sh <tree>`), rustfmt clean, checkpatch
 --strict: only the module-parameter description strings exceed 100 columns, as the existing ones do.
+Built on the M3 (`~/Projects/linux-pbadapt`, out dir `~/Projects/build-out/kernel-pbadapt`,
+`~/aurora-test/silicon/build-pbadapt{,-all}.sh`): three packages from the same commits, differing only in the
+compiled default of `g15_pb_reclaim`, named `...-pbadapt-r{0,1,2}-c998bc9f68d2-aarch64.pkg.tar.xz` (the pkgrel
+number differs per build and means nothing). Build lesson: `pin_init!` binds each field's pointer to a local of
+the field's name, so a struct with a field called `slot` cannot be built with it; the heap mappings live in a
+separate pinned `HeapMappings` behind an `Arc`.
 
 1. `drm/asahi: g15: Account PB backing and re-initialization in the growth ledger` (`pools/growth.rs`):
    `backed`, `Answer::{Grant, Refuse, Wait}`, `refill_due`, `reinit`, `keep_chunks`, `reclaim_due`.
