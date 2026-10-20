@@ -570,3 +570,20 @@ by that VM's TA and FS work; compute-only prefixes keep the graph's. Package r0p
 concurrency step; pass = VK 706/2 Fail/0 Crash as the r2b control, 0 faults; fail with the same two
 crashes = next candidates the per-queue slot-like TA words (+0x1c, 0x1c830, +0x77c, +0x878) and the stamp
 pointers (+0x864/+0x86c), then a per-PB scene list.
+
+### 5.12 Boot r0pq-f (8d84424f): the per-PB handoff record fixed one render; per-queue index words next
+
+Concurrency on r0pq-f: VK 706 / 1 Fail / 1 Crash: `primitive_restart_index...dyn_prim_restart` is back to its
+image-comparison Fail as on r2b; `host_write_index_buffer.1048576` still crashes, now with two reads by unit
+0x1a at compact-window addresses nothing maps (0x10000c9c00, 0x108a9c6480), i.e. a garbage compact pointer.
+
+Change (eighth commit): the native per-queue index words. The two native queues carry 0/0/0 vs 1/1/2 at TA
++0x1c, register 0x1c830 (low word) and +0x878, and 1 vs 3 at +0x77c: an index q per queue with 2q and
+2q + 1 (the queue's pair of stamp cells; the stamp pointers at +0x864/+0x86c sit in adjacent slots). We
+wrote the one-queue values for every render. Now each PB has a queue index (lowest free among live PBs,
+given back at burial) written at +0x1c (q), +0x77c (2q + 1) and +0x878 (2q). Register 0x1c830 is left: our
+value there is `compact(scene_user + 0x40)`, a pointer per pass slot, where the native value's low word is
+0/1; whether ours is right is a separate question for the hv captures (and a separate single change). Host
+tests: `queue_words_and_indices`. Package r0pq-g. Boot test: the concurrency step; pass = VK 706/2 Fail/0
+Crash as the control, 0 faults; fail = same crash: next the stamp pointer pair per PB (+0x864/+0x86c, which
+implies per-PB stamp cells in the engine) or register 0x1c830.
