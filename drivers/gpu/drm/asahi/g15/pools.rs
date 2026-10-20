@@ -82,6 +82,8 @@ static_assert!(buffer::BLOCK_BYTES % hw::PAGE == 0);
 pub(crate) const CHUNK_BYTES: u64 = growth::CHUNK_BLOCKS as u64 * buffer::BLOCK_BYTES;
 /// PB slots: one per TTBAT context (1..63; 0 is the kernel's).
 const PB_SLOTS: usize = sizes::MAX_VMS as usize + 1;
+/// Bytes of the per-PB record TA work +0x34 and FS work +0x38 name.
+const LEGACY_SIZE: usize = 0x40;
 /// Time a buried PB's manager set rests before a new PB is written into it: the native driver
 /// keeps a torn-down queue's manager image mapped and unchanged for minutes.
 const SET_GRACE_NS: u64 = 300 * 1_000_000_000;
@@ -158,6 +160,10 @@ struct PbSet {
     manager: Arc<FwObject>,
     block_ctl: Arc<FwObject>,
     counter: Arc<FwObject>,
+    /// The record TA work +0x34 and FS work +0x38 name ("legacy_empty" in the graph, 0x40
+    /// bytes): per render queue natively (the two queues' TA commands name records 0x10800
+    /// apart), so per PB here; shared across PBs, an FS could take up another PB's render.
+    legacy: Arc<FwObject>,
 }
 
 /// A run of pool blocks posted to a PB.
@@ -220,6 +226,9 @@ pub(crate) struct AllocatorRefs {
     pub(crate) init_blocks: u32,
     /// The PB's slot (InitBM +0x8).
     pub(crate) pb_slot: u32,
+    /// The PB's record for TA work +0x34 and FS work +0x38 (0: the VM has no PB; the caller
+    /// falls back to the graph's).
+    pub(crate) legacy_empty: u64,
 }
 
 /// PB statistics over every VM.
@@ -400,6 +409,7 @@ impl PbSet {
             manager: small(objects, pb_manager::SIZE)?,
             block_ctl: small(objects, block_ctl::SIZE)?,
             counter: small(objects, counter::SIZE)?,
+            legacy: alloc(objects, LEGACY_SIZE as u64, Class::Shared, None, 0, true)?,
         })
     }
 }
@@ -422,6 +432,7 @@ impl VmPb {
         set.manager.fill(0, 0, pb_manager::SIZE)?;
         set.block_ctl.fill(0, 0, block_ctl::SIZE)?;
         set.counter.fill(0, 0, counter::SIZE)?;
+        set.legacy.fill(0, 0, LEGACY_SIZE)?;
         lists.page_list.fill(0, 0, buffer::PAGE_LIST_SIZE)?;
         lists.block_list.fill(0, 0, buffer::BLOCK_LIST_SIZE)?;
         let heap = client::PB_HEAP;
@@ -824,6 +835,7 @@ impl Pools {
             mgr_misc: set.misc.va,
             init_blocks: pb.map_or(0, |pb| pb.ledger.initial),
             pb_slot: pb.map_or(0, |pb| pb.slot),
+            legacy_empty: pb.map_or(0, |pb| pb.set.legacy.va),
         }
     }
 

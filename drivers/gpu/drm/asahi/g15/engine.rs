@@ -653,7 +653,12 @@ impl Firmware {
         RenderRefs {
             hwdata: self.cfg.layout.hwdata_va,
             notifier: r.notifier.va,
-            legacy_empty: r.legacy_empty.va,
+            // Per PB; a VM without a PB (compute-only prefix) names the graph's record.
+            legacy_empty: if a.legacy_empty != 0 {
+                a.legacy_empty
+            } else {
+                r.legacy_empty.va
+            },
             qinfo: [r.qinfo[0].va, r.qinfo[1].va],
             user_stamp: [r.user_stamp[0].va, r.user_stamp[1].va],
             fw_stamp: [r.fw_stamp[0].va, r.fw_stamp[1].va],
