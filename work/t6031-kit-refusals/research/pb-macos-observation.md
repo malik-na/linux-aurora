@@ -146,3 +146,51 @@ the first three managers of each run, plus `run.log` with every PB line. Limits:
 2026-10-20 runs matched no real record (the record is in a command the scan did not reach; the
 snapshot's finding stands), manager 4 of run 2 was logged but its lists not captured (cap of 4 lists
 per run, reached), and the hv traces only the mailbox, so nothing says what macOS's user side did.
+
+## 6. The two queues side by side (offline, from the private captures; added 2026-10-20 05:30)
+
+Source for the command comparison: the 2026-10-13 21:43 run (same guest, same login screen; the
+2026-10-20 runs read the commands but did not dump them): 6753 TA commands of the main queue (B) and 2
+of the single-render queue (A), 0x900 bytes each. No FS command was ever seen in a pipe entry in any
+run (the 3D channels stay silent; only TA_0 and CL_0 entries occur), so FS +0x28 could not be compared.
+
+**(1) Words constant within each queue and different between the queues** (our layout's names):
+
+| offset | A | B | ours |
+|---|---|---|---|
+| +0x1c (u32 after the notifier pointer) | 0 | 1 | not written (0) |
+| +0x24 PB manager | queue A's | queue B's | `pb_mgr` |
+| +0x34 (u64) | record A | record A + 0x10800 | `legacy_empty` |
+| register 0x1c830 (record #68, low word) | 0 | 1 | 0 |
+| +0x77c (after the sequence length) | 1 | 3 | 1 |
+| +0x864 user stamp pointer | slot n | slot n + 8 | `user_stamp[0]` |
+| +0x86c firmware stamp pointer | slot n | slot n + 8 | `fw_stamp[0]` |
+| +0x878 | 0 | 2 | not written (0) |
+
+So the queues carry three slot-like small integers (+0x1c, register 0x1c830, +0x878: 0/0/0 for queue A,
+1/1/2 for queue B; +0x77c 1 vs 3) and adjacent stamp slots. The TA UMA manager (tail +0x2e, +0x8d6)
+is **the same record for both queues**; the tail scratch (+0x47, +0x8ef) is per queue. The client
+buffers the registers name (0x1c039, 0x1c0a1, 0x1c031/0x1c9c0/0x1c079, 0x16c39) lie in different
+regions of the compact window per queue. All other differing bytes vary per render (stamps, timestamps,
+VDM and tile addresses). Context (+0xc) is 1 for both. Queue-info records (0xb4 bytes) differ in their
+ring and state pointers and in words +0x20/+0x24/+0x28 (2 for A, 0 for B) and +0x9c (0x177 for A, 0 for
+B).
+
+**(2) The counter counts only its own queue's renders.** Run 2, manager of queue B, between
+consecutive periodic reads: counter delta = TA doorbells in the window exactly, in 11 of 12 windows
+(328/328, 338/338, 340/340, 344/344, 361/361, 350/350, 351/351, 348/348, 341/341, 329/329, 332/332);
+the first window shows 306 vs 308, the two extra TA doorbells being queue A's second and third render.
+Queue A's manager read 3 at teardown for its 3 renders. The doorbells not counted are the firmware
+control ring (0x10) and device control (0x11), about one per second each. The manager's words +0x0 and
++0x10 equal the counter minus one at every read.
+
+**(3) Teardown timing.** Queue A: its three renders fell within 0.7 s of its first command; 26 s later
+(first check) its block_ctl, counter, page list and block list were unmapped and 8 of its 512 heap
+block pages still mapped; its manager image page stayed mapped and unchanged (counter 3) at +26 s and
+at +3 min 8 s, the last check. Queue B's replaced managers: manager 1 was still live (counter 16078)
+2 s before manager 2's first command and unmapped at most 6.8 s after it; manager 2 was zeroed at most
+16.6 s after manager 3's first command; manager 4's block_ctl was unmapped 8 s after its first command
+and its image zeroed by +3 min 49 s. No manager was ever named by a command of another queue (the
+observer logs that case; none occurred in either run). Whether commands of the same queue still named
+the old manager during the seconds between the successor's first command and the unmapping was not
+recorded (observer limit).
