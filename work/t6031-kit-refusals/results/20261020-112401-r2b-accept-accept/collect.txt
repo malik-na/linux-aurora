@@ -1,0 +1,182 @@
+== drm
+card2-eDP-1 connected 3456x2234 edid=128
+== checks
+VERDICT compute-check exit=0 pass
+VERDICT vk-render-check exit=0 pass
+VERDICT gl-render-check exit=0 pass
+VERDICT gl-render-check-zink exit=0 pass
+compute-check.log: PASS: 9040 runs in 5.0 s, 0 with wrong results
+gl-render-check-zink.log: PASS: 6117 runs in 5.0 s, 0 with wrong pixels
+gl-render-check.log: PASS: 11431 runs in 5.0 s, 0 with wrong pixels
+vk-render-check.log: PASS: 9230 runs in 5.0 s, 0 with wrong pixels
+info: Device: Apple M3 Max (G15C B2) (deviceID 0x6031)
+info: Renderer: Apple M3 Max (G15C B2)
+info: Renderer: zink Vulkan 1.4(Apple M3 Max (G15C B2) (MESA_HONEYKRISP))
+== load
+heat 17908 frames in 10.0 s (1789.2 fps); centre pixel 82 183 41 255
+busy_pct 70.7
+freq_source stats
+freq_khz_samples 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 1380000 
+pstate_samples 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 
+== kmscube
+Rendered 481 frames in 4.006721 sec (120.048295 fps)
+Rendered 722 frames in 6.015022 sec (120.032807 fps)
+Rendered 963 frames in 8.023344 sec (120.024763 fps)
+Rendered 1199 frames in 9.990028 sec (120.019685 fps)
+== crtc
+crashed=0 stopped=0 paused=0 queued=0 active=1 pending=1 accepted=1
+presents=1370 brightness_presents=1 blank_presents=1 nits_presents=4 refused=0
+last_swap_id=1406 swap_ns_last=8300680 swap_ns_max=9368855
+presents_before=169 window_ns=10050634537
+== engine
+compute: count 31029 prefixes 19366 busy_us 6660113 max_us 6633 first_us 6532738 last_us 6532738
+render: count 79428 prefixes 66067 busy_us 37625111 max_us 74114 first_us 22497029 last_us 32724524
+mixed: count 23088 prefixes 11384 busy_us 5369096 max_us 63623 first_us 4546500 last_us 5278704
+gaps 12956 gap_us 106324 yields 0 overlaps 18049
+jobs 96638 job_cmds 110457 job_max 42 early 0 recoveries 0 hang_kills 0 clustered 79176
+ct_sync 0 slot_sync 0 starved_us 252821049 prep_us 565584 grouped 19 pass_sync 103
+type0: fs2c 0 c2ta 0
+horizon: 19360 2 0 1 2 0 1 0 0 0 0 0 0 0 0 0 stop 19364/0/0/2 behind 18 hold 40100/59/0 ahead 15
+pb: blocks 64/64/3072/4095 requests 988 grown 9880 refused 0 bad 0 backed 256 chunks 2 waits 0 refills 77 reclaims 6 freed 77
+stage: ta_us 3023754 fs_us 9877156 cdm_us 2049414 span_us 15560280
+prof: prefixes 0 select_us 0 encode_us 0 claim_us 0 write_us 0 post_us 0 polls 0 drain_us 0 retire_us 0 poll_us 0 flushes 28 flush_us 0
+== dmesg
+[    0.010981] apple-t6031-display: handoff: DCP firmware 14.7.0 F493F03E-CC40-3D89-9A08-5F259BA2B246, 8 memory regions
+[    0.011396] apple-t6031-display: enabled /soc/iommu@38530c000, /soc/iommu@385304000, /soc/mailbox@386c08000, /soc/dcp@386c00000 and /soc/display-subsystem
+[    0.011406] apple-t6031-display: added the PMP, its DART and mailbox with 74 of this Mac's values; pmp and pms_sram kept on
+[    0.076894] asahi-g15 40a400000.gpu: G15: probing (T6031 G15C)
+[    0.077297] asahi-g15 40a400000.gpu: GPU firmware build: macOS 14.8 stub firmware, J516C
+[    0.077298] asahi-g15 40a400000.gpu: M3: firmware identity accepted
+[    0.077301] asahi-g15 40a400000.gpu: T6031 G15C admitted, ASC=0x0
+[    0.077319] asahi-g15 40a400000.gpu: T6031 G15C: power acknowledged, version=0x7041100 counts=0x21040a core-mask=0xffffffffff
+[    0.077321] asahi-g15 40a400000.gpu: T6031 G15C: cores enabled per cluster: [10, 10, 10, 10]
+[    0.077374] asahi-g15 40a400000.gpu: G15: UAT leaf self-check passed (9 classes)
+[    0.078023] asahi-g15 40a400000.gpu: RTKit: Initializing (protocol version 12)
+[    0.078095] asahi-g15 40a400000.gpu: mapped firmware crash storage 0x10001d08000/0x4000
+[    0.078288] asahi-g15 40a400000.gpu: MMU: initialized, root[0..2]=0x10bfff7c403 0x10bfff84403 0x10bfff74003
+[    0.078951] asahi-g15 40a400000.gpu: MMU: IO map: 0x408d00000:0x144000 -> 0xfffffc2068000000
+[    0.078961] asahi-g15 40a400000.gpu: MMU: IO map: 0x20e100000:0x4000 -> 0xfffffc2068148000
+[    0.078968] asahi-g15 40a400000.gpu: MMU: IO map: 0x292414000:0x4000 -> 0xfffffc2068150000
+[    0.078974] asahi-g15 40a400000.gpu: MMU: IO map: 0x408000000:0x20000 -> 0xfffffc2068158000
+[    0.078980] asahi-g15 40a400000.gpu: MMU: IO map: 0x290444000:0x4000 -> 0xfffffc206817c000
+[    0.078986] asahi-g15 40a400000.gpu: MMU: IO map: 0x408e08000:0x8000 -> 0xfffffc2068184000
+[    0.078993] asahi-g15 40a400000.gpu: MMU: IO map: 0x220000000:0x6c0000 -> 0xfffffc2068190000
+[    0.079001] asahi-g15 40a400000.gpu: MMU: IO map: 0x29244c000:0x4000 -> 0xfffffc2068854000
+[    0.079007] asahi-g15 40a400000.gpu: MMU: IO map: 0x2903d0000:0x4000 -> 0xfffffc206885c000
+[    0.079013] asahi-g15 40a400000.gpu: MMU: IO map: 0x2903c0000:0x4000 -> 0xfffffc2068864000
+[    0.079020] asahi-g15 40a400000.gpu: MMU: IO map: 0x2903d8000:0x4000 -> 0xfffffc206886c000
+[    0.079026] asahi-g15 40a400000.gpu: MMU: IO map: 0x408eb4000:0x4000 -> 0xfffffc2068874000
+[    0.079033] asahi-g15 40a400000.gpu: MMU: IO map: 0x409000000:0x8000 -> 0xfffffc206887c000
+[    0.079039] asahi-g15 40a400000.gpu: MMU: IO map: 0x3c945c000:0x4000 -> 0xfffffc2068888000
+[    0.079045] asahi-g15 40a400000.gpu: MMU: IO map: 0x290400000:0x8000 -> 0xfffffc2068890000
+[    0.079052] asahi-g15 40a400000.gpu: MMU: IO map: 0x2a4dc0000:0x24000 -> 0xfffffc206889c000
+[    0.079058] asahi-g15 40a400000.gpu: MMU: IO map: 0x408e1c000:0x4000 -> 0xfffffc20688c4000
+[    0.079147] asahi-g15 40a400000.gpu: board images asahi/t6031-j516c-board.bin: sha256 4e03f29fa447dcebfd4d1c225a647bfa31b363458f2833823a5ca8a10edff3fc accepted
+[    0.079289] asahi-g15 40a400000.gpu: board data: T6031 G15C images from the device tree match asahi/t6031-j516c-board.bin (32 record words from the file, 42 file words left zero), <board value> mW maximum power, 1380 MHz top operating point
+[    0.079292] asahi-g15 40a400000.gpu: idle standby 1500 us from the device tree
+[    0.079299] asahi-g15 40a400000.gpu: M3: publishing owned initdata root 0xfffffc204062ff40 (77 pages, 5 L3)
+[    0.081829] asahi-g15 40a400000.gpu: M3 firmware readiness: magic=0xabcdabcd flags=1
+[    0.083086] asahi-g15 40a400000.gpu: M3: firmware accepted owned initdata and device controls
+[    0.083087] asahi-g15 40a400000.gpu: G15: firmware at READY, starting the backend
+[    0.128494] asahi-g15 40a400000.gpu: G15: PB heap: 64 blocks posted at start, 2 chunks of 16 MiB backed
+[    0.128654] asahi-g15 40a400000.gpu: G15: compute graph: work 0xfffffc2d05e37760/0x7021003760 pools 0x7000000000 freelist 0x7005858000 table 0x7005c5f000
+[    0.129924] asahi-g15 40a400000.gpu: preemption divisor Globals+0x9b0=0: 0
+[    0.130026] [drm] Initialized asahi 0.0.0 for 40a400000.gpu on minor 0
+[    0.158270] watchdog: NMI not fully supported
+[    0.158271] watchdog: Hard watchdog permanently disabled
+[    0.593539] apple_pmp 290700000.pmp: J516C display domain 0x200 held: 0xff
+[    0.593541] apple_pmp 290700000.pmp: J516C display domain 0x200 minimum not latched
+[    0.593545] apple_pmp 290700000.pmp: J516C display domain 0x298 held: 0xff
+[    0.593545] apple_pmp 290700000.pmp: J516C display domain 0x298 minimum not latched
+[    0.593550] apple_pmp 290700000.pmp: J516C display domain 0x2a0 held: 0xf0f00ff
+[    0.593553] apple_pmp 290700000.pmp: J516C display held, PTD seeded DISP|ANS: req=0x200010000
+[    0.594090] apple_pmp 290700000.pmp: RTKit: Initializing (protocol version 12)
+[    0.838961] apple_pmp 290700000.pmp: RTKit: syslog message: io.cpp:41: PMP started
+[    1.367383] apple-dcp 386c00000.dcp: J516C DCP firmware 14.7.0 handoff admitted
+[    1.368079] apple-dcp 386c00000.dcp: PMP DISP acknowledged; starting warm RTKit adoption (no reset)
+[    1.368210] apple-dcp 386c00000.dcp: RTKit: Initializing (protocol version 12)
+[    1.368305] apple-dcp 386c00000.dcp: RTKit borrowed 16384 bytes at 0x0000010080251000 -> 0x0000010bd12d9000
+[    1.368323] apple-dcp 386c00000.dcp: RTKit allocated 16384 bytes at 0x0000010fffffc000
+[    1.369369] apple-dcp 386c00000.dcp: RTKit allocated 12288 bytes at 0x0000010fffff8000
+[    1.369532] apple-dcp 386c00000.dcp: RTKit borrowed 24568 bytes at 0x000001008025d000 -> 0x0000010bd12e5000
+[    1.369542] apple-dcp 386c00000.dcp: RTKit: syslog message: _logging_common.cpp:418: [AFK]binary_log_infrastructure_late_init coalescer initialized
+[    1.369553] apple-drm soc:display-subsystem: bound 386c00000.dcp (ops dcp_comp_ops [appledrm])
+[    1.369812] apple-dcp 386c00000.dcp: IOMFB INIT 0x10fffe000000040 (arena 0x0000010fffe00000, 0x100000 bytes)
+[    1.369826] apple-dcp 386c00000.dcp: RTKit: syslog message: ck_PCC2DBlm_v5.cpp:2730: IOMFB LACS_ERROR: DCP took too long to respond to LAS stats
+[    1.369899] apple-dcp 386c00000.dcp: RTKit: syslog message: ck_PCC2DBlm_v5.cpp:2772: IOMFB: BLM LTS data hasn't been read in more than 10 secs
+[    1.369963] apple-dcp 386c00000.dcp: RTKit: syslog message: ap_link.c:308: shared memory dva: 0x10fffe00000 0xffffffff004f0000
+[    1.369996] apple-dcp 386c00000.dcp: RTKit: syslog message: ap_link.c:285: ap_link: IOMFB: DCP heap size: 0x1030000 [iBoot:0x1030000] [LinkService:0x0]
+[    1.370001] apple-dcp 386c00000.dcp: IOMFB READY 0x0000000000400101; client open A401 -> A455
+[    1.371138] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:5404: IOMFB: Could not find Backlight service
+[    1.371172] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:5412: IOMFB: Could not find nvram service
+[    1.371175] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:2312: virtual bool UnifiedPipeline::start_ios_gated(): Created AP Services
+[    1.371193] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:2339: start_ios_gated: trigger pending HPD notification
+[    1.371213] apple-dcp 386c00000.dcp: RTKit: syslog message: FramebufferDCP.cpp:3441: virtual void IOMobileFramebuffer::hotPlug_notify(uint64_t)
+[    1.374789] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:2346: virtual bool UnifiedPipeline::start_ios_gated(): Flushed RTPs
+[    1.374854] apple-dcp 386c00000.dcp: RTKit: syslog message: nifiedPipeline.cpp:1775: set_device_enabled_gated: current state: 1, requested state: 1
+[    1.375285] apple-dcp 386c00000.dcp: RTKit: syslog message: ableCompensator.cpp:903: IOMFB setup_table: Could not find table 'display-backlight-compensation-v1' in registry. Using default table.
+[    1.375521] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:13827: IOMFB updateFrequencies: minimum-frequency property not found, using getClockFrequency(0) instead.
+[    1.375618] apple-dcp 386c00000.dcp: RTKit: syslog message: UPPipe.cpp:5607: IOMFB: vid-clock-to-disp-clock-factor read failed, using default
+[    1.375857] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:14223: bool IOMFB::UPPipeDCP_H13P::init_m3_timing_parameters(): Int entry for init_m3_timing tunable target is 4
+[    1.376811] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:13827: IOMFB updateFrequencies: minimum-frequency property not found, using getClockFrequency(0) instead.
+[    1.377178] apple-dcp 386c00000.dcp: RTKit: syslog message: UPPipeDCP_H13P.cpp:1775: virtual bool IOMFB::UPPipeDCP_H13P::late_init_ios(bool): Realtime Bandwidth setup failed
+[    1.377194] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:13159: set_run_mode_safe: deferring: 2 -> 4
+[    1.377210] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:13064: virtual IOMFBStatus IOMFB::UPPipeDCP_H13P::ready_for_run_mode_change(AppleRegisterStream *): initiating deferred run mode chang
+[    1.411941] apple-dcp 386c00000.dcp: RTKit: syslog message: M3Hal_v1.cpp:246: IOMFB: load APT M3 IMem : size 0x8b20
+[    1.412094] apple-dcp 386c00000.dcp: RTKit: syslog message: M3Hal_v1.cpp:246: IOMFB: load APT M3 DMem : size 0x71f4
+[    1.412201] apple-dcp 386c00000.dcp: RTKit: syslog message: CAHandler.cpp:190: IOMFB load_ca_data: Unrecognized data version 0 (expected 1 or 2)
+[    1.413204] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:17797: IOMFB: initialize_SDP: DPTX Generic SDP base index is 0xa
+[    1.413207] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:17824: initialize_SDP: Base SDP Index = 10 : Number of SDPs available = 1
+[    1.413263] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:17419: IOMFB Int RTBandwidth: DISABLED
+[    1.414692] apple-dcp 386c00000.dcp: RTKit: syslog message: UPTSQManager.cpp:134: IOMFB: clearing M3 reset
+[    1.414717] apple-dcp 386c00000.dcp: RTKit: syslog message: UPTSQ_Hal_v1.cpp:343: IOMFB: timebase_offset = 4
+[    1.415745] apple-dcp 386c00000.dcp: RTKit: syslog message: UPTSQManager.cpp:106: IOMFB: switch to normal mode succeeded
+[    1.416167] apple-dcp 386c00000.dcp: RTKit: syslog message: FramebufferDCP.cpp:2488: IOMFB:create_default_fb_surface: Creating default FB surface failed - width = 3456, height = 2234
+[    1.418246] apple-dcp 386c00000.dcp: preferred timing 2 colour 1: "3456x2234": 120 1042130 3456 3464 3496 3536 2234 2352 2360 2456 0x48 0x0
+[    1.419423] apple-dcp 386c00000.dcp: RTKit: syslog message: PPipeDCP_H13P.cpp:12911: IOMFB: panel charge parity violation [0xfa4728a]
+[    1.419474] apple-dcp 386c00000.dcp: RTKit: syslog message: ck_PCC2DBlm_v5.cpp:2730: IOMFB LACS_ERROR: DCP took too long to respond to LAS stats
+[    1.419484] apple-dcp 386c00000.dcp: DCP booted (A401)
+[    1.420359] apple-dcp 386c00000.dcp: A455 first_client_open done
+[    1.420362] apple-dcp 386c00000.dcp: dcp_hotplug() connected:1 valid_mode:0 nr_modes:1
+[    1.420370] apple-dcp 386c00000.dcp: IOMFB startup complete: 267 callbacks, 17 buffers; no modeset
+[    1.536498] apple-dcp 386c00000.dcp: set_digital_out_mode(color:1 timing:2) "3456x2234": 120 1042130 3456 3464 3496 3536 2234 2352 2360 2456 0x48 0x0
+[    1.536501] apple-dcp 386c00000.dcp: set_digital_out_mode() color mode depth:8 format:0 colorimetry:16 eotf:0 range:0 vrr:0
+[    1.536503] apple-dcp 386c00000.dcp: set_digital_out_mode finished:8500
+[    1.536874] apple-dcp 386c00000.dcp: RTKit: syslog message: UPPipeDCP_H13P.cpp:2564: brightness_changed: brightness value: 9175040
+[    1.546086] apple-drm soc:display-subsystem: [drm] fb0: appledrmfb frame buffer device
+[    3.686941] apple-dcp 386c00000.dcp: RTKit: syslog message: UPPipeDCP_H13P.cpp:2564: brightness_changed: brightness value: 983040
+[  144.798895] asahi-g15 40a400000.gpu: PB growth request 0 ctx 9 position 2: +10 blocks (74 of 4095), DEVCTL 7: 0
+[  144.800311] asahi-g15 40a400000.gpu: PB growth request 1 ctx 9 position 2: +10 blocks (84 of 4095), DEVCTL 7: 0
+[  153.070638] asahi-g15 40a400000.gpu: PB heap: idle 7153 ms with 1474 blocks posted: re-initialization to 64 at the next render, 11 chunks freed, 2 backed
+[  153.070654] asahi-g15 40a400000.gpu: render allocators moved to a fresh uncached set; the cached set is retained
+[  153.070694] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 418
+[  153.075172] asahi-g15 40a400000.gpu: PB growth request 0 ctx 15 position 0: +10 blocks (74 of 4095), DEVCTL 7: 0
+[  153.076390] asahi-g15 40a400000.gpu: PB growth request 1 ctx 15 position 0: +10 blocks (84 of 4095), DEVCTL 7: 0
+[  161.319896] asahi-g15 40a400000.gpu: PB heap: idle 7149 ms with 1474 blocks posted: re-initialization to 64 at the next render, 11 chunks freed, 2 backed
+[  161.319928] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 476
+[  161.324977] asahi-g15 40a400000.gpu: PB growth request 0 ctx 21 position 0: +10 blocks (74 of 4095), DEVCTL 7: 0
+[  161.326379] asahi-g15 40a400000.gpu: PB growth request 1 ctx 21 position 0: +10 blocks (84 of 4095), DEVCTL 7: 0
+[  169.593491] asahi-g15 40a400000.gpu: PB heap: idle 7060 ms with 1474 blocks posted: re-initialization to 64 at the next render, 11 chunks freed, 2 backed
+[  169.593691] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 537
+[  169.598798] asahi-g15 40a400000.gpu: PB growth request 0 ctx 27 position 0: +10 blocks (74 of 4095), DEVCTL 7: 0
+[  169.600231] asahi-g15 40a400000.gpu: PB growth request 1 ctx 27 position 0: +10 blocks (84 of 4095), DEVCTL 7: 0
+[  177.862269] asahi-g15 40a400000.gpu: PB heap: idle 7148 ms with 1484 blocks posted: re-initialization to 64 at the next render, 11 chunks freed, 2 backed
+[  177.862463] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 595
+[  177.866857] asahi-g15 40a400000.gpu: PB growth request 0 ctx 33 position 0: +10 blocks (74 of 4095), DEVCTL 7: 0
+[  177.868278] asahi-g15 40a400000.gpu: PB growth request 1 ctx 33 position 0: +10 blocks (84 of 4095), DEVCTL 7: 0
+[  192.534488] asahi-g15 40a400000.gpu: PB heap: idle 13578 ms with 1474 blocks posted: re-initialization to 64 at the next render, 11 chunks freed, 2 backed
+[  192.534595] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 653
+[  204.362263] asahi-g15 40a400000.gpu: PB growth request 0 ctx 45 position 2: +10 blocks (74 of 4095), DEVCTL 7: 0
+[  204.363677] asahi-g15 40a400000.gpu: PB growth request 1 ctx 45 position 2: +10 blocks (84 of 4095), DEVCTL 7: 0
+[  247.100196] asahi-g15 40a400000.gpu: PB heap: idle 11021 ms with 2884 blocks posted: re-initialization to 64 at the next render, 22 chunks freed, 2 backed
+[  247.100414] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 46961
+[  288.544769] apple-dcp 386c00000.dcp: RTKit: syslog message: UPPipeDCP_H13P.cpp:2564: brightness_changed: brightness value: 0
+[  288.554296] apple-dcp 386c00000.dcp: set_digital_out_mode(color:1 timing:2) "3456x2234": 120 1042130 3456 3464 3496 3536 2234 2352 2360 2456 0x48 0x0
+[  288.554306] apple-dcp 386c00000.dcp: set_digital_out_mode() color mode depth:8 format:0 colorimetry:16 eotf:0 range:0 vrr:0
+[  288.554313] apple-dcp 386c00000.dcp: set_digital_out_mode finished:8500
+[  288.554631] apple-dcp 386c00000.dcp: RTKit: syslog message: UPPipeDCP_H13P.cpp:2564: brightness_changed: brightness value: 983040
+== head
+uname 7.1.12-aurora-dev-silicon
+package linux-aurora-dev 7.1.12_aurora_dev_silicon-20
+params apple_t6031_display.enable=1 
+mesa Version: OpenGL ES 3.2 Mesa 26.3.0-devel (git-aab698d2ef)
