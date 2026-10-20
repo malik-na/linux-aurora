@@ -1,0 +1,52 @@
+== r2d #44 SMP PREEMPT_DYNAMIC Tue Oct 20 20:02:34 IST 2026
+-- glmark2 1
+[terrain] duration=5: FPS: 56 FrameTime: 18.008 ms
+[refract] duration=5: FPS: 105 FrameTime: 9.528 ms
+[shadow] duration=5: FPS: 388 FrameTime: 2.579 ms
+[jellyfish] duration=5: FPS: 957 FrameTime: 1.045 ms
+[build] duration=5:use-vbo=true: FPS: 1001 FrameTime: 0.999 ms
+[texture] duration=5: FPS: 1006 FrameTime: 0.995 ms
+                                  glmark2 Score: 584 
+-- glmark2 2
+[terrain] duration=5: FPS: 56 FrameTime: 18.009 ms
+[refract] duration=5: FPS: 105 FrameTime: 9.612 ms
+[shadow] duration=5: FPS: 365 FrameTime: 2.746 ms
+[jellyfish] duration=5: FPS: 979 FrameTime: 1.022 ms
+[build] duration=5:use-vbo=true: FPS: 1016 FrameTime: 0.984 ms
+[texture] duration=5: FPS: 1015 FrameTime: 0.985 ms
+                                  glmark2 Score: 588 
+-- glmark2 3
+[terrain] duration=5: FPS: 56 FrameTime: 18.102 ms
+[refract] duration=5: FPS: 105 FrameTime: 9.594 ms
+[shadow] duration=5: FPS: 376 FrameTime: 2.662 ms
+[jellyfish] duration=5: FPS: 986 FrameTime: 1.015 ms
+[build] duration=5:use-vbo=true: FPS: 1047 FrameTime: 0.956 ms
+[texture] duration=5: FPS: 1064 FrameTime: 0.940 ms
+                                  glmark2 Score: 604 
+-- heavy, first
+ms=1211 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1474/3072/4095 requests 1937 grown 19370 refused 0 bad 0 backed 1664 chunks 13 waits 0 refills 76 reclaims 9 freed 65
+-- heavy cold 1
+ms=1211 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1474/3072/4095 requests 2078 grown 20780 refused 0 bad 0 backed 1664 chunks 13 waits 0 refills 87 reclaims 10 freed 76
+-- heavy cold 2
+ms=1245 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1474/3072/4095 requests 2219 grown 22190 refused 0 bad 0 backed 1664 chunks 13 waits 0 refills 98 reclaims 11 freed 87
+-- heavy cold 3
+ms=1193 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1474/3072/4095 requests 2360 grown 23600 refused 0 bad 0 backed 1664 chunks 13 waits 0 refills 109 reclaims 12 freed 98
+-- heavy cold 4
+ms=1249 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1474/3072/4095 requests 2501 grown 25010 refused 0 bad 0 backed 1664 chunks 13 waits 0 refills 120 reclaims 13 freed 109
+-- heavy warm 1
+ms=1213 res=[ Fail (4:SubmitRenderPass Image comparison failed)] pb: blocks 64/2794/3072/4095 requests 2633 grown 26330 refused 0 bad 0 backed 2944 chunks 23 waits 0 refills 130 reclaims 13 freed 109
+-- heavy warm 2
+ms=1177 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1474/3072/4095 requests 2774 grown 27740 refused 0 bad 0 backed 2944 chunks 23 waits 0 refills 130 reclaims 14 freed 109
+-- heavy warm 3
+ms=1171 res=[ Fail (4:SubmitRenderPass Image comparison failed)] pb: blocks 64/2784/3072/4095 requests 2905 grown 29050 refused 0 bad 0 backed 2944 chunks 23 waits 0 refills 130 reclaims 14 freed 109
+-- heavy warm 4
+ms=1173 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1474/3072/4095 requests 3046 grown 30460 refused 0 bad 0 backed 2944 chunks 23 waits 0 refills 130 reclaims 15 freed 109
+-- heavy warm 5
+ms=1178 res=[ Fail (4:SubmitRenderPass Image comparison failed)] pb: blocks 64/2784/3072/4095 requests 3177 grown 31770 refused 0 bad 0 backed 2944 chunks 23 waits 0 refills 130 reclaims 15 freed 109
+-- heavy warm 6
+ms=1180 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1474/3072/4095 requests 3318 grown 33180 refused 0 bad 0 backed 2944 chunks 23 waits 0 refills 130 reclaims 16 freed 109
+-- heavy warm 7
+ms=1188 res=[ Fail (4:SubmitRenderPass Image comparison failed)] pb: blocks 64/2794/3072/4095 requests 3450 grown 34500 refused 0 bad 0 backed 2944 chunks 23 waits 0 refills 130 reclaims 16 freed 109
+-- heavy warm 8
+ms=1180 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1474/3072/4095 requests 3591 grown 35910 refused 0 bad 0 backed 2944 chunks 23 waits 0 refills 130 reclaims 17 freed 109
+-- faults 1

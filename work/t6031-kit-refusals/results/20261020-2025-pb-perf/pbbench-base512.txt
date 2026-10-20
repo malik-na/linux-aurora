@@ -1,0 +1,28 @@
+== base512 #2 SMP PREEMPT_DYNAMIC Tue Oct 20 00:36:11 IST 2026
+-- glmark2 1
+[terrain] duration=5: FPS: 43 FrameTime: 23.455 ms
+[refract] duration=5: FPS: 91 FrameTime: 11.074 ms
+[shadow] duration=5: FPS: 360 FrameTime: 2.779 ms
+[jellyfish] duration=5: FPS: 842 FrameTime: 1.188 ms
+[build] duration=5:use-vbo=true: FPS: 950 FrameTime: 1.053 ms
+[texture] duration=5: FPS: 951 FrameTime: 1.053 ms
+                                  glmark2 Score: 538 
+-- glmark2 2
+[terrain] duration=5: FPS: 43 FrameTime: 23.419 ms
+[refract] duration=5: FPS: 91 FrameTime: 11.100 ms
+[shadow] duration=5: FPS: 358 FrameTime: 2.798 ms
+[jellyfish] duration=5: FPS: 841 FrameTime: 1.189 ms
+[build] duration=5:use-vbo=true: FPS: 941 FrameTime: 1.063 ms
+[texture] duration=5: FPS: 945 FrameTime: 1.058 ms
+                                  glmark2 Score: 535 
+-- glmark2 3
+[terrain] duration=5: FPS: 44 FrameTime: 23.195 ms
+[refract] duration=5: FPS: 91 FrameTime: 11.067 ms
+[shadow] duration=5: FPS: 360 FrameTime: 2.780 ms
+[jellyfish] duration=5: FPS: 842 FrameTime: 1.188 ms
+[build] duration=5:use-vbo=true: FPS: 952 FrameTime: 1.051 ms
+[texture] duration=5: FPS: 954 FrameTime: 1.049 ms
+                                  glmark2 Score: 539 
+-- heavy, first
+ms=1168 res=[ Fail (4:SubmitRenderPass Image comparison failed)] pb: blocks 1024/1474/3072/4095 requests 45 grown 450 refused 0 bad 0
+-- faults 1
