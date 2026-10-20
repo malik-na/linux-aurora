@@ -670,8 +670,13 @@ pub(crate) fn encode_ta(
     put64(w, 0x768, geo.tpc_bytes);
     put64(w, 0x770, uv);
     put32(w, 0x778, ta::SEQ_SIZE as u32);
-    // The per-queue index words (natively 0/1/0 and 1/3/2 for a context's two queues).
-    let qw = crate::g15::pools::QueueWords::new(r.pb_queue);
+    // The per-queue index words stay at the one-queue values (0 at +0x1c, 1 at +0x77c, 0 at
+    // +0x878) whatever the PB: natively a context's second queue carries 1/3/2, but written for
+    // a second PB here (`QueueWords::new(1)`) the firmware refused that PB's first prefix
+    // outright: the words index per-queue firmware state (the pair of stamp cells 2q and
+    // 2q + 1) this driver does not provide. `r.pb_queue` is kept for the day it does.
+    let qw = crate::g15::pools::QueueWords::new(0);
+    let _ = r.pb_queue;
     put32(w, 0x1c, qw.index);
     put32(w, 0x77c, qw.odd);
     put32(w, 0x878, qw.even);

@@ -419,7 +419,10 @@ impl RunMap {
 /// The per-queue index words of a render's TA work. Natively the two queues of one context
 /// carry 0/0/0 and 1/1/2 at +0x1c, register 0x1c830 (low word) and +0x878, and 1 and 3 at
 /// +0x77c: an index `q` per queue, with `2q` and `2q + 1` where the queue's pair of stamp
-/// cells is named. One PB per VM here: `q` is the PB's queue index.
+/// cells is named. Written for a second PB without per-queue stamp cells behind it, the
+/// firmware refused that PB's first prefix outright (boot r0pq-g): the words index firmware
+/// state the queue must own. Until the driver provides it, every render carries queue 0's
+/// words; the PB's queue index is kept internal.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct QueueWords {
     /// TA work +0x1c.
