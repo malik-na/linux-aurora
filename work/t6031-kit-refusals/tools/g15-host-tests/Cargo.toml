@@ -1,0 +1,10 @@
+[package]
+name = "g15host"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+kernel = { path = "kernel" }
+
+[lib]
+path = "src/lib.rs"
