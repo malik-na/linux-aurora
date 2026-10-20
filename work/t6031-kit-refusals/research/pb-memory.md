@@ -587,3 +587,14 @@ value there is `compact(scene_user + 0x40)`, a pointer per pass slot, where the 
 tests: `queue_words_and_indices`. Package r0pq-g. Boot test: the concurrency step; pass = VK 706/2 Fail/0
 Crash as the control, 0 faults; fail = same crash: next the stamp pointer pair per PB (+0x864/+0x86c, which
 implies per-PB stamp cells in the engine) or register 0x1c830.
+
+### 5.13 Boot r0pq-g (607f58e9): the per-queue index words are not free-form
+
+At boot, the second PB (queue index 1) had its first prefix refused outright 1 ms after publication: no
+firmware event, no timeout, no fault, `prefix FAILED ... errors=0`, fail-stop (EIO). So +0x1c / +0x77c /
++0x878 index firmware state a queue must own (the stamp-cell pair 2q and 2q + 1, whose pointers the native
+queues carry per queue at +0x864/+0x86c): writing q = 1 without per-queue stamp cells behind it is refused.
+Reverted (ninth commit): every render carries queue 0's words again; the PB's queue index stays internal
+(`pbvm: ... queue q`). Open, for the hv captures: the full 64-bit register 0x1c830 of both native queues and
+their stamp pointers; the remaining candidates for the index-buffer render's crash are per-PB stamp cells
+(engine ordering per PB) and register 0x1c830. No new package until those facts are in.
