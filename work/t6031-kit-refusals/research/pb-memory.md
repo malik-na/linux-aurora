@@ -455,3 +455,28 @@ chunks (32 MiB: the first PB's 64 blocks and the reserve); a rendering VM costs 
 of lists; a dead VM returns them. Packages: `pkgs/...-pbpq-r0-<hash>...` (compiled `g15_pb_reclaim` 0: per-VM
 PBs, destruction returns blocks, no idle reclaim, no chunk unbacking) and `...-pbpq-r2-<hash>...` (idle
 reclaim per VM and chunk unbacking).
+
+### 5.6 Boot r0pq (528fe914): fails at login; the PB counter must count the PB's own renders
+
+Within 15 s of login, every cycle: ctx A gets a PB; ctx B gets a PB and its InitBM prefix retires; A's
+next render prefix fails 80 ms after publication with the TA done and the FS one stamp short (firmware event
+4, its own render timeout), recovery, re-initialization of everything, and again with the next two contexts
+(ctx 3/5, 8/12, 15/18, 21/24, 27/30, 33/36, 39/42 ...). Two unmapped reads at garbage VAs (ctx 14 and 26,
+contexts without a PB) at 21.5 and 23.9 s, fail-stop at 24.2 s; by then 30 PBs created, 28 destroyed (the
+desktop makes about 30 GPU contexts in two minutes).
+
+Reading: nothing had been destroyed at the first failure, and the engine never publishes one VM's prefix
+behind another VM's flight, so neither churn nor concurrent priming is the first cause; A's FS stalls on A's
+first render after B's. The one record whose meaning changed with two PBs is the **PB counter** (manager
++0x58): `publish_pb` wrote the global draw ordinal, which on the one-PB driver equalled that manager's
+render count; natively the counter counts the queue's own renders (+0x0/+0x10 = counter - 1, one per TA
+kick, §3.1 of the observation). With two PBs A's counter skips B's draw and A's FS waits for a render its
+manager never had. The late garbage-VA reads fit the firmware touching a dead PB's lists or manager that we
+freed and rewrote at once, where the native driver keeps the image mapped unchanged and frees lists and
+blocks within about 30 s.
+
+Next change (proposed to the lead): a per-PB render counter (1 at InitBM, +1 per render of that PB), and a
+grace period (`g15_pb_grace_ms`, 10 s) before a dead PB's lists and blocks are freed and its manager set
+rewritten. Boot test: login + 2 min desktop with zero prefix failures, recoveries or faults, then §5.4. If
+the A-after-B FS timeout persists, the next candidates are the shared UMA managers and scene list (the hv
+two-queue captures can say whether the native queues name different UMA managers).
