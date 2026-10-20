@@ -437,3 +437,21 @@ destruction; no default is raised (the 1 GiB figure is a cap).
    at its posted count and its rendering is uninterrupted (no gap in its frame log).
 5. Full unfiltered dEQP -j2: results equal to §4 r0; `refused 0`; the pool peak about 24 chunks or less
    (two VMs at a time, each at its own peak).
+
+### 5.5 Implementation (fork branch `t6031/pb-per-queue`, on `t6031/pb-adaptive` 7b335a74)
+
+Two SOB-only commits (hashes in the final report): the core (`pools/growth.rs`: ledger per PB taking the
+pool's free count, `BlockPool` bitmaps over 64 chunks with runs that never cross a chunk, `route`, idle
+clock per PB; host tests for routing, growth with a short/empty pool, pool accounting across two PBs and the
+reclaim of one PB while another keeps its blocks) and the driver (`pools.rs`: `VmPb` per context with an
+uncached recycled manager set, `UserObject` lists mapped in the owning VM only, runs mapped at grant time
+with `map_in_range`, `ensure_pb` at a render job's publication, `prepare_pb` before an InitBM, per-VM
+`reclaim_check`, `drain_dead_vms` fed by `Registry::note_dead` from `VmState::drop`; `encode.rs`: InitBM
++0x8 = slot; `engine.rs`: per-VM allocator refs, the priming prefix for any PB with InitBM pending,
+`publish_pb(slot, draw)`; `vm.rs`: `PbMaps` lists/blocks per VM). Stats: the `pb:` line sums the PBs and
+appends `pbs created destroyed`; one `pbvm: ctx C vm I blocks initial/posted/max requests grown refused
+inits init_pending` line per PB. The `g15_pb_*` parameters keep their meaning per VM. Memory at boot: 2
+chunks (32 MiB: the first PB's 64 blocks and the reserve); a rendering VM costs 8 MiB of blocks plus 192 KiB
+of lists; a dead VM returns them. Packages: `pkgs/...-pbpq-r0-<hash>...` (compiled `g15_pb_reclaim` 0: per-VM
+PBs, destruction returns blocks, no idle reclaim, no chunk unbacking) and `...-pbpq-r2-<hash>...` (idle
+reclaim per VM and chunk unbacking).
