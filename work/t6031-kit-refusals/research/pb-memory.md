@@ -499,3 +499,23 @@ for 5 minutes. Package `pkgs/...-pbadapt-r0bpq-<hash>...` (reclaim off). Boot te
 `created` tracking `destroyed`; MemAvailable within 40 MiB of r2b's idle. Then §5.4. If the A-after-B FS
 timeout persists, the next candidates are the per-queue slot-like TA words (+0x1c, 0x1c830, +0x77c, +0x878)
 and the per-queue legacy_empty record, which our encoder leaves at the single-queue values.
+
+### 5.8 Boot r0pq-b (4ee9d1cf): desktop clean, concurrency fails; lists must have their own GVAs
+
+Desktop 2 min: clean (0 failures, pbs 2, MemAvailable 43,458 MiB): the counter fix holds. Concurrency
+(desktop + gpu-heat + dEQP VK -j2): 97 prefix failures (a new PB's first prefix, 0.4 ms after creation),
+98 recoveries, 18 faults "write unmapped va 0x1000000100" (compact pointer 0 + 0x100: a PB page record of
+0 handed to the tiler), VK 570/134 crash; and the graveyard held 118 graves = 848 MiB (dEQP's churn x 10 s).
+
+Reading: every PB's lists were at the same client GVAs in different VMs; natively the two queues' lists are
+at different addresses in one address space. The firmware therefore reads a PB's lists through whatever
+context is current, not the PB's own: a render of VM A reads PB B's manager with A's lists, identical while
+nothing grew (desktop), zero records once dEQP's PBs grew. Change (fourth commit): each slot's lists are
+firmware objects with client aliases at the slot's own GVAs (page lists 0x1074000000 + slot x 0x28000,
+block lists 0x70f0000000 + slot x 0x8000), mapped in every VM (new VMs at creation, live VMs when the slot
+is first used), kept per slot; the graveyard holds at most one chunk of blocks over all graves and the
+grace defaults to 2 s (manager sets still rest 5 min). Memory: lists at most 64 x 192 KiB = 12 MiB,
+allocated per slot used. Boot test (r0pq-c): the §5.4 concurrency step: pass = no fault at 0x1000000100,
+no first-prefix timeouts, VK results equal to r2b's, graves bounded (pool chunks tracking live PBs +
+reserve + one grave chunk); fail with the same first-prefix timeouts but no faults = the per-queue TA words
+(+0x1c, 0x1c830, +0x77c, +0x878, legacy_empty) are next.
