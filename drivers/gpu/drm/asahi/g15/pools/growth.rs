@@ -20,7 +20,9 @@
 //!
 //! Core-only (no `kernel` imports): this file is compiled by the host test harness as well.
 
-use crate::g15::fw::buffer::{grow_request, BLOCK_LIST_RECORDS, GROW_STEP, MAX_BLOCKS, MIN_BLOCKS};
+use crate::g15::fw::buffer::{
+    grow_request, BLOCK_BYTES, BLOCK_LIST_RECORDS, GROW_STEP, MAX_BLOCKS, MIN_BLOCKS,
+};
 
 /// Blocks per backing chunk (16 MiB).
 pub(crate) const CHUNK_BLOCKS: u32 = 128;
@@ -389,6 +391,31 @@ impl Grave {
     }
 }
 
+/// Where a granted run of pool blocks is mapped: chunk `chunk`, bytes `offset..offset + bytes`
+/// of it, at the owning VM's heap GVAs `gva..gva + bytes` (heap block `heap_first` on). Computed
+/// before the run's block records are written and the producer advanced, which precede the
+/// reply: the firmware never sees a block whose pages are not mapped in its VM.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RunMap {
+    pub(crate) chunk: u32,
+    pub(crate) offset: usize,
+    pub(crate) bytes: usize,
+    pub(crate) gva: u64,
+}
+
+impl RunMap {
+    /// The mapping of pool run `[pool_first, pool_first + len)` as heap blocks
+    /// `[heap_first, heap_first + len)` of a PB whose heap range starts at `heap`.
+    pub(crate) const fn new(heap: u64, heap_first: u32, pool_first: u32, len: u32) -> Self {
+        Self {
+            chunk: pool_first / CHUNK_BLOCKS,
+            offset: (pool_first % CHUNK_BLOCKS) as usize * BLOCK_BYTES as usize,
+            bytes: len as usize * BLOCK_BYTES as usize,
+            gva: heap + heap_first as u64 * BLOCK_BYTES,
+        }
+    }
+}
+
 /// Blocks the graveyard may hold at most (one chunk): beyond it the oldest graves are buried at
 /// once, so the memory of dead PBs stays bounded whatever the VM churn.
 pub(crate) const GRAVE_BLOCKS: u32 = CHUNK_BLOCKS;
@@ -569,6 +596,52 @@ mod tests {
         b.reinit();
         assert_eq!(b.renders, 0);
         assert_eq!(b.render(1), 1);
+    }
+
+    /// A grant's mapping: the run's pages map at the PB's next heap GVAs (the ledger's posted
+    /// count), inside the heap range, within one chunk.
+    #[test]
+    fn grant_mapping() {
+        let heap = 0x70c0000000u64;
+        let mut l = Ledger::new(true, 64, 4095);
+        let mut p = BlockPool::new();
+        p.back_chunk(0);
+        p.back_chunk(1);
+        // The initial 64 blocks of another PB took pool blocks 0..64; ours takes the next.
+        p.mark(0, 64, true);
+        let mut posted_runs = alloc::vec::Vec::new();
+        let mut want = 64;
+        while want > 0 {
+            let (f, n) = p.take_run(want.min(10)).unwrap();
+            let heap_first = posted_runs
+                .iter()
+                .map(|m: &RunMap| m.bytes as u32 / 0x20000)
+                .sum::<u32>();
+            posted_runs.push(RunMap::new(heap, heap_first, f, n));
+            want -= n;
+        }
+        assert_eq!(posted_runs[0], RunMap::new(heap, 0, 64, 10));
+        assert_eq!(posted_runs[0].gva, heap);
+        assert_eq!(posted_runs[0].offset, 64 * 0x20000);
+        assert_eq!(posted_runs[6].gva, heap + 60 * 0x20000);
+        // A grant after the initial posting: heap block 64 = the ledger's posted count, and
+        // the run sits in chunk 1 when chunk 0 is full.
+        p.mark(74, 54, true);
+        let q = request(5, 0, 1);
+        let (first, count) = match l.accept(&q, p.free_blocks()) {
+            Answer::Grant { first, count } => (first, count),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!((first, count), (64, 10));
+        let (f, n) = p.take_run(count).unwrap();
+        let m = RunMap::new(heap, first, f, n);
+        assert_eq!(m.chunk, 1);
+        assert_eq!(m.offset, 0);
+        assert_eq!(m.gva, heap + 64 * 0x20000);
+        assert_eq!(m.bytes, 10 * 0x20000);
+        assert!(m.gva + m.bytes as u64 <= heap + MAX_BLOCKS as u64 * BLOCK_BYTES);
+        assert!(m.offset + m.bytes <= CHUNK_BLOCKS as usize * BLOCK_BYTES as usize);
+        assert_eq!(l.post(n), 74);
     }
 
     #[test]

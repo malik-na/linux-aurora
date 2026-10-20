@@ -566,16 +566,12 @@ impl Pools {
 
     /// Maps run `run` of the pool as heap blocks `[first, first + len)` of `vm`.
     fn map_run(&self, vm: &VmState, first: u32, run: Run) -> Result {
-        let c = (run.pool_first / growth::CHUNK_BLOCKS) as usize;
-        let chunk = self.heap[c].as_ref().ok_or(EINVAL)?;
-        let offset =
-            (run.pool_first % growth::CHUNK_BLOCKS) as usize * buffer::BLOCK_BYTES as usize;
-        let bytes = run.len as usize * buffer::BLOCK_BYTES as usize;
-        let gva = client::PB_HEAP + first as u64 * buffer::BLOCK_BYTES;
+        let m = growth::RunMap::new(client::PB_HEAP, first, run.pool_first, run.len);
+        let chunk = self.heap[m.chunk as usize].as_ref().ok_or(EINVAL)?;
         vm.map_pb_blocks(
             &chunk.gem(),
-            offset..offset + bytes,
-            gva..gva + bytes as u64,
+            m.offset..m.offset + m.bytes,
+            m.gva..m.gva + m.bytes as u64,
         )
     }
 
