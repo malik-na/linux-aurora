@@ -598,3 +598,66 @@ Reverted (ninth commit): every render carries queue 0's words again; the PB's qu
 (`pbvm: ... queue q`). Open, for the hv captures: the full 64-bit register 0x1c830 of both native queues and
 their stamp pointers; the remaining candidates for the index-buffer render's crash are per-PB stamp cells
 (engine ordering per PB) and register 0x1c830. No new package until those facts are in.
+
+### 5.14 Design F: per-queue firmware render queues (design only, 2026-10-20)
+
+The hv facts (§6-7 of the observation) say what "per PB" is natively: a **firmware render queue** per
+client queue, each with its own queue-info record, scheduler record and ring block (stride 0x50c0 in the
+low region), notifier ring, scene ring, legacy (TA/FS handoff) record, scratch ring, register/sequence
+pages, PB manager with lists and heap, and a **stamp cell pair** `q` in two shared stamp pages present at
+MSG_INIT (8-byte cells {u32,u32}, 2048 per page; user page at low +0xf8000, firmware page in the command
+region; cells +8q; first stamp 0x100, +0x100 per render); register 0x1c830 = q and TA +0x1c/+0x77c/+0x878 =
+q/2q+1/2q index that pair. Shared across queues: the TA UMA manager, the two stamp pages, the 0x40-record
+page. The r0pq-g refusal (q = 1 without a cell pair of our own) and the remaining crash of the heavy render
+(an FS consuming another PB's handoff/stamps) are two faces of the same fact: per-PB memory without
+per-queue firmware state is half a queue.
+
+**What the engine has today** (`g15/graph.rs`, `engine.rs`): one render graph = one TA queue and one FS
+queue (qinfo, qstate, ring of 0x500 records, 256 KiB scratch, one 4-byte user stamp and one 4-byte firmware
+stamp per engine as separate objects, not cells of the native pages), one scheduling context, one
+notifier, one threshold, one job list, one InitBM slot; every VM's renders go through it in **one total
+order**: at most two prefixes in flight, the second of the same VM; a prefix's TA waits on the previous
+prefix's FS stamp and its FS on its own TA, so cross-VM ordering is the ring order plus the stamp
+barriers; retirement reads the two stamps; recovery (halt/resume, fs_resync, reinit) is written for one
+queue pair. Per-VM PBs (this branch) hang the manager, lists, handoff record and C1 off the VM while the
+queue pair stays shared.
+
+**What per-queue firmware queues need** (per client queue or per VM; per VM keeps the PB design):
+1. Registration before the first TA command of the queue: queue-info (+0x18 self-pointer), a scheduler
+   record + ring block (our `sched_ctx`/ring shape, stride 0x50c0 natively), the 0x40 cross-index record,
+   notifier ring, scene ring (per queue: the scene ordinal is then the PB's render count, §5.11's open
+   point), legacy record, scratch ring, PB manager + lists + heap (done), and a stamp cell pair q taken
+   from the shared pages at +8q. Whether the firmware learns a new queue through the first SubmitQueue
+   record (`new_queue` = 1 in our submit channel record) or needs a DEVCTL first is open: natively one
+   DEVCTL 0x1b (UMA registration) came 100 ms before the first TA kick and six DEVCTL 0x18 {s, e} after a
+   third queue existed (meaning unknown). The shared stamp pages are not in our InitData: they must be
+   found or placed (the native pages are named by no InitData word; our graph allocates stamps itself, so
+   the first step is to make our stamp objects two pages of cells and index them).
+2. Ordering and barriers: the firmware orders queues itself (that is what per-queue stamps are for); the
+   host keeps per-queue stamp targets and per-queue retirement, and cross-queue dependencies (a job
+   waiting on another queue's fence) become barrier records on the other queue's stamp cell (the existing
+   stamp-only barrier type with another cell's address), or are left to the host (wait for the fence
+   before publishing, as drm_sched does). The total-order flights become per-queue flight lists; the
+   `FLIGHTS = 2` bound and the submit-ahead logic become per queue.
+3. Recovery: a halt is device-wide; the handshake stays, but fs_resync/reinit become per queue (the
+   stamps of the hung queue only), and the fail-stop path must fail the hung queue's VM only.
+4. Compute: the native compute queue uses stamp cell 3 of the same pages; our compute graph keeps its
+   own; nothing changes there at first.
+
+**Size and risk.** This is a rewrite of the engine's core (publish, retire, barriers, recovery) around
+per-queue state: on the order of the engine itself (engine.rs 1.4k lines, poll/recovery 1.4k), with two
+unknowns that only boots or traces settle (how a queue is registered, whether the stamp pages must be the
+native ones). Memory-wise it is the native shape and costs little per queue (records of a few KiB plus the
+PB). Risk: high; it touches every proven path (first job, recovery, dEQP full runs) and needs its own
+staged boots (one queue through the new path, then two).
+
+**Smaller intermediate (G): per-VM PBs on one firmware queue, with the per-queue state the heavy render
+needs.** Keep the single firmware queue, total order and stamps as today, keep per-VM PB memory, and give
+each PB the per-queue records the firmware pairs with a manager: the handoff/legacy record (done), a
+per-PB scene ring indexed by the PB's render count (open candidate from §5.11), and the per-PB queue-info
+record only if the firmware pairs manager and queue through it. Not possible in G: the index words and
+stamp cells (they need the firmware queue). Whether G can fix the heavy render depends on whether its
+remaining crash comes from a per-queue record we still share (scene ring: testable in one boot, cheap) or
+from the stamp cells (only F). Recommendation: one boot of G's scene-ring step to learn which; then
+decide on F with the two unknowns listed for the hv agent (queue registration sequence; the stamp pages'
+placement and whether the firmware accepts stamp pointers outside them).
