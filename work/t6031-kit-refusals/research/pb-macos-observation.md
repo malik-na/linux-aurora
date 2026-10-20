@@ -194,3 +194,44 @@ and its image zeroed by +3 min 49 s. No manager was ever named by a command of a
 observer logs that case; none occurred in either run). Whether commands of the same queue still named
 the old manager during the seconds between the successor's first command and the unmapping was not
 recorded (observer limit).
+
+## 7. Slot words, stamp arrays and per-queue firmware state (offline, added 2026-10-20 06:10)
+
+Same sources as §6 (2026-10-13 21:43 TA commands and queue-info records, the 2026-10-14 compute
+command, the login-time and MSG_INIT-time context-0 snapshots). Firmware VAs are given as offsets
+inside the firmware's low region (the InitData root sits at low +0xe0000; our runtime layout notes).
+
+**(1) Register 0x1c830** is a plain integer, not an address: its full 64-bit value is 0 in both of
+queue A's commands and 1 in all 6753 of queue B's, never changing per render. It equals the queue's
+stamp cell index (below).
+
+**(2) The stamp pointers name cells of two shared arrays.** +0x864 points into one 16 KiB page in
+the low firmware region at +0xf8000 (the page after the FWCtl ring page at +0xf0000; root +0xe0000,
+region A +0xe8000), +0x86c into one page in the command region (+0xc4c8000). Both pages are mapped
+at MSG_INIT (all zero, named by no InitData word; the root's only pointer into those pages is region
+A) and both hold 8-byte cells {u32, u32}: queue A uses cell 0 (+0), queue B cell 1 (+8), and the
+compute queue (its command names both pages at +0x7e8/+0x7f0) cell 3 (+0x18). The cell holds the
+stamp value: at login cell 0 = (0x300, 0x300) after queue A's three renders, cell 1 = (0x1edd00,
+0x1edd00) after 7901; 8 cells were nonzero (indices 0-7), the others 2040 zero. The microsequence and
+barrier pages reference the cells' two halves separately (+0 and +4 of a cell). Our driver gives every
+engine of a render graph its own stamp objects; the native driver indexes two fixed arrays.
+
+The small words index the same slot: +0x1c = q, +0x77c = 2q + 1, +0x878 = 2q, register 0x1c830 = q,
+stamp cells at +8q (q = 0 for queue A, 1 for queue B). A per-queue 0x40-byte record in one shared page
+(queue info +0xa4 points to it) is indexed the other way round (queue B record 0, queue A record 1;
+10 records nonzero at login). The stamp of a queue's first render is 0x100 and advances by 0x100 per
+render (+0x780/+0x874 words).
+
+**(3) Per-queue firmware state before the first TA command.** Not present at MSG_INIT, present at
+login, one per queue: the queue-info record (0xb4 bytes, queue B's 0x4980 bytes after queue A's; its
++0x18 points to itself +0xb0); a scheduler record plus ring block in the low region at +0x10000 (A)
+and +0x150c0 (B), i.e. stride 0x50c0, records {head, 0, 0, 0, 0, 0, head, 0, head, 0, 0x500} with the
+ring capacity 0x500 (ours too); the 0x40-byte record above; the queue's notifier ring (0xc0 stride,
+36 distinct in queue B's commands), scene ring (0x80 stride, 80 distinct), legacy record (+0x34),
+tail scratch ring (0x40 stride, 256 distinct), register/sequence pages, PB manager, block_ctl,
+counter, lists and heap. Shared between the two render queues: the TA UMA manager, the two stamp
+pages, the 0x40-record page. Device control before the first TA kick: one DEVCTL 0x1b (UMA pool
+registration, index 1) 100 ms before it, a second (index 2, a different manager) 2.6 s after; six
+DEVCTL 0x18 records {0x18, s, e} with s = 0, 1, 2 and e = 1, 2 came 11 s after the compute queue's
+first kick, when three queues existed (their meaning is not known). Nothing else sized by the queue
+count was found: the stamp arrays have room for 2048 cells and need no allocation for a new queue.
