@@ -1,6 +1,7 @@
 //! Host test harness: compiles the core-only g15 files in place through the `src/g15` symlink
 //! that `run.sh` points at a kernel tree's `drivers/gpu/drm/asahi/g15`.
 #![allow(dead_code)]
+extern crate alloc;
 #[macro_use]
 extern crate kernel;
 
