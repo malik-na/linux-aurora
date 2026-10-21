@@ -685,3 +685,14 @@ Boot test: idle clean, then the §5.4 concurrency step (desktop + gpu-heat 30 + 
   per-queue state is the stamp cells, which only design F (per-queue firmware queues) can give.
 - Anything new at idle (first-prefix failure, fault at the new list) says the firmware expects the scene
   index on the draw ordinal after all: revert to the shared list.
+
+### 5.16 Boot r0pq-h (82c7c5e1, G scene-list step): no fix (2026-10-22)
+
+Concurrency test (desktop + gpu-heat 30 s + unfiltered dEQP VK -j2, `~/aurora-test/conc-test.sh`):
+704 Pass, 1 Fail, 1 Flake, **2 Crash** (host_write_index_buffer.1048576 as before, plus
+texture_functions.texturelodoffset.mirrored_repeat.usampler1d_vertex), 2 fault-bank lines (write unmapped,
+client VA, ctx 30) and 4 recoveries. r0pq-f had 1 Crash and 2 recoveries; the r2b control (one PB) 0 and
+0. Acceptance at idle PASS. A per-PB scene list numbered by the PB's render count is not the missing
+per-queue record; if anything it is worse. What G can still give is exhausted (the 0x80-byte scene
+records are already exclusive to one render in flight), so the remaining per-PB failure is the stamp
+cells / firmware queue state: only design F (§5.14). Private log: ~/m3-private/r0hpq-conc-dmesg.txt.
