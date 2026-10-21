@@ -696,3 +696,52 @@ client VA, ctx 30) and 4 recoveries. r0pq-f had 1 Crash and 2 recoveries; the r2
 per-queue record; if anything it is worse. What G can still give is exhausted (the 0x80-byte scene
 records are already exclusive to one render in flight), so the remaining per-PB failure is the stamp
 cells / firmware queue state: only design F (§5.14). Private log: ~/m3-private/r0hpq-conc-dmesg.txt.
+
+## 6. Design F step 2 (one queue, per-queue layout)
+
+Written 2026-10-22. Fork branch `t6031/pq-step2` on `t6031/pb-drain-reinit` e272b673 (= PR #363 head), facts
+from `pb-macos-observation.md` §8. A safety step: the engine's one render queue pair and its compute queue move
+onto the per-queue stamp layout the firmware expects, so that step 3 can add a second render queue. Still one
+render queue, one total order, one shared PB (the on-demand PB code is untouched).
+
+**Commits** (each builds alone, 0 asahi warnings; host tests `fw::stamps::tests`, 21/21 with the rest):
+
+1. `23e4baae` *Name the queues' stamp word indices in one place*: new core-only `g15/fw/stamps.rs` (render
+   queue c -> words 2c / 2c + 1, compute word h, event bytes, stage bits, bounds, uniqueness; `RENDER` = 0,
+   `COMPUTE` = 2). Every submit event byte, barrier producer word (+0x18) and work-image index word comes from
+   it. Byte-identical records (TA +0x878 was 0 and is now written as 0).
+2. `c75c0c29` *Keep every stamp in two shared stamp pages*: two zeroed 16 KiB pages (user, firmware; class
+   Shared, allocated once with the graphs) replace the six 4-byte stamp objects; each stamp is `page + 4 *
+   word`. Seeds unchanged. Boot log line `G15: stamp pages: user .. fw ..; render queue words 0/1, compute
+   word N`.
+3. `9465eed0` *Move the compute queue to stamp word 6*: compute word 2 (= render queue 1's TA word) -> 6.
+   Stage-event flag bits are decoded as the bits of the queues' stamp words (TA bit 0, FS bit 1, compute bit
+   6); a bit naming no queue is logged once (`firmware stage event bits 0x.. name no queue`).
+
+**Index table after step 2**
+
+| queue | words | stamp pointers (both pages) | event byte | index words | stage bit |
+|---|---|---|---|---|---|
+| render 0 TA | 0 | page + 0 (TA +0x864/+0x86c) | 0 | TA +0x878 = 0, +0x77c = 1 | 0 |
+| render 0 FS | 1 | page + 4 (FS +0xbac/+0xbb4) | 1 | FS +0xbc0 = 1 | 1 |
+| compute | 6 | page + 0x18 (+0x7e8/+0x7f0) | 6 | +0x7fc = 6 | 6 |
+
+Barriers: producer word +0x18 = 0 (TA), 1 (FS), 6 (compute). TA +0x1c / register 0x1c830 (PB index) unchanged.
+
+**Already matching §8, not touched:** new = 1 on the first TA, FS and compute records; TA ring[0] of the first
+render is the InitBM work (type 6, +8 = 0 = PB index); FS ring[0] is the barrier (type 4) on the TA's
+firmware stamp word with +0x18 = 0. **Kept different from §8 (behaviour identity):** stamps are seeded (TA
+0x7a000000, FS 0x3d000000, compute user 0xc1000000 / firmware 0), not 0; FS and TA records are rung with two
+doorbells (values 1 then 0) where natively the TA doorbell covers both; the first TA ring holds a predecessor
+barrier between InitBM and the TA work; the queue-infos use scheduling row 2 (`RENDER_QUEUE_CLASS` /
+`COMPUTE_QUEUE_CLASS` = 2) where channel-group-0 queues natively use row 0 (no need to change it for step 2).
+Inferences: FS +0xbc0 as the FS's word index (same distance from its stamp pointers as TA +0x878; 1 for c =
+0, unchanged); stage flag bit i = event byte i (bits 0/1/2 were TA/FS/compute with event bytes 0/1/2).
+
+**What the boot must show** (package `~/Projects/build-out/kernel-pbadapt/pkgs/linux-aurora-dev-7.1.12_aurora_dev_silicon-52-pbadapt-r2pq2-9465eed039c7-aarch64.pkg.tar.xz` on the M3, reclaim default 2): the stamp-pages log line with two
+distinct page VAs and words 0/1 and 6; no `stage event bits .. name no queue` line; acceptance PASS; full
+unfiltered dEQP equal to the head (VK 706/2/0, GLES3 955, GLES31 796/1/0), 0 faults, 0 recoveries. Failure
+shapes: compute jobs not retiring (deadline/recovery on the first compute, with a stray-bit line `0x4`) =
+the firmware reports compute completion on the old bit, i.e. the stage bit is not the event byte; a compute
+refusal or fault at the first compute submit = word 6 / event 6 rejected (then bisect to `c75c0c29`, which
+keeps word 2); a render failure at the first render on `c75c0c29` = stamp words in shared pages not accepted.
