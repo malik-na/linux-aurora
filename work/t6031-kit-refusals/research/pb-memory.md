@@ -753,3 +753,107 @@ keeps word 2); a render failure at the first render on `c75c0c29` = stamp words 
 - Full unfiltered dEQP: VK 706/2/0, GLES3 955 + 1 Warn, GLES31 796/1/0, 0 faults/recoveries (= the #363 head).
 - Concurrency test (desktop + gpu-heat + VK -j2): 706 Pass, 2 Fail (the two known image comparisons), 0 Crash,
   0 faults. Step 2 changes nothing visible; step 3 (a second render queue, index 1, words 2/3) is unblocked.
+
+## 7. Design F step 3 (second render queue)
+
+Written 2026-10-22. Fork branch `t6031/pq-step3` on `t6031/pq-step2` 9465eed0 (m3 remote `air/pq-step3`), facts
+from `pb-macos-observation.md` §8. A second firmware render queue (render index 1, stamp words 2/3, PB index 1)
+with a PB of its own, used by one VM at a time; every other VM keeps render queue 0 and the shared on-demand PB.
+Module parameter `g15_render_queues` (1 or 2, compiled default 2, boot-time only: `asahi.g15_render_queues=1`):
+with 1 the driver behaves as step 2 (one render graph, one PB, no take; only the debugfs `rq:` lines are new).
+
+**Commits** (each builds alone, 0 asahi warnings, checkpatch --strict 0 errors; host tests 26/26 with `rq.rs`
+added to the harness):
+
+1. `8de4380f` *Allocate one render graph per render queue*: `RenderGraph` per `stamps::RENDERS[q]` (TA/FS
+   queue info, state, ring, scratch, stamp words, scheduling context = the 0x40 record, job list = the 0x18
+   record, notifier, threshold, handoff record, InitBM record); queue 1 allocated and initialized, unused. Boot
+   line `G15: render queue 1: words 2/3, PB index 1, queue info ../..`.
+2. `5df3f880` *Keep one parameter buffer per render queue*: `Pb` per queue (manager, block_ctl, counter, scene
+   list, page and block lists, heap chunks, ledger, stats, uncached spare records); UMA managers, their counters
+   and the misc record stay shared (as in the tested `pb-per-queue`). Queue 1's records and lists are allocated
+   at boot at their own GVAs (heap 0x70a0000000, between the clustering buffers and queue 0's heap; page list
+   0x1074028000; block list 0x70f0008000, the r0pq-c lesson), its heap is unbacked. Growth requests are routed to
+   the PB of the published render prefix of their context and admit slot 0 or the PB's index; C1 is written with
+   the page list of the PB whose InitBM the prefix carries (the r0pq-c lesson; for queue 0 alone this is the old
+   once-per-initialization write). Recovery and reclaim re-initialize every PB; reclaim/free/drain-reinit are
+   evaluated per active PB. debugfs `pb1:` with the `pb:` keys.
+3. `3ed682a7` *Run one VM's renders on render queue 1*: the queue rule (`rq.rs`, host-tested), per-queue draw
+   ordinals and tails, per-queue InitBM priming, TA +0x1c and InitBM +0x8 = PB index, retirement/progress/
+   recovery observation on the flight's queue, stage bits 2/3, debugfs `rq:`/`rq0:`/`rq1:`, take/release log.
+
+**The VM -> queue rule.** Queue 1 belongs to at most one VM, the holder. A VM takes it when it publishes a prefix
+whose first command is a render, with nothing in flight, while queue 1 is free; it keeps it until its client
+handle is closed and nothing of it is published or pending (checked at every publication and in idle poll
+passes). Every other VM renders on queue 0. Why: the engine already publishes another VM's prefix only once the
+flights are empty (flights are always one VM's), so a VM never changes queue with a prefix in flight and the
+flights are always on one queue: no per-queue flight lists, the single total order and the FLIGHTS = 2 bound stay.
+At login the greeter's or the first client's VM takes it and gives it back when it exits; desktop helpers come
+and go (about 30 contexts in two minutes, §5.6), so takes and releases are expected in every boot; under the concurrency
+test the holder is whichever VM rendered first from idle after the previous holder closed (often the
+compositor, then queue 1 renders the desktop while gpu-heat and dEQP share queue 0 and its PB). The first take
+backs queue 1's PB (64 blocks posted + one reserve chunk = 2 chunks, 32 MiB); it then stays backed across holders
+(as queue 0's PB is shared across VMs, no InitBM at a take) and follows the same reclaim (down to 2 chunks at
+idle). Cost: +32 MiB idle once queue 1 was used.
+
+**Per queue now:** draw ordinal n (TA/FS stamp values `stamp_seed(seed, n)` in the queue's words, threshold 2n,
+PB counter = n, scene index n % 48 in the queue's scene list, FS sequence +0x68 = n - 1), the newest receipts,
+registration (`new_queue` 1 on the queue's first TA and FS records), and priming: the first render prefix of a
+queue after boot and after every PB (re)initialization carries the InitBM of its PB (+0x8 = PB index, C1 for its
+page list) and holds one render with nothing published behind it until it retired (the existing rule, per queue).
+
+**Records of a queue-1 render:** TA +0x864/+0x86c = page + 8, +0x874/+0x780 its stamp, +0x878 = 2, +0x77c = 3,
++0x1c = 1, +0x24 PB1 manager, +0x34 queue 1's handoff record, +0x14 queue 1's notifier; FS +0xbac/+0xbb4 = page
++ 0xc, +0xbc0 = 3; submit records event 2 (TA) / 3 (FS) naming queue 1's queue infos; rings TA [InitBM,
+predecessor barrier, TA], FS [own-TA barrier (producer word 2), FS].
+
+**Barriers and the total order:** a prefix's TA waits on the previous FS of the order: behind flights (same VM)
+that is the tail's FS on the same queue; at a prefix start with nothing in flight it is the newest render's FS,
+possibly on the other queue's word (type 1, as before at a prefix start; compute -> TA type 1 is already a
+cross-queue wait). Computes after a render wait on that render's queue's FS word.
+
+**Recovery:** halt/resume stays device-wide. A recovered render abort (on either queue) or a fragment kill sets
+the global re-init: the next render prefix (any queue) re-initializes the UMA set and both PBs, and each queue's
+next render primes with its InitBM; `fs_resync` reads the actual FS word of the newest render's queue. Recovery's
+observation (`tail`/`observe`) uses the queue of the published flights. No queue-1 fail-stop special case.
+
+**Deviations from §8 and the step brief (each a candidate if queue 1 fails):**
+- Both queues post on the TA and FS channels 0/1 (doorbells 0/1): §8.1 item 6 puts both of one client's native
+  render queues in channel group 0; the context-2 queue used group 2 (channels 6/7, doorbell 8). Not a channel
+  pair per queue.
+- Register 0x1c830 keeps our compact pointer `compact(scene_user + 0x40)` (per pass slot) for both queues; §8 has
+  it equal to the PB index. TA +0x1c and InitBM +0x8 do carry the PB index.
+- Stamps stay seeded (step 2), not 0 at creation; queue 1's words get the same seeds as queue 0's.
+- Scene list per PB (per queue, consistent with the per-queue ordinal), misc record shared.
+- Queue 1's PB is not freed at a release (the §5.6/5.7 lesson: the firmware touched a dead PB's records in
+  r0pq); freeing it at release after a grace is a follow-up once boots show no late access.
+
+**What the boot must show** (package `~/Projects/build-out/kernel-pbadapt/pkgs/linux-aurora-dev-7.1.12_aurora_dev_silicon-*-pbadapt-r2pq3-3ed682a7b662-aarch64.pkg.tar.xz`, reclaim default 2):
+- Boot lines: the stamp-pages line as in step 2, `G15: render queue 1: words 2/3, PB index 1, ...`; at the first
+  take `G15: PB1 heap: 64 blocks posted, 2 chunks of 16 MiB backed` and `G15: ctx C (VM V) takes render queue 1
+  (draw 0, take 1)`; releases as `... releases render queue 1 after N renders on it`.
+- `asahi-g15/stats`: `rq: queues 2 holder ctx .. takes T releases R` with T >= 1; `rq1: draw D prefixes P ta X/X
+  fs Y/Y events E` with D, P, E > 0 and target = firmware word at idle (the firmware reports words 2/3 as stage
+  bits 2/3); `pb1:` blocks 64/..; no `stage event bits .. name no queue` line.
+- Acceptance PASS; full unfiltered dEQP equal to step 2 (VK 706/2/0, GLES3 955, GLES31 796/1/0), 0 faults;
+  concurrency test (desktop + gpu-heat + VK -j2 unfiltered): 0 Crash, 0 faults (step 2: 706 Pass / 2 Fail).
+- A queue-1 holder that grows its PB logs `PB1 growth request N ctx C slot S ...` for its first two requests:
+  S says whether the firmware echoes InitBM +0x8 (1) or keeps 0 (both admitted).
+
+**Failure signatures:**
+- Queue 1's first prefix refused at once (`prefix FAILED ... errors=0` about 1 ms after the take, as r0pq-g):
+  the firmware rejects the queue-1 registration or index words; next: its own channel group, register 0x1c830 =
+  PB index.
+- Queue 1's first TA never starts (host deadline, `render queue 1` report with TA word 2 at its seed): the
+  cross-queue predecessor wait at the prefix start; next: wait on the queue's own previous FS (equivalent here,
+  everything before it retired).
+- `rq1: ... events 0` with deadlines/recoveries whose report shows queue 1's stamps at their targets, or a
+  `name no queue` line: the firmware reports queue 1's completions on other stage bits.
+- Faults in 0x70a0000000-0x70c0000000 (queue 1's heap not mapped in the holder), at 0x1074028000 or 0x70f0008000
+  (its lists), or a queue-1 render faulting in queue 0's heap (lists or C1 of the wrong PB).
+- `PB1 growth request not answered: ... slot S` with S not 0/1, or `live 0` for the holder: routing.
+- Failures only after a second take (a new holder on a used queue 1): the firmware keys queue state by context;
+  next: an InitBM at every take.
+- The heavy render's crash under concurrency as in r0pq-f/h (`host_write_index_buffer.1048576`) with queue 1
+  working otherwise: a per-queue record still shared (register 0x1c830, misc record).
+- Control: `asahi.g15_render_queues=1` must reproduce step 2 exactly (`rq: queues 1`, no `rq1:`/`pb1:`, no take).

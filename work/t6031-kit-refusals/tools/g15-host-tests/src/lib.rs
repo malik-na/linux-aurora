@@ -18,4 +18,6 @@ pub mod g15 {
         #[path = "../../g15/pools/growth.rs"]
         pub mod growth;
     }
+    #[path = "../g15/rq.rs"]
+    pub mod rq;
 }
