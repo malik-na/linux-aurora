@@ -828,7 +828,7 @@ observation (`tail`/`observe`) uses the queue of the published flights. No queue
 - Queue 1's PB is not freed at a release (the §5.6/5.7 lesson: the firmware touched a dead PB's records in
   r0pq); freeing it at release after a grace is a follow-up once boots show no late access.
 
-**What the boot must show** (package `~/Projects/build-out/kernel-pbadapt/pkgs/linux-aurora-dev-7.1.12_aurora_dev_silicon-*-pbadapt-r2pq3-3ed682a7b662-aarch64.pkg.tar.xz`, reclaim default 2):
+**What the boot must show** (package `~/Projects/build-out/kernel-pbadapt/pkgs/linux-aurora-dev-7.1.12_aurora_dev_silicon-54-pbadapt-r2pq3-3ed682a7b662-aarch64.pkg.tar.xz`, reclaim default 2):
 - Boot lines: the stamp-pages line as in step 2, `G15: render queue 1: words 2/3, PB index 1, ...`; at the first
   take `G15: PB1 heap: 64 blocks posted, 2 chunks of 16 MiB backed` and `G15: ctx C (VM V) takes render queue 1
   (draw 0, take 1)`; releases as `... releases render queue 1 after N renders on it`.
