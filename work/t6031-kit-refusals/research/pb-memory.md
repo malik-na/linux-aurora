@@ -745,3 +745,11 @@ shapes: compute jobs not retiring (deadline/recovery on the first compute, with 
 the firmware reports compute completion on the old bit, i.e. the stage bit is not the event byte; a compute
 refusal or fault at the first compute submit = word 6 / event 6 rejected (then bisect to `c75c0c29`, which
 keeps word 2); a render failure at the first render on `c75c0c29` = stamp words in shared pages not accepted.
+
+### 6.x Boot result, step 2 (silicon-52 = 9465eed0, 2026-10-22 02:33): PASS
+
+- Acceptance PASS (record 20261022-023433-pq-step2-accept); boot line: stamp pages user/fw, render queue words
+  0/1, compute word 6; no "name no queue" line, so the stage bit follows the event byte (bit 6 for compute).
+- Full unfiltered dEQP: VK 706/2/0, GLES3 955 + 1 Warn, GLES31 796/1/0, 0 faults/recoveries (= the #363 head).
+- Concurrency test (desktop + gpu-heat + VK -j2): 706 Pass, 2 Fail (the two known image comparisons), 0 Crash,
+  0 faults. Step 2 changes nothing visible; step 3 (a second render queue, index 1, words 2/3) is unblocked.
