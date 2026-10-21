@@ -286,10 +286,10 @@ impl Firmware {
         let ch = &self.channels;
         // A render: both stamp pairs, both queues, both pipes.
         if f.renders != 0 {
-            let pending = Self::r32(&r.user_stamp[0], 0)? != e.ta_target
-                || Self::r32(&r.fw_stamp[0], 0)? != e.ta_target
-                || Self::r32(&r.user_stamp[1], 0)? != e.fs_target
-                || Self::r32(&r.fw_stamp[1], 0)? != e.fs_target
+            let pending = r.user_stamp[0].read()? != e.ta_target
+                || r.fw_stamp[0].read()? != e.ta_target
+                || r.user_stamp[1].read()? != e.fs_target
+                || r.fw_stamp[1].read()? != e.fs_target
                 || Self::r32(&r.qstate[0], qstate::DONE)? != e.ta_head
                 || Self::r32(&r.qstate[0], qstate::READ)? != e.ta_head
                 || Self::r32(&r.qstate[1], qstate::DONE)? != e.fs_head
@@ -301,8 +301,8 @@ impl Firmware {
             }
         }
         if f.computes != 0 {
-            let pending = Self::r32(&g.user_stamp, 0)? != e.target
-                || Self::r32(&g.fw_stamp, 0)? != e.target
+            let pending = g.user_stamp.read()? != e.target
+                || g.fw_stamp.read()? != e.target
                 || Self::r32(&g.qstate, qstate::DONE)? != e.head
                 || Self::r32(&g.qstate, qstate::READ)? != e.head
                 || ch.read(Channel::Compute)? != ch.producer(Channel::Compute)
@@ -342,8 +342,8 @@ impl Firmware {
         };
 
         if f.computes != 0 {
-            let pending = !stamp_reached(Self::r32(&g.user_stamp, 0)?, f.target, e.target)
-                || !stamp_reached(Self::r32(&g.fw_stamp, 0)?, f.target, e.target)
+            let pending = !stamp_reached(g.user_stamp.read()?, f.target, e.target)
+                || !stamp_reached(g.fw_stamp.read()?, f.target, e.target)
                 || !ring_passed(
                     Self::r32(&g.qstate, qstate::DONE)?,
                     f.c_start,
@@ -357,10 +357,10 @@ impl Firmware {
             }
         }
         if f.renders != 0 {
-            let pending = !stamp_reached(Self::r32(&r.user_stamp[0], 0)?, f.ta_target, e.ta_target)
-                || !stamp_reached(Self::r32(&r.fw_stamp[0], 0)?, f.ta_target, e.ta_target)
-                || !stamp_reached(Self::r32(&r.user_stamp[1], 0)?, f.fs_target, e.fs_target)
-                || !stamp_reached(Self::r32(&r.fw_stamp[1], 0)?, f.fs_target, e.fs_target)
+            let pending = !stamp_reached(r.user_stamp[0].read()?, f.ta_target, e.ta_target)
+                || !stamp_reached(r.fw_stamp[0].read()?, f.ta_target, e.ta_target)
+                || !stamp_reached(r.user_stamp[1].read()?, f.fs_target, e.fs_target)
+                || !stamp_reached(r.fw_stamp[1].read()?, f.fs_target, e.fs_target)
                 || !ring_passed(
                     Self::r32(&r.qstate[0], qstate::DONE)?,
                     f.ta_start,
@@ -493,14 +493,14 @@ impl Firmware {
         let (mut c, mut ta, mut fs) = (0, 0, 0);
 
         if f.computes != 0 {
-            c = g.fw_stamp.r32(0).unwrap_or(0);
+            c = g.fw_stamp.read().unwrap_or(0);
             if stamp_reached(c, f.target, e.target) {
                 c = 0; // its computes are done: later work does not count
             }
         }
         if f.renders != 0 {
-            ta = r.fw_stamp[0].r32(0).unwrap_or(0);
-            fs = r.fw_stamp[1].r32(0).unwrap_or(0);
+            ta = r.fw_stamp[0].read().unwrap_or(0);
+            fs = r.fw_stamp[1].read().unwrap_or(0);
             if stamp_reached(ta, f.ta_target, e.ta_target) {
                 ta = 0;
             }
@@ -603,8 +603,8 @@ impl Firmware {
             e.flights.len(),
             e.ordinal,
             e.target,
-            rd(&g.user_stamp, 0),
-            rd(&g.fw_stamp, 0),
+            g.user_stamp.read().unwrap_or(0xdeadbeef),
+            g.fw_stamp.read().unwrap_or(0xdeadbeef),
             rd(&g.qstate, qstate::DONE),
             rd(&g.qstate, qstate::READ),
             rd(&g.qstate, qstate::WRITE),
@@ -624,8 +624,8 @@ impl Firmware {
                 "G15:   render: draw={} ta {:#x}/{:#x}/{:#x} done={} read={} write={} head={} ch0={}/{}; fs {:#x}/{:#x}/{:#x} done={} read={} write={} head={} ch1={}/{}; stage events={}/{}\n",
                 e.draw,
                 e.ta_target,
-                rd(&r.user_stamp[0], 0),
-                rd(&r.fw_stamp[0], 0),
+                r.user_stamp[0].read().unwrap_or(0xdeadbeef),
+                r.fw_stamp[0].read().unwrap_or(0xdeadbeef),
                 rd(&r.qstate[0], qstate::DONE),
                 rd(&r.qstate[0], qstate::READ),
                 rd(&r.qstate[0], qstate::WRITE),
@@ -633,8 +633,8 @@ impl Firmware {
                 ch.read(Channel::Ta).unwrap_or(0xdeadbeef),
                 ch.write_cell(Channel::Ta).unwrap_or(0xdeadbeef),
                 e.fs_target,
-                rd(&r.user_stamp[1], 0),
-                rd(&r.fw_stamp[1], 0),
+                r.user_stamp[1].read().unwrap_or(0xdeadbeef),
+                r.fw_stamp[1].read().unwrap_or(0xdeadbeef),
                 rd(&r.qstate[1], qstate::DONE),
                 rd(&r.qstate[1], qstate::READ),
                 rd(&r.qstate[1], qstate::WRITE),

@@ -81,9 +81,9 @@ impl Firmware {
     pub(crate) fn observe(&self) -> Result<Observed> {
         let (g, r, ch) = (&self.graph.compute, &self.graph.render, &self.channels);
         Ok(Observed {
-            compute_stamp: g.fw_stamp.r32(0)?,
-            ta_stamp: r.fw_stamp[0].r32(0)?,
-            fs_stamp: r.fw_stamp[1].r32(0)?,
+            compute_stamp: g.fw_stamp.read()?,
+            ta_stamp: r.fw_stamp[0].read()?,
+            fs_stamp: r.fw_stamp[1].read()?,
             compute_done: g.qstate.r32(qstate::DONE)?,
             compute_read: g.qstate.r32(qstate::READ)?,
             ta_done: r.qstate[0].r32(qstate::DONE)?,

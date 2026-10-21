@@ -1367,7 +1367,7 @@ impl Firmware {
                 && tuning::RENDER_INTERNAL_HOLD == 0;
             // After a recovered failure the previous FS may never have written.
             if pf.prev == Prev::None && self.recovery.fs_resync {
-                prev_fs = r.fw_stamp[1].r32(0)?;
+                prev_fs = r.fw_stamp[1].read()?;
             }
             let b = encode::barrier(
                 r.fw_stamp[1].va,

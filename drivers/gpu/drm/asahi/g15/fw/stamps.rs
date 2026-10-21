@@ -12,6 +12,8 @@
 //!
 //! Core-only (no `kernel` imports): this file is compiled by the host test harness as well.
 
+/// Bytes of each stamp page.
+pub(crate) const PAGE_SIZE: usize = 0x4000;
 /// Stamp words an index can name (an event byte).
 pub(crate) const WORDS: u32 = 0x100;
 
@@ -32,6 +34,11 @@ impl Word {
     /// The word index (index words of the work images, barrier producer word).
     pub(crate) const fn index(self) -> u32 {
         self.0
+    }
+
+    /// Byte offset of the word in either page.
+    pub(crate) const fn offset(self) -> usize {
+        4 * self.0 as usize
     }
 
     /// Submit record event byte.
@@ -92,6 +99,8 @@ mod tests {
         for (c, ta, fs) in [(0, 0, 1), (1, 2, 3), (2, 4, 5), (7, 14, 15)] {
             let r = Render::new(c).unwrap();
             assert_eq!((r.ta().index(), r.fs().index()), (ta, fs));
+            assert_eq!(r.ta().offset(), 8 * c as usize);
+            assert_eq!(r.fs().offset(), 8 * c as usize + 4);
             assert_eq!((r.ta().event(), r.fs().event()), (ta as u8, fs as u8));
         }
     }
@@ -99,7 +108,7 @@ mod tests {
     #[test]
     fn compute_word() {
         let h = Word::new(6).unwrap();
-        assert_eq!((h.index(), h.event()), (6, 6));
+        assert_eq!((h.index(), h.offset(), h.event()), (6, 0x18, 6));
     }
 
     #[test]
@@ -111,6 +120,7 @@ mod tests {
             Some(WORDS - 1)
         );
         assert_eq!(Render::new(WORDS / 2), None);
+        assert!(Word::new(WORDS - 1).unwrap().offset() + 4 <= PAGE_SIZE);
     }
 
     #[test]

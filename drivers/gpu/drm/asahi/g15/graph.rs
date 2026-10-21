@@ -4,8 +4,10 @@
 //!
 //! The compute graph holds 22 x 4 MiB compute pools, the freelist (every pool's pages), the pool
 //! table, the manager, scheduling context, notifier, threshold, job list, queue info/state, ring,
-//! queue scratch and the user and firmware stamps. The render graph holds the render queues,
-//! scheduling context, notifier, threshold, job list, the empty legacy record and InitBM. The
+//! queue scratch and its user and firmware stamp words. The render graph holds the render
+//! queues with their stamp words, scheduling context, notifier, threshold, job list, the empty
+//! legacy record and InitBM. Every stamp word is a word of the two shared stamp pages
+//! ([`StampPages`], layout in [`super::fw::stamps`]). The
 //! compute slots and the render pass slots are [`super::slots`]; the render UMA/PB allocators
 //! and their spare set are [`super::pools`], initialized from [`Firmware::init_graphs`].
 //! Classes per [`super::hw::tuning`]. Graph buffers with a client GVA are aliased into every
@@ -22,6 +24,7 @@ use kernel::{
 
 use super::channel::Channel;
 use super::fw::graph::{job_list, manager, notifier, pools, qinfo, qinfo_row2, qstate, sched_ctx};
+use super::fw::stamps::{self, Word};
 use super::hw::{client, engine, pte, sizes, tuning};
 use super::object::{Class, FwObject, Objects, Placement, Request};
 use super::Firmware;
@@ -122,6 +125,59 @@ pub(crate) fn alloc(
     })
 }
 
+/// The two shared stamp pages: user and firmware, the same word layout in both.
+pub(crate) struct StampPages {
+    pub(crate) user: Arc<FwObject>,
+    pub(crate) fw: Arc<FwObject>,
+}
+
+impl StampPages {
+    /// Allocates both pages, zeroed.
+    fn new(o: &mut Objects) -> Result<Self> {
+        Ok(Self {
+            user: alloc(o, stamps::PAGE_SIZE, Class::Shared, None, 0, false)?,
+            fw: alloc(o, stamps::PAGE_SIZE, Class::Shared, None, 0, false)?,
+        })
+    }
+
+    /// Word `w` of the user page.
+    fn user(&self, w: Word) -> Stamp {
+        Stamp::new(&self.user, w)
+    }
+
+    /// Word `w` of the firmware page.
+    fn fw(&self, w: Word) -> Stamp {
+        Stamp::new(&self.fw, w)
+    }
+}
+
+/// One stamp word of a stamp page.
+pub(crate) struct Stamp {
+    page: Arc<FwObject>,
+    offset: usize,
+    /// Firmware VA of the word.
+    pub(crate) va: u64,
+}
+
+impl Stamp {
+    fn new(page: &Arc<FwObject>, w: Word) -> Self {
+        Self {
+            page: page.clone(),
+            offset: w.offset(),
+            va: page.va + w.offset() as u64,
+        }
+    }
+
+    /// The stamp value.
+    pub(crate) fn read(&self) -> Result<u32> {
+        self.page.r32(self.offset)
+    }
+
+    fn write(&self, value: u32) -> Result {
+        self.page.w32(self.offset, value)
+    }
+}
+
 /// The compute graph, without its slots.
 pub(crate) struct ComputeGraph {
     /// The empty legacy record: allocated for the firmware's layout, never written.
@@ -139,13 +195,13 @@ pub(crate) struct ComputeGraph {
     pub(crate) qstate: Arc<FwObject>,
     pub(crate) ring: Arc<FwObject>,
     pub(crate) qscratch: Arc<FwObject>,
-    pub(crate) user_stamp: Arc<FwObject>,
-    pub(crate) fw_stamp: Arc<FwObject>,
+    pub(crate) user_stamp: Stamp,
+    pub(crate) fw_stamp: Stamp,
 }
 
 impl ComputeGraph {
-    /// Allocates the compute graph objects.
-    fn new(objects: &mut Objects) -> Result<Self> {
+    /// Allocates the compute graph objects; its stamps are word [`stamps::COMPUTE`].
+    fn new(objects: &mut Objects, st: &StampPages) -> Result<Self> {
         let (sh, fw) = (Class::Shared, Class::Fw);
         let o = objects;
 
@@ -184,8 +240,8 @@ impl ComputeGraph {
             qstate: alloc(o, qstate::SIZE, fw, None, 0, false)?,
             ring: alloc(o, sizes::QUEUE_CAP as usize * 8, fw, None, 0, false)?,
             qscratch: alloc(o, 0x40000, queue_scratch(), None, 0, false)?,
-            user_stamp: alloc(o, 4, sh, None, 0, false)?,
-            fw_stamp: alloc(o, 4, sh, None, 0, false)?,
+            user_stamp: st.user(stamps::COMPUTE),
+            fw_stamp: st.fw(stamps::COMPUTE),
         })
     }
 
@@ -251,8 +307,8 @@ impl ComputeGraph {
         q.w64(qinfo::UNK_AC, 4)?;
         self.qstate.w32(qstate::CAP, sizes::QUEUE_CAP)?;
 
-        self.user_stamp.w32(0, engine::COMPUTE_SEED)?;
-        self.fw_stamp.w32(0, 0)
+        self.user_stamp.write(engine::COMPUTE_SEED)?;
+        self.fw_stamp.write(0)
     }
 }
 
@@ -264,8 +320,8 @@ pub(crate) struct RenderGraph {
     pub(crate) qstate: [Arc<FwObject>; 2],
     pub(crate) ring: [Arc<FwObject>; 2],
     pub(crate) qscratch: [Arc<FwObject>; 2],
-    pub(crate) user_stamp: [Arc<FwObject>; 2],
-    pub(crate) fw_stamp: [Arc<FwObject>; 2],
+    pub(crate) user_stamp: [Stamp; 2],
+    pub(crate) fw_stamp: [Stamp; 2],
     pub(crate) sched_ctx: Arc<FwObject>,
     pub(crate) notifier: Arc<FwObject>,
     pub(crate) threshold: Arc<FwObject>,
@@ -280,27 +336,29 @@ struct RenderQueue {
     qstate: Arc<FwObject>,
     ring: Arc<FwObject>,
     qscratch: Arc<FwObject>,
-    user_stamp: Arc<FwObject>,
-    fw_stamp: Arc<FwObject>,
+    user_stamp: Stamp,
+    fw_stamp: Stamp,
 }
 
 impl RenderQueue {
-    fn new(o: &mut Objects) -> Result<Self> {
+    /// The queue objects of the engine whose stamps are word `w`.
+    fn new(o: &mut Objects, st: &StampPages, w: Word) -> Result<Self> {
         Ok(Self {
             qinfo: alloc(o, qinfo::SIZE, cmd_fw(), None, 0, false)?,
             qstate: alloc(o, qstate::SIZE, Class::Fw, None, 0, false)?,
             ring: alloc(o, sizes::QUEUE_CAP as usize * 8, Class::Fw, None, 0, false)?,
             qscratch: alloc(o, 0x40000, queue_scratch(), None, 0, false)?,
-            user_stamp: alloc(o, 4, Class::Shared, None, 0, false)?,
-            fw_stamp: alloc(o, 4, Class::Shared, None, 0, false)?,
+            user_stamp: st.user(w),
+            fw_stamp: st.fw(w),
         })
     }
 }
 
 impl RenderGraph {
-    /// Allocates the render graph objects.
-    fn new(o: &mut Objects) -> Result<Self> {
-        let [ta, fs] = [RenderQueue::new(o)?, RenderQueue::new(o)?];
+    /// Allocates the render graph objects; its stamps are the words of [`stamps::RENDER`].
+    fn new(o: &mut Objects, st: &StampPages) -> Result<Self> {
+        let ta = RenderQueue::new(o, st, stamps::RENDER.ta())?;
+        let fs = RenderQueue::new(o, st, stamps::RENDER.fs())?;
         let sched_ctx = alloc(o, sched_ctx::SIZE, cmd_fw(), None, 0, false)?;
         let notifier = alloc(o, notifier::SIZE, notifier_class(2), None, 0, false)?;
         let threshold = alloc(o, 4, Class::Fw, None, 0, false)?;
@@ -352,8 +410,8 @@ impl RenderGraph {
             q.w64(qinfo::UNK_AC, 4)?;
             self.qstate[e].w32(qstate::CAP, sizes::QUEUE_CAP)?;
             self.ring[e].fill(0, 0xcc, sizes::QUEUE_CAP as usize * 8)?;
-            self.user_stamp[e].w32(0, seed[e])?;
-            self.fw_stamp[e].w32(0, seed[e])?;
+            self.user_stamp[e].write(seed[e])?;
+            self.fw_stamp[e].write(seed[e])?;
         }
         init_sched_ctx(&self.sched_ctx)?;
         init_notifier(&self.notifier, &self.threshold)?;
@@ -381,6 +439,7 @@ fn init_notifier(n: &FwObject, threshold: &FwObject) -> Result {
 pub(crate) struct Graphs {
     /// The GPU device, for the engine's log messages.
     pub(crate) dev: ARef<device::Device>,
+    pub(crate) stamps: StampPages,
     pub(crate) compute: ComputeGraph,
     pub(crate) render: RenderGraph,
 }
@@ -388,10 +447,12 @@ pub(crate) struct Graphs {
 impl Graphs {
     /// Allocates both graphs.
     pub(crate) fn new(dev: &AsahiDevice, objects: &mut Objects) -> Result<Self> {
+        let stamps = StampPages::new(objects)?;
         Ok(Self {
             dev: dev.as_ref().into(),
-            compute: ComputeGraph::new(objects)?,
-            render: RenderGraph::new(objects)?,
+            compute: ComputeGraph::new(objects, &stamps)?,
+            render: RenderGraph::new(objects, &stamps)?,
+            stamps,
         })
     }
 }
@@ -421,6 +482,15 @@ impl Firmware {
             self.graph.compute.pools[0].gva.unwrap_or(0),
             self.graph.compute.freelist.gva.unwrap_or(0),
             self.graph.compute.pool_table.gva.unwrap_or(0)
+        );
+        dev_info!(
+            self.graph.dev.as_ref(),
+            "G15: stamp pages: user {:#x} fw {:#x}; render queue words {}/{}, compute word {}\n",
+            self.graph.stamps.user.va,
+            self.graph.stamps.fw.va,
+            stamps::RENDER.ta().index(),
+            stamps::RENDER.fs().index(),
+            stamps::COMPUTE.index()
         );
         if tuning::COMPUTE_QUEUE_CLASS == 2 {
             // Class-2 compute profile: the unchanged-work compute monitor (Globals +0x9b0)
