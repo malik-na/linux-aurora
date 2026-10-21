@@ -857,3 +857,19 @@ observation (`tail`/`observe`) uses the queue of the published flights. No queue
 - The heavy render's crash under concurrency as in r0pq-f/h (`host_write_index_buffer.1048576`) with queue 1
   working otherwise: a per-queue record still shared (register 0x1c830, misc record).
 - Control: `asahi.g15_render_queues=1` must reproduce step 2 exactly (`rq: queues 1`, no `rq1:`/`pb1:`, no take).
+
+### 7.x Boot result, step 3 (silicon-54 = 3ed682a7, 2026-10-22 03:26): passes the gates, fails the targeted test
+
+- Acceptance PASS; full unfiltered dEQP = step 2 (VK 706/2/0, GLES3 955, GLES31 796/1/0), 0 faults; the
+  concurrency test 706/2/0 Crash 0, 0 faults. Queue 1 registered and ran (rq1 draw 1791, stamps at target,
+  3 takes/2 releases), but its holders were desktop clients: the heavy case always ran on queue 0 and PB1 never
+  grew. The gate test did not exercise the per-queue PB under growth.
+- Targeted test (sddm stopped; the heavy case started first so it takes queue 1, vk-render-check on queue 0
+  0.3 s later): PB1 grew from 64 to 4095 blocks inside the first two renders of the case (405 requests in
+  0.65 s; on queue 0 the whole case needs ~1420), refused at the maximum, the TA stalled, hang -> preemption
+  failed -> fail-stop. Every request echoed slot 0, position 2. No fault-bank line.
+- Reading: on queue 1 the firmware takes blocks and never gets pages back, so something the FS (or the
+  allocator) uses to return pages still points at queue 0's PB, or is shared: candidates in order: the FS
+  command's PB-manager pointer and any manager-derived field in the FS/3D command, the shared misc record,
+  register 0x1c830 (still the per-pass-slot pointer, §8 says PB index), the growth slot (echoes 0, not 1).
+- M3 back on step 2 (silicon-52). Private log: ~/m3-private/pq3-targeted-dmesg.txt.
