@@ -235,3 +235,111 @@ registration, index 1) 100 ms before it, a second (index 2, a different manager)
 DEVCTL 0x18 records {0x18, s, e} with s = 0, 1, 2 and e = 1, 2 came 11 s after the compute queue's
 first kick, when three queues existed (their meaning is not known). Nothing else sized by the queue
 count was found: the stamp arrays have room for 2048 cells and need no allocation for a new queue.
+
+## 8. Queue registration and stamp pages (design F probe, 2026-10-22)
+
+Sources: offline, the 2026-10-13 13:04 login-time context-0 snapshot (every DRAM page of context 0), the
+13:23 MSG_INIT snapshot, the TA/compute commands, queue-infos and submit-record logs of the 2026-10-13/14
+job-tracer runs (21:05 to 06:33, six boots); live, two boots on 2026-10-22 with the new observer
+`tools/hv/trace_agx_queue.py` (run Q1 01:46, 2.5 min at the login screen; run Q2 01:51, 1.5 min; private
+dumps `~/m3-results/hv-t22-20261022-014654` and `-015122`). The ASC tracer is synchronous: what is read at
+a doorbell is what the host wrote before the firmware got that doorbell. Firmware VAs below are offsets
+from the low region base B (the InitData root is at B + 0xe0000; B was the same in every boot).
+**Corrections to §6/§7:** the 3D channels are not silent (the FS records are posted there without a
+doorbell of their own; the older tracers drained only the kicked channel); TA +0x1c / register 0x1c830 is
+not the stamp index (it is a separate per-queue index, below); the compute queue uses stamp *word* 6, not
+cell 3 as a whole.
+
+### 8.1 Q1: what the host does for a new render queue
+
+Established (run Q2, confirmed by the six earlier boots' submit logs for the TA side):
+
+1. **Before anything is posted**, all of a queue's records exist: run Q1's per-doorbell probe found queue
+   A's TA and FS queue-infos, their state records, the 0x40 record and the 0x18 record already written at
+   the 0x1b doorbell (they were absent at the periodic DEVCTL one second before), queue B's queue-info page
+   mapped but still zero; B's records were filled between A's first doorbell and B's (89 ms later). A
+   third queue's 0x40/0x18 records appeared ~25 s before it was ever submitted. Nothing is written into a
+   firmware-global table for a new queue: the 0x40 and 0x18 records are slots in two shared pages
+   (B + 0xc4c0000, stride 0x40; B + 0x0, stride 0x18), the queue-info names them (+0xa4, +0x10).
+2. **DEVCTL**: none names a queue. The only non-periodic DEVCTL before the first render is one 0x1b
+   (index 1) naming the TA UMA manager at B + 0xc4e8000 (the record every TA command names at tail
+   +0x2e), answered by a firmware event 0xe echoing its words within ~20-40 ms; it is once per manager, not
+   per queue (queue B's first submit 90 ms later had none). A second 0x1b (index 2, B + 0xc538000) came
+   4-15 s later, 54-150 ms before the third render queue's first submit (both runs), also echoed by an event 0xe and
+   followed by an FWCtl record naming the same object. The six 0x18 records {0x18, s = 0..2, e = 1..2}
+   came 6-18 s after the compute queue's first submit in every boot (meaning still unknown; no queue VA
+   in them). 0x11 (§3.2) names a 0x40 record.
+3. **First submit**: per render queue two submit records, posted together and covered by **one
+   doorbell**: on TA_n {+0 a 32-bit counter, +8 TA queue-info, kind 0, head 2, event 2c, new 1} and on 3D_n
+   {FS queue-info, kind 1, head 2, event 2c + 1, new 1}; later records have new 0. Doorbell value 0 covered
+   TA_0 + 3D_0 (channels 0, 1), value 8 covered TA_2 + 3D_2 (channels 6, 7), value 2 the compute channel
+   CL_0; nothing is ever rung for a 3D channel by itself. The compute queue's first record: CL_0, kind 2,
+   head 1, event 6, new 1. So the firmware learns a queue from its first submit record (new = 1); nothing
+   else names it.
+4. **Ring contents at the first doorbell**: the TA ring holds 2 entries: [0] an InitBM *command* (work
+   type 6: +4 context, +8 the queue's PB index (= TA +0x1c), +0x10 initial blocks (0x40; 0x17 for the
+   third queue), +0x14 PB manager, +0x1c 0x100 = the first stamp), [1] the first TA command. The FS ring
+   holds [0] a barrier command (work type 4) waiting on the TA's firmware stamp word (both VAs = firmware
+   stamp page + 8c, value 0x100, +0x18 = the TA's stamp word index 2c), [1] the first FS command. The
+   compute ring holds the compute command only.
+5. **Initial record images** (host-written, before the firmware sees the doorbell): state record all zero
+   except +0x40 (write index) = head and +0x50 = 0x500; queue-info +0x20/+0x24/+0x28 = 0 (the firmware
+   counts them up later), +0x18 = self + 0xb0, +0x2c/+0x4c = 0xffffffff, +0xa4 = 0x40 record, +0xac = 4;
+   0x40 record {0xffff, 0x100, 0..., +0x20 0x00ff0000, +0x24 0x02000000, rest 0} (the firmware fills words
+   +0x4..+0x2c and +0x48.. after the first job); 0x18 record {0, self VA, 0}; notifier, scene/"+0x2c"
+   record, the empty legacy record (+0x34, all zero), PB manager with lists all present; **stamp words of
+   the new queue 0** (the host does not seed them; the first job writes 0x100).
+6. TA and FS of one render queue share the 0x18 and 0x40 records; queues of different renderers have
+   their own. Queue-info scheduling row: the channel-group-0 queues (WindowServer's two, their FS queues,
+   the compute queue) use row 0 (+0x30 0, +0x40 1, +0x48 1); the group-2 queue (context 2) uses row 2
+   (+0x30/+0x34/+0x48 = 2). Our driver uses row 2 on channels 0-2.
+
+So: nothing must be told to the firmware explicitly beyond the first submit record(s) with new = 1 and the
+doorbell; all per-queue records are host memory the queue-info and commands point to.
+
+### 8.2 Q2: the stamp pages
+
+Established (offline + both runs):
+
+- **Where/when**: user page at B + 0xf8000 (low region), firmware page at B + 0xc4c8000 (command region).
+  Both mapped and all zero at MSG_INIT (both 2026-10-22 runs and the 13:23 snapshot). In every boot
+  looked at (13:04, 13:23, Q1, Q2) their physical pages are **adjacent** (user page first, firmware page
+  the next 16 KiB): one 32 KiB allocation made at driver start, mapped at two VAs in two regions. Nothing
+  else is allocated per queue for stamps.
+- **Named by no global word**: searched every context-0 page of the login snapshot (8- and 4-byte aligned,
+  both VA prefixes, the PAs, 32-bit forms) and the MSG_INIT snapshot: the only words pointing into either
+  page are in work commands (TA +0x864/+0x86c, FS +0xbac/+0xbb4, compute +0x7e8/+0x7f0), barrier commands
+  and microsequences. No InitData root/region/runtime/control word, queue-info, state, 0x40 or 0x18 record
+  names them.
+- **Layout**: an array of u32 stamp words, both pages identical in content. A render queue owns a pair
+  of words 2c, 2c + 1 (8-byte cell c): TA stamp = word 2c (TA command pointers = page + 8c), FS stamp =
+  word 2c + 1 (FS pointers = page + 8c + 4). TA +0x878 = 2c, TA +0x77c = 2c + 1, submit event byte = 2c
+  (TA) / 2c + 1 (FS), FS barrier "producer" word = 2c. A compute queue owns **one word h**: compute
+  +0x7e8/+0x7f0 = page + 4h, +0x7fc = h, submit event = h. Values: 0 at creation, 0x100 per job.
+- **Index choice**: lowest free in creation order across all queue types: queue A c = 0, queue B c = 1,
+  the context-2 render queue c = 2, the first compute queue h = 6 (every boot); in the 13:04 snapshot
+  compute queues held single words 8, 9, 14, 15 and render queues cells 1 and 5, all 16 words 0..15 in
+  use. A queue keeps its index for its life.
+- **TA +0x1c / register 0x1c830** are equal to each other and to the InitBM command's +8 and the PB
+  manager's +8 word: a per-queue PB index (0, 1, 2 in run Q2; 4 for a queue with cell 5 in the 13:04
+  snapshot), allocated separately from the stamp index.
+- **Pages allocated elsewhere**: no evidence the firmware requires the native pages: it is only ever told
+  addresses through the commands, and our driver has run every job so far with stamp pointers to separate
+  4-byte objects anywhere in its shared heap (TA event 0 / FS event 1 / compute event 2 = the native
+  scheme for c = 0, h = 2). What the firmware does key on is the **index** (event byte, +0x878/+0x77c,
+  +0x7fc, barrier +0x18): our compute word index 2 is the native pair of render cell 1, which r0pq-g
+  (§5.13 of pb-memory.md) re-used for a second render queue (TA +0x878 = 2) while its submits still
+  carried event 0 / 1 and its stamps were still the cell-0 objects; the 1 ms refusal fits an index
+  collision or event/index mismatch. Not proven: whether the firmware also caches per-index state that
+  an address change would confuse (no observation can show that from outside).
+
+### 8.3 What this means for design F stage 2
+
+An extra render queue needs: its own TA + FS queue-info, state, ring, a shared-page 0x18 and 0x40 slot,
+notifier/scene/legacy records and PB (as today), an InitBM command as ring[0] of the TA queue (with +8 =
+its PB index) and a barrier on the TA stamp as ring[0] of the FS queue, a **unique stamp index pair**
+(2c, 2c + 1) not used by any other queue (move compute off word 2, e.g. to a word above the render pairs),
+the same index written consistently in the submit event bytes, TA +0x878/+0x77c, FS and barrier fields,
+TA +0x1c / register 0x1c830 = its PB index, and new = 1 on both first records. Stamp words can live in
+pages we allocate (two 16 KiB pages of u32 words, zero at creation, or our existing objects indexed per
+queue): nothing observed ties the firmware to the native pages.

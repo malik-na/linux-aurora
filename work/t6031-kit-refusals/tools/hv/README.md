@@ -71,3 +71,26 @@ itself at 28 min and the hv exited cleanly); results in `research/pb-macos-obser
 the InitBM scan reaches only the last five ring entries of a kick (the real InitBM command was not among
 them in these runs; the login snapshot has it), and `cut` at the end of a `tail -f | grep` watch pipeline
 block-buffers (use `stdbuf -oL cut` or none).
+
+## Queue registration and stamp pages (`trace_agx_queue.py`, design F probe, 2026-10-22)
+
+From MSG_INIT on: every non-periodic DEVCTL (words, time since the previous), every FWCtl record (0x18
+stride), every non-stage firmware event, and every submit record on **all 12 submit channels at every
+submit doorbell** (FS records land on 3D_n without a doorbell of their own; doorbell 0 covers channels
+0+1, 8 covers 6+7). For each new queue-info: the queue-info, state, 0x40 and 0x18 records, the ring
+entries [0, head) and the commands they name with their index words (TA +0x1c, +0x77c, +0x878, register
+0x1c830, stamp pointers and the stamp words they name, compute +0x7fc; InitBM/barrier commands raw), and
+checks of event byte vs stamp index. The two stamp pages and the 0x40/0x18 record pages are copied and
+diffed at MSG_INIT, at every non-periodic DEVCTL and at every first kick (`q-*.bin`, private); until the
+third queue (at most 300 doorbells) a cheap per-doorbell probe logs when those pages and the first
+queue-infos appear. Read-only, RAM-checked for record reads, bounded, failures logged only. Dry-checked
+against the 13:04 login snapshot; run twice on 2026-10-22 (014654, 015122), results in
+`research/pb-macos-observation.md` §8. Same procedure as the PB observer:
+
+    TRACER=$HOME/Projects/linux-aurora-agent-docs/work/t6031-kit-refusals/tools/hv/trace_agx_queue.py \
+        HV_EXTRA='-C 4' ./run-trace.sh
+    # then: R=$(cat ~/m3-results/hv-t22.current); grep -aE 'T6031.*(Q NEW|DevCtrl|FWCtl|Traceback)' $R/run.log
+
+To end a run: `sudo kill <run_guest.py pid>` (match the full interpreter path with pgrep, not a pattern
+your own shell also contains), then `p.reboot()` through a fresh proxyclient connection
+(`from m1n1.setup import *`), then `watch-chainload.py ~/m3-images/t35/boot.bin.gpu1-702 240`.
