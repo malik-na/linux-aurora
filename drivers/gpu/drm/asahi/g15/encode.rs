@@ -1004,7 +1004,7 @@ pub(crate) fn encode_fs(
     put32(q, fs::END, work::op::END);
 }
 
-/// The pass slot's scene record for draw ordinal `n`.
+/// The pass slot's scene record for scene ordinal `n` (the PB's render count).
 pub(crate) fn scene(r: &RenderRefs, p: &PassRefs, n: u64) -> [u8; scene::SIZE] {
     let mut x = [0u8; scene::SIZE];
     let list = r.scene_list + 4 * (n % scene::LIST_SLOTS);

@@ -201,6 +201,6 @@ pub(crate) mod initbm {
 /// Per-pass scene record (0x80 bytes).
 pub(crate) mod scene {
     pub(crate) const SIZE: usize = 0x80;
-    /// Scene-list slots cycled by draw ordinal (`scene_list + 4 * (n % 48)`).
+    /// Scene-list slots cycled by the PB's scene ordinal (`scene_list + 4 * (n % 48)`).
     pub(crate) const LIST_SLOTS: u64 = 48;
 }

@@ -111,6 +111,13 @@ impl Ledger {
         self.renders
     }
 
+    /// The scene ordinal of the `k`-th render (from 0) of the next prefix of this PB: the
+    /// render count the counter reaches with it, so the prefix's last render names the counter
+    /// [`Self::render`] then publishes. Indexes the PB's own scene list.
+    pub(crate) const fn scene_ordinal(&self, k: u32) -> u32 {
+        self.renders.wrapping_add(k).wrapping_add(1)
+    }
+
     /// The live block_ctl+4 producer.
     pub(crate) const fn producer(&self) -> u32 {
         self.posted % BLOCK_LIST_RECORDS
@@ -650,6 +657,29 @@ mod tests {
         b.reinit();
         assert_eq!(b.renders, 0);
         assert_eq!(b.render(1), 1);
+    }
+
+    #[test]
+    fn scene_ordinal_per_pb() {
+        // The scene ordinal of a prefix's k-th render is the PB's render count it brings the
+        // counter to: the last render's ordinal is the counter the prefix publishes.
+        let mut a = Ledger::new(true, 64, 4095);
+        let mut b = Ledger::new(true, 64, 4095);
+        assert_eq!(a.scene_ordinal(0), 1);
+        a.render(5);
+        assert_eq!(
+            [a.scene_ordinal(0), a.scene_ordinal(1), a.scene_ordinal(2)],
+            [6, 7, 8]
+        );
+        assert_eq!(a.render(3), 8);
+        // Another PB's renders in between do not move this PB's ordinals.
+        assert_eq!(b.scene_ordinal(0), 1);
+        b.render(1);
+        assert_eq!(a.scene_ordinal(0), 9);
+        // A re-initialization starts over at 1.
+        a.reinit();
+        assert_eq!(a.scene_ordinal(0), 1);
+        assert_eq!(b.scene_ordinal(0), 2);
     }
 
     /// A grant's mapping: the run's pages map at the PB's next heap GVAs (the ledger's posted

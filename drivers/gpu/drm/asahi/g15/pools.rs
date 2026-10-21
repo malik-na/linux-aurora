@@ -14,8 +14,8 @@
 //!   VM's first render (compute-only VMs have none), with an InitBM naming the VM's context at
 //!   +0x4 and as the PB's slot at +0x8; the firmware's growth requests name the PB by that slot
 //!   ([`growth::route`]). The native driver keeps one manager per render queue the same way.
-//!   The UMA managers, misc record and scene list stay
-//!   shared.
+//!   The PB's TA/FS handoff record and scene list are per PB too; the UMA managers and misc
+//!   record stay shared.
 //! - **One block pool** ([`growth::BlockPool`]): chunks of 128 blocks (16 MiB), each a GPU-only
 //!   GEM object, backed on demand and kept one reserve chunk ahead of the sum of the posted
 //!   blocks (refilled after the replies, never in the reply path). A PB's blocks are runs of up
@@ -166,6 +166,10 @@ struct PbSet {
     /// bytes): per render queue natively (the two queues' TA commands name records 0x10800
     /// apart), so per PB here; shared across PBs, an FS could take up another PB's render.
     legacy: Arc<FwObject>,
+    /// The scene list (scene +0x0/+0x8 at `+ 4 * (ordinal % 48)`, TA register): per render
+    /// queue natively, so per PB here, indexed by the PB's own render count
+    /// ([`Ledger::scene_ordinal`]) as its counter is.
+    scene_list: Arc<FwObject>,
 }
 
 /// A run of pool blocks posted to a PB.
@@ -221,8 +225,9 @@ struct UmaEngine {
 pub(crate) struct AllocatorRefs {
     /// UMA managers of TA (0) and FS (1).
     pub(crate) uma_mgr: [u64; 2],
-    /// The VM's PB manager (InitBM +0x14, TA/FS work and sequences), the scene list (scene
-    /// +0x0/+0x8 at `+ 4 * (draw % 48)`, TA work) and misc record (scene +0x40).
+    /// The VM's PB manager (InitBM +0x14, TA/FS work and sequences), the PB's scene list
+    /// (scene +0x0/+0x8 at `+ 4 * (ordinal % 48)`, TA work; the shared one without a PB) and
+    /// misc record (scene +0x40).
     pub(crate) pb_mgr: u64,
     pub(crate) scene_list: u64,
     pub(crate) mgr_misc: u64,
@@ -418,6 +423,14 @@ impl PbSet {
             block_ctl: small(objects, block_ctl::SIZE)?,
             counter: small(objects, counter::SIZE)?,
             legacy: alloc(objects, LEGACY_SIZE as u64, Class::Shared, None, 0, true)?,
+            scene_list: alloc(
+                objects,
+                buffer::SCENE_LIST_SIZE as u64,
+                Class::Shared,
+                None,
+                0,
+                true,
+            )?,
         })
     }
 }
@@ -441,6 +454,7 @@ impl VmPb {
         set.block_ctl.fill(0, 0, block_ctl::SIZE)?;
         set.counter.fill(0, 0, counter::SIZE)?;
         set.legacy.fill(0, 0, LEGACY_SIZE)?;
+        set.scene_list.fill(0, 0, buffer::SCENE_LIST_SIZE)?;
         lists.page_list.fill(0, 0, buffer::PAGE_LIST_SIZE)?;
         lists.block_list.fill(0, 0, buffer::BLOCK_LIST_SIZE)?;
         let heap = client::PB_HEAP;
@@ -843,13 +857,22 @@ impl Pools {
         AllocatorRefs {
             uma_mgr: [set.uma_manager[0].va, set.uma_manager[1].va],
             pb_mgr: pb.map_or(0, |pb| pb.set.manager.va),
-            scene_list: set.scene_list.va,
+            scene_list: pb.map_or(set.scene_list.va, |pb| pb.set.scene_list.va),
             mgr_misc: set.misc.va,
             init_blocks: pb.map_or(0, |pb| pb.ledger.initial),
             pb_slot: pb.map_or(0, |pb| pb.slot),
             legacy_empty: pb.map_or(0, |pb| pb.set.legacy.va),
             pb_queue: pb.map_or(0, |pb| pb.queue),
         }
+    }
+
+    /// The scene ordinal of the `k`-th render (from 0) of the next prefix of PB `slot`; None
+    /// without a PB.
+    pub(crate) fn scene_ordinal(&self, slot: u32, k: u32) -> Option<u32> {
+        self.vms
+            .get(slot as usize)
+            .and_then(Option::as_ref)
+            .map(|pb| pb.ledger.scene_ordinal(k))
     }
 
     /// Whether PB `slot` exists and carries InitBM at its next render.

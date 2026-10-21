@@ -1326,7 +1326,13 @@ impl Firmware {
         p.fs_work.write(0, &scratch.fs[..])?;
         p.ta_seq.write(0, &scratch.tas[..])?;
         p.fs_seq.write(0, &scratch.fss[..])?;
-        p.scene.write(0, &encode::scene(refs, &pass, n))?;
+        // The scene names the PB's own scene list at the PB's render count (the counter this
+        // render brings it to), not the draw ordinal the stamps follow.
+        let sn = self
+            .pools
+            .scene_ordinal(ctx, pf.renders)
+            .map_or(n, u64::from);
+        p.scene.write(0, &encode::scene(refs, &pass, sn))?;
 
         let r = &self.graph.render;
         if pf.prev == Prev::Compute {
