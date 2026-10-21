@@ -661,3 +661,27 @@ remaining crash comes from a per-queue record we still share (scene ring: testab
 from the stamp cells (only F). Recommendation: one boot of G's scene-ring step to learn which; then
 decide on F with the two unknowns listed for the hv agent (queue registration sequence; the stamp pages'
 placement and whether the firmware accepts stamp pointers outside them).
+
+### 5.15 Boot r0pq-h (G, scene ring): design
+
+Design G's scene-ring step (§5.14), one commit on `t6031/pb-scene-ring` (82c7c5e1, on `t6031/pb-per-queue`
+0b4ce056). Our "scene ring" is the scene list (0xc0 bytes = 48 slots of 4 bytes) that every render's pass-slot
+scene record names at +0x0/+0x8 as `list + 4 * (n % 48)` and the TA work names as `list + 4`; it was one
+object in the shared allocator set, indexed by the engine's global draw ordinal, while the PB counter
+(manager +0x58) counts only the PB's own renders since its InitBM (§5.6). With two PBs the scene index and
+the counter of a PB diverge. Change: a scene list per PB (`PbSet.scene_list`, allocated with the PB, zeroed
+at every (re)initialization like the handoff record, recycled with the PB set under the same graveyard
+rules), named in that VM's TA work and scene records; the scene ordinal of the prefix's k-th render is the
+PB's render count it brings the counter to (`Ledger::scene_ordinal(k)` = renders + k + 1, host test
+`scene_ordinal_per_pb`), so a prefix's last scene names the counter it publishes. Unchanged: the single
+firmware queue pair and total order, the stamps and FS sequence +0x68 (draw ordinal), the queue index words
+(queue 0's values), register 0x1c830; a VM without a PB keeps the shared list. Package (reclaim off):
+`pkgs/linux-aurora-dev-7.1.12_aurora_dev_silicon-46-pbadapt-r0hpq-82c7c5e1eee8-aarch64.pkg.tar.xz`.
+
+Boot test: idle clean, then the §5.4 concurrency step (desktop + gpu-heat 30 + dEQP VK -j2). Reading:
+- `host_write_index_buffer.1048576` back to its image-comparison Fail (VK 706/2 Fail/0 Crash as the r2b
+  control), 0 faults: the shared scene list was the record one PB's FS took from another; G suffices for now.
+- Same crash (garbage compact-window reads by unit 0x1a): the scene list was not it; the remaining shared
+  per-queue state is the stamp cells, which only design F (per-queue firmware queues) can give.
+- Anything new at idle (first-prefix failure, fault at the new list) says the firmware expects the scene
+  index on the draw ordinal after all: revert to the shared list.
