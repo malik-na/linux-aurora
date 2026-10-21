@@ -24,4 +24,4 @@
 
 Like the earlier pool and PB commits, these touch shared G15 code, and they are untested on T6030.
 
-What's not here: a PB per client. That needs per-queue firmware render queues; I'm discussing it with Eryk first.
+Not here yet: a PB per client. It needs per-queue firmware render queues in the engine, which is our next step.
