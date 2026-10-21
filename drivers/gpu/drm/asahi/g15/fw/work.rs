@@ -6,7 +6,7 @@
 //! register records, sequence 0x2d8. FS work: 0xc73 bytes, 79 register records and the
 //! parameter block, sequence 0x310. Register records are 12-byte `(u32 selector, u64 value)`
 //! pairs; timestamp records are 0x3c bytes (0x80000003/3). Barrier records are 0x3e bytes: +4
-//! wait stamp VA, +0x14 value, +0x18 producing engine, +0x1c own stamp, +0x20 UUID, +0x2a type
+//! wait stamp VA, +0x14 value, +0x18 producer stamp word, +0x1c own stamp, +0x20 UUID, +0x2a type
 //! (0 = firmware-stamp wait only, 1 = also the predecessor software-job hold).
 //!
 //! Microsequence opcodes: compute start 0x0b / finalize 0x0c, TA 5 / 6, FS 7 / 8, barrier 4,

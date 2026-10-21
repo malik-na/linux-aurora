@@ -2,8 +2,9 @@
 
 //! Decoded firmware events.
 //!
-//! Event ring records are 0x38 bytes: type 1 stage flags (u64 at +4: bit 0 TA, bit 1 FS, bit 2
-//! compute), type 0 fault, type 4 timeout (i32 culprit slot at +0xc), type 7 PB growth request
+//! Event ring records are 0x38 bytes: type 1 stage flags (u64 at +4: bit i for the queue whose
+//! stamp word and event byte is i, [`super::fw::stamps`]; a bit of no queue is logged once),
+//! type 0 fault, type 4 timeout (i32 culprit slot at +0xc), type 7 PB growth request
 //! (copied whole into an 8-entry queue; never answered by the drain itself), type 8 channel
 //! error. The drain runs under the device lock from the poll work (and inline in the boot and
 //! device-control waits); the EP 0x20 interrupt only kicks the poll. Notifications only:
@@ -13,11 +14,20 @@ use kernel::{bindings, device, prelude::*};
 
 use super::channel::Ring;
 use super::fw::channels::{event, RING_SLOTS, STATE_READ, STATE_WRITE};
+use super::fw::stamps;
 use super::hw::rings;
 use super::regs::{mb, rmb, wmb};
 
 /// Number of queued PB growth requests.
 pub(crate) const GROW_QUEUE: usize = 8;
+
+/// Stage-flag bits of the engine's TA, FS and compute stamp words.
+const STAGE_BITS: [u64; 3] = [
+    stamps::RENDER.ta().stage_bit(),
+    stamps::RENDER.fs().stage_bit(),
+    stamps::COMPUTE.stage_bit(),
+];
+const STAGE_MASK: u64 = STAGE_BITS[0] | STAGE_BITS[1] | STAGE_BITS[2];
 
 /// A copied firmware error event (type 0 fault or type 4 timeout).
 #[derive(Copy, Clone, Default)]
@@ -40,6 +50,8 @@ pub(crate) struct Events {
     pub(crate) channel_errors: u32,
     /// Last firing time per stage bit (TA, FS, compute), ns.
     pub(crate) event_ns: [u64; 3],
+    /// Stage-flag bits seen that name no queue's stamp word.
+    stray_bits: u64,
     /// PB growth requests, oldest first; at most [`GROW_QUEUE`].
     pub(crate) grow: KVec<[u32; 14]>,
     /// Requests dropped because the queue was full.
@@ -55,6 +67,7 @@ impl Events {
             last_error: None,
             channel_errors: 0,
             event_ns: [0; 3],
+            stray_bits: 0,
             grow: KVec::new(),
             grow_lost: 0,
         }
@@ -90,15 +103,26 @@ impl Events {
             let kind = w[0];
             let flags = w[1] as u64 | (w[2] as u64) << 32;
             if kind == event::STAGE {
-                for b in 0..3 {
-                    if flags & (1 << b) != 0 {
+                for (b, bit) in STAGE_BITS.iter().enumerate() {
+                    if flags & bit != 0 {
                         self.event_ns[b] = now;
                     }
                 }
-                if flags & (1 << 2) != 0 {
+                if flags & STAGE_BITS[2] != 0 {
                     self.compute_events = self.compute_events.wrapping_add(1);
                 }
-                self.stage_events = self.stage_events.wrapping_add((flags & 7).count_ones());
+                self.stage_events = self
+                    .stage_events
+                    .wrapping_add((flags & STAGE_MASK).count_ones());
+                let stray = flags & !STAGE_MASK & !self.stray_bits;
+                if stray != 0 {
+                    self.stray_bits |= stray;
+                    dev_warn!(
+                        dev,
+                        "firmware stage event bits {:#x} name no queue\n",
+                        stray
+                    );
+                }
             }
             if kind == event::FAULT || kind == event::TIMEOUT {
                 self.last_error = Some(ErrorEvent {

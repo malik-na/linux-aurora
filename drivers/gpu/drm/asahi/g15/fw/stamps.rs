@@ -45,6 +45,15 @@ impl Word {
     pub(crate) const fn event(self) -> u8 {
         self.0 as u8
     }
+
+    /// The word's bit in a stage event's 64-bit flags (0 for a word above 63).
+    pub(crate) const fn stage_bit(self) -> u64 {
+        if self.0 < 64 {
+            1 << self.0
+        } else {
+            0
+        }
+    }
 }
 
 /// A render queue's index c: its TA owns word 2c, its FS word 2c + 1.
@@ -82,13 +91,14 @@ pub(crate) const RENDER: Render = match Render::new(0) {
     Some(r) => r,
     None => panic!(),
 };
-/// The engine's compute queue.
-pub(crate) const COMPUTE: Word = match Word::new(2) {
+/// The engine's compute queue: above the words of render queues 0 to 2.
+pub(crate) const COMPUTE: Word = match Word::new(6) {
     Some(h) => h,
     None => panic!(),
 };
 
 const _: () = assert!(RENDER.disjoint(COMPUTE));
+const _: () = assert!(COMPUTE.stage_bit() != 0 && RENDER.fs().stage_bit() != 0);
 
 #[cfg(test)]
 mod tests {
@@ -109,6 +119,15 @@ mod tests {
     fn compute_word() {
         let h = Word::new(6).unwrap();
         assert_eq!((h.index(), h.offset(), h.event()), (6, 0x18, 6));
+    }
+
+    #[test]
+    fn stage_bits() {
+        assert_eq!(RENDER.ta().stage_bit(), 1);
+        assert_eq!(RENDER.fs().stage_bit(), 2);
+        assert_eq!(COMPUTE.stage_bit(), 0x40);
+        assert_eq!(Word::new(63).unwrap().stage_bit(), 1 << 63);
+        assert_eq!(Word::new(64).unwrap().stage_bit(), 0);
     }
 
     #[test]
@@ -137,5 +156,10 @@ mod tests {
         assert!(!Render::new(1).unwrap().disjoint(Word::new(2).unwrap()));
         assert!(RENDER.disjoint(COMPUTE));
         assert_eq!(RENDER, Render::new(0).unwrap());
+        // The compute queue leaves render queues 0 to 2 their words.
+        for c in 0..3 {
+            assert!(Render::new(c).unwrap().disjoint(COMPUTE));
+        }
+        assert!(!Render::new(3).unwrap().disjoint(COMPUTE));
     }
 }
