@@ -646,7 +646,7 @@ impl Firmware {
 
     /// The allocator and graph addresses the render encoders name.
     fn render_refs(&self) -> RenderRefs {
-        let r = &self.graph.render;
+        let r = &self.graph.render[0];
         let a = self.pools.allocator_refs();
         RenderRefs {
             hwdata: self.cfg.layout.hwdata_va,
@@ -838,8 +838,8 @@ impl Firmware {
         }
         let cap = sizes::QUEUE_CAP;
         pf.c_head = self.graph.compute.qstate.r32(qstate::WRITE)? % cap;
-        pf.ta_head = self.graph.render.qstate[0].r32(qstate::WRITE)? % cap;
-        pf.fs_head = self.graph.render.qstate[1].r32(qstate::WRITE)? % cap;
+        pf.ta_head = self.graph.render[0].qstate[0].r32(qstate::WRITE)? % cap;
+        pf.fs_head = self.graph.render[0].qstate[1].r32(qstate::WRITE)? % cap;
         f.c_start = pf.c_head;
         f.ta_start = pf.ta_head;
         f.fs_start = pf.fs_head;
@@ -917,8 +917,7 @@ impl Firmware {
             self.graph.compute.counter.w32(0, pf.n as u32)?;
         }
         if renders != 0 {
-            self.graph
-                .render
+            self.graph.render[0]
                 .threshold
                 .w32(0, 2u32.wrapping_mul(pf.draw as u32))?;
             // pb_counter = draw, then C1 once per (re)initialization.
@@ -931,8 +930,8 @@ impl Firmware {
                 self.graph.compute.qstate.w32(qstate::WRITE, pf.c_head)?;
             }
             if renders != 0 {
-                self.graph.render.qstate[0].w32(qstate::WRITE, pf.ta_head)?;
-                self.graph.render.qstate[1].w32(qstate::WRITE, pf.fs_head)?;
+                self.graph.render[0].qstate[0].w32(qstate::WRITE, pf.ta_head)?;
+                self.graph.render[0].qstate[1].w32(qstate::WRITE, pf.fs_head)?;
             }
             Ok(())
         })();
@@ -1005,7 +1004,7 @@ impl Firmware {
         if posted.is_ok() && renders != 0 {
             let new_queue = !self.engine.render_registered as u8;
             let fs_rec = SubmitRecord {
-                qinfo: self.graph.render.qinfo[1].va,
+                qinfo: self.graph.render[0].qinfo[1].va,
                 kind: 1,
                 head: pf.fs_head as u16,
                 event: stamps::RENDER.fs().event(),
@@ -1013,7 +1012,7 @@ impl Firmware {
                 ..Default::default()
             };
             let ta_rec = SubmitRecord {
-                qinfo: self.graph.render.qinfo[0].va,
+                qinfo: self.graph.render[0].qinfo[0].va,
                 kind: 0,
                 head: pf.ta_head as u16,
                 event: stamps::RENDER.ta().event(),
@@ -1155,7 +1154,7 @@ impl Firmware {
                 && ts[1] == 0
                 && tuning::CROSS_ENGINE_HOLD & 1 == 0;
             let b = encode::barrier(
-                self.graph.render.fw_stamp[1].va,
+                self.graph.render[0].fw_stamp[1].va,
                 pf.last_fs,
                 stamps::RENDER.fs(),
                 t,
@@ -1306,7 +1305,7 @@ impl Firmware {
         p.fs_seq.write(0, &scratch.fss[..])?;
         p.scene.write(0, &encode::scene(refs, &pass, n))?;
 
-        let r = &self.graph.render;
+        let r = &self.graph.render[0];
         if pf.prev == Prev::Compute {
             // Compute -> render: the TA waits on the previous compute; type 0 when that compute
             // is of this prefix and this render starts no InitBM, on the class-0 compute queue

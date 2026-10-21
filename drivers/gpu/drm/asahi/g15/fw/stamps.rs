@@ -84,21 +84,36 @@ impl Render {
     pub(crate) const fn disjoint(self, h: Word) -> bool {
         h.0 / 2 != self.0
     }
+
+    /// The queue's index c, also its PB index (TA +0x1c, InitBM +0x8).
+    pub(crate) const fn index(self) -> u32 {
+        self.0
+    }
 }
 
-/// The engine's render queue.
+/// Render queues the engine can run (`g15_render_queues` selects 1 or 2).
+pub(crate) const RENDER_QUEUES: usize = 2;
+
+/// The engine's render queue 0: every VM's renders unless one holds queue 1.
 pub(crate) const RENDER: Render = match Render::new(0) {
     Some(r) => r,
     None => panic!(),
 };
+/// The engine's render queue 1: the renders of the VM that holds it.
+pub(crate) const RENDER1: Render = match Render::new(1) {
+    Some(r) => r,
+    None => panic!(),
+};
+/// The engine's render queues by index.
+pub(crate) const RENDERS: [Render; RENDER_QUEUES] = [RENDER, RENDER1];
 /// The engine's compute queue: above the words of render queues 0 to 2.
 pub(crate) const COMPUTE: Word = match Word::new(6) {
     Some(h) => h,
     None => panic!(),
 };
 
-const _: () = assert!(RENDER.disjoint(COMPUTE));
-const _: () = assert!(COMPUTE.stage_bit() != 0 && RENDER.fs().stage_bit() != 0);
+const _: () = assert!(RENDER.disjoint(COMPUTE) && RENDER1.disjoint(COMPUTE));
+const _: () = assert!(COMPUTE.stage_bit() != 0 && RENDER1.fs().stage_bit() != 0);
 
 #[cfg(test)]
 mod tests {
@@ -128,6 +143,30 @@ mod tests {
         assert_eq!(COMPUTE.stage_bit(), 0x40);
         assert_eq!(Word::new(63).unwrap().stage_bit(), 1 << 63);
         assert_eq!(Word::new(64).unwrap().stage_bit(), 0);
+    }
+
+    #[test]
+    fn render_queue_1() {
+        // Words 2/3: stamp pointers page + 8 / + 0xc, TA +0x878 = 2, +0x77c = FS +0xbc0 = 3,
+        // event bytes 2/3, stage bits 2 and 3, PB index 1.
+        let r = RENDERS[1];
+        assert_eq!(r, RENDER1);
+        assert_eq!((r.ta().index(), r.fs().index()), (2, 3));
+        assert_eq!((r.ta().offset(), r.fs().offset()), (8, 0xc));
+        assert_eq!((r.ta().event(), r.fs().event()), (2, 3));
+        assert_eq!((r.ta().stage_bit(), r.fs().stage_bit()), (4, 8));
+        assert_eq!((RENDER.index(), RENDER1.index()), (0, 1));
+        assert!(RENDER.disjoint(r.ta()) && RENDER.disjoint(r.fs()));
+        assert!(r.disjoint(COMPUTE));
+        // Every stage bit of the engine's queues is distinct.
+        let bits = [
+            RENDER.ta().stage_bit(),
+            RENDER.fs().stage_bit(),
+            r.ta().stage_bit(),
+            r.fs().stage_bit(),
+            COMPUTE.stage_bit(),
+        ];
+        assert_eq!(bits.iter().fold(0, |a, b| a | b).count_ones(), 5);
     }
 
     #[test]

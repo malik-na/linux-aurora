@@ -282,7 +282,7 @@ impl Firmware {
         if self.engine.flights.len() > 1 {
             return self.flight_retired(f);
         }
-        let (g, r, e) = (&self.graph.compute, &self.graph.render, &self.engine);
+        let (g, r, e) = (&self.graph.compute, &self.graph.render[0], &self.engine);
         let ch = &self.channels;
         // A render: both stamp pairs, both queues, both pipes.
         if f.renders != 0 {
@@ -328,7 +328,7 @@ impl Firmware {
     /// within the published interval, DONE past its saved ring ends, its channel records
     /// consumed. Engine idle is not required; faults still are checked.
     fn flight_retired(&self, f: &Flight) -> Result<bool> {
-        let (g, r, e) = (&self.graph.compute, &self.graph.render, &self.engine);
+        let (g, r, e) = (&self.graph.compute, &self.graph.render[0], &self.engine);
         let ch = &self.channels;
         let cap = sizes::QUEUE_CAP;
         let rec_passed = |c: Channel, rec: u32| -> Result<bool> {
@@ -489,7 +489,7 @@ impl Firmware {
         let Some(f) = self.engine.oldest() else {
             return;
         };
-        let (g, r, e) = (&self.graph.compute, &self.graph.render, &self.engine);
+        let (g, r, e) = (&self.graph.compute, &self.graph.render[0], &self.engine);
         let (mut c, mut ta, mut fs) = (0, 0, 0);
 
         if f.computes != 0 {
@@ -588,7 +588,7 @@ impl Firmware {
     /// Engine state report for failures and hang requests (without the initdata Runtime
     /// readiness and Flags words).
     pub(crate) fn report(&self, what: &str) {
-        let (g, r, e) = (&self.graph.compute, &self.graph.render, &self.engine);
+        let (g, r, e) = (&self.graph.compute, &self.graph.render[0], &self.engine);
         let ch = &self.channels;
         let rd = |o: &super::object::FwObject, off| o.r32(off).unwrap_or(0xdeadbeef);
         let state = self.session.regs.engine_state().unwrap_or_default();

@@ -87,6 +87,13 @@ pub(crate) fn pb_reclaim_blocks() -> u32 {
     *module_parameters::g15_pb_reclaim_blocks.value()
 }
 
+/// Firmware render queues (1 or 2): with 2, one VM at a time renders on queue 1 with a
+/// parameter buffer of its own.
+pub(crate) fn render_queues() -> u32 {
+    (*module_parameters::g15_render_queues.value())
+        .clamp(1, super::fw::stamps::RENDER_QUEUES as u32)
+}
+
 /// Whether FRAGMENT_BARRIERS is advertised and mapped to early tiling.
 pub(crate) fn early_tiling() -> bool {
     *module_parameters::g15_early_tiling.value() != 0

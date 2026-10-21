@@ -79,7 +79,7 @@ impl Firmware {
     /// One observation of the firmware-written receipt words: the compute/TA/FS FW stamps, the
     /// compute/TA/FS work-ring DONE and READ cursors and the three submit channels' consumers.
     pub(crate) fn observe(&self) -> Result<Observed> {
-        let (g, r, ch) = (&self.graph.compute, &self.graph.render, &self.channels);
+        let (g, r, ch) = (&self.graph.compute, &self.graph.render[0], &self.channels);
         Ok(Observed {
             compute_stamp: g.fw_stamp.read()?,
             ta_stamp: r.fw_stamp[0].read()?,

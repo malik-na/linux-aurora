@@ -6,7 +6,9 @@
 //! table, the manager, scheduling context, notifier, threshold, job list, queue info/state, ring,
 //! queue scratch and its user and firmware stamp words. The render graph holds the render
 //! queues with their stamp words, scheduling context, notifier, threshold, job list, the empty
-//! legacy record and InitBM. Every stamp word is a word of the two shared stamp pages
+//! legacy record and InitBM; there is one render graph per render queue (`g15_render_queues`,
+//! [`super::fw::stamps::RENDERS`]), each a firmware queue pair of its own with its own records.
+//! Every stamp word is a word of the two shared stamp pages
 //! ([`StampPages`], layout in [`super::fw::stamps`]). The
 //! compute slots and the render pass slots are [`super::slots`]; the render UMA/PB allocators
 //! and their spare set are [`super::pools`], initialized from [`Firmware::init_graphs`].
@@ -24,7 +26,7 @@ use kernel::{
 
 use super::channel::Channel;
 use super::fw::graph::{job_list, manager, notifier, pools, qinfo, qinfo_row2, qstate, sched_ctx};
-use super::fw::stamps::{self, Word};
+use super::fw::stamps::{self, Render, Word};
 use super::hw::{client, engine, pte, sizes, tuning};
 use super::object::{Class, FwObject, Objects, Placement, Request};
 use super::Firmware;
@@ -312,9 +314,11 @@ impl ComputeGraph {
     }
 }
 
-/// The render graph, without the pass slots, the clustering buffers and the render
+/// One render queue's graph, without the pass slots, the clustering buffers and the render
 /// allocators.
 pub(crate) struct RenderGraph {
+    /// The render queue: its stamp words, event bytes and index words.
+    pub(crate) queue: Render,
     /// TA (0) and FS (1) queues.
     pub(crate) qinfo: [Arc<FwObject>; 2],
     pub(crate) qstate: [Arc<FwObject>; 2],
@@ -355,10 +359,10 @@ impl RenderQueue {
 }
 
 impl RenderGraph {
-    /// Allocates the render graph objects; its stamps are the words of [`stamps::RENDER`].
-    fn new(o: &mut Objects, st: &StampPages) -> Result<Self> {
-        let ta = RenderQueue::new(o, st, stamps::RENDER.ta())?;
-        let fs = RenderQueue::new(o, st, stamps::RENDER.fs())?;
+    /// Allocates the graph objects of render queue `queue`; its stamps are the queue's words.
+    fn new(o: &mut Objects, st: &StampPages, queue: Render) -> Result<Self> {
+        let ta = RenderQueue::new(o, st, queue.ta())?;
+        let fs = RenderQueue::new(o, st, queue.fs())?;
         let sched_ctx = alloc(o, sched_ctx::SIZE, cmd_fw(), None, 0, false)?;
         let notifier = alloc(o, notifier::SIZE, notifier_class(2), None, 0, false)?;
         let threshold = alloc(o, 4, Class::Fw, None, 0, false)?;
@@ -366,6 +370,7 @@ impl RenderGraph {
         let legacy_empty = alloc(o, 0x40, Class::Shared, None, 0, false)?;
         let initbm = alloc(o, super::fw::work::initbm::SIZE, cmd_fw(), None, 0, false)?;
         Ok(Self {
+            queue,
             qinfo: [ta.qinfo, fs.qinfo],
             qstate: [ta.qstate, fs.qstate],
             ring: [ta.ring, fs.ring],
@@ -441,17 +446,24 @@ pub(crate) struct Graphs {
     pub(crate) dev: ARef<device::Device>,
     pub(crate) stamps: StampPages,
     pub(crate) compute: ComputeGraph,
-    pub(crate) render: RenderGraph,
+    /// One render graph per render queue, by queue index (at least queue 0).
+    pub(crate) render: KVec<RenderGraph>,
 }
 
 impl Graphs {
-    /// Allocates both graphs.
+    /// Allocates the compute graph and `g15_render_queues` render graphs.
     pub(crate) fn new(dev: &AsahiDevice, objects: &mut Objects) -> Result<Self> {
         let stamps = StampPages::new(objects)?;
+        let compute = ComputeGraph::new(objects, &stamps)?;
+        let queues = super::params::render_queues() as usize;
+        let mut render = KVec::with_capacity(queues, GFP_KERNEL)?;
+        for queue in stamps::RENDERS.iter().take(queues) {
+            render.push(RenderGraph::new(objects, &stamps, *queue)?, GFP_KERNEL)?;
+        }
         Ok(Self {
             dev: dev.as_ref().into(),
-            compute: ComputeGraph::new(objects, &stamps)?,
-            render: RenderGraph::new(objects, &stamps)?,
+            compute,
+            render,
             stamps,
         })
     }
@@ -470,7 +482,9 @@ impl Firmware {
         self.graph.compute.init()?;
         self.slots.init()?;
         super::engine::wmb();
-        self.graph.render.init()?;
+        for render in self.graph.render.iter() {
+            render.init()?;
+        }
         self.init_render_pools(false)?;
         // New firmware and context-0 translations before any reference.
         super::uat::tlbi_all();
@@ -492,6 +506,18 @@ impl Firmware {
             stamps::RENDER.fs().index(),
             stamps::COMPUTE.index()
         );
+        for r in self.graph.render.iter().skip(1) {
+            dev_info!(
+                self.graph.dev.as_ref(),
+                "G15: render queue {}: words {}/{}, PB index {}, queue info {:#x}/{:#x}\n",
+                r.queue.index(),
+                r.queue.ta().index(),
+                r.queue.fs().index(),
+                r.queue.index(),
+                r.qinfo[0].va,
+                r.qinfo[1].va
+            );
+        }
         if tuning::COMPUTE_QUEUE_CLASS == 2 {
             // Class-2 compute profile: the unchanged-work compute monitor (Globals +0x9b0)
             // off before the queue's first exposure.

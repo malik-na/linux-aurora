@@ -167,6 +167,10 @@ module! {
             default: 1024,
             description: "G15: parameter-buffer blocks posted above which an idle engine reclaims (a desktop stays below 1024)",
         },
+        g15_render_queues: u32 {
+            default: 2,
+            description: "G15: firmware render queues, 1 or 2 (2: one VM at a time renders on a second queue with its own parameter buffer)",
+        },
         g15_early_tiling: u32 {
             default: 0,
             description: "G15: advertise FRAGMENT_BARRIERS, mapped to early tiling (slower on 2419)",
