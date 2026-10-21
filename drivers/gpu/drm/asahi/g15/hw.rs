@@ -502,7 +502,6 @@ pub(crate) mod sizes {
 pub(crate) mod engine {
     pub(crate) const DOORBELL: u64 = 0x0083000000000000;
     pub(crate) const DEVCTL_DOORBELL: u64 = 0x0083000000000011;
-    pub(crate) const EVENT_SLOT: u32 = 2;
     pub(crate) const COMPUTE_SEED: u32 = 0xc1000000;
     pub(crate) const TA_SEED: u32 = 0x7a000000;
     pub(crate) const FS_SEED: u32 = 0x3d000000;

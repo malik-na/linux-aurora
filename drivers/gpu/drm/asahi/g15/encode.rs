@@ -14,13 +14,14 @@
 //!
 //! Pure byte builders over [`super::fw::work`] layouts: no locks, no allocation, no
 //! publication. Every address an image names comes in through [`ComputeRefs`], [`RenderRefs`]
-//! and [`PassRefs`], resolved by the engine from its firmware objects; the firmware writes
-//! timestamps in ns directly through the timestamp arena VAs. The words are written at literal
-//! offsets in image order. This file only depends on `core`, the UAPI and the `hw`/`fw::work`
-//! constants.
+//! and [`PassRefs`], resolved by the engine from its firmware objects, with the queues' stamp
+//! word indices; the firmware writes timestamps in ns directly through the timestamp arena VAs.
+//! The words are written at literal offsets in image order. This file only depends on `core`,
+//! the UAPI and the `hw`/`fw::work`/`fw::stamps` constants.
 
 use kernel::uapi;
 
+use super::fw::stamps;
 use super::fw::work::{self, barrier, compute, fs, initbm, scene, ta, tail, ts_record, REG_RECORD};
 use super::hw;
 
@@ -90,6 +91,8 @@ pub(crate) struct ComputeRefs {
     pub(crate) qinfo: u64,
     pub(crate) user_stamp: u64,
     pub(crate) fw_stamp: u64,
+    /// The compute queue's stamp word.
+    pub(crate) word: stamps::Word,
     pub(crate) manager: u64,
     /// Slot: work image (firmware VA and client GVA of the payload), sequence, preemption
     /// buffer (client GVA), internal timestamp cells, tail and sequence scratch (firmware VAs).
@@ -174,7 +177,7 @@ pub(crate) fn encode_compute(
     put64(w, 0x7e8, r.user_stamp);
     put64(w, 0x7f0, r.fw_stamp);
     put32(w, 0x7f8, t);
-    put32(w, 0x7fc, hw::engine::EVENT_SLOT);
+    put32(w, 0x7fc, r.word.index());
     put32(w, 0x804, 1);
     put32(w, 0x808, hw::engine::COMPUTE_UUID);
     put32(w, 0x80c, (n as u32).wrapping_sub(1));
@@ -473,12 +476,12 @@ pub(crate) fn work_tail(
     put8(t, 0x4f, 1);
 }
 
-/// A barrier record waiting until the stamp at `stamp_va` reaches `wait`:
-/// `event` names the producing engine (0 TA, 1 FS, 2 compute), `own` is the waiter's stamp.
+/// A barrier record waiting until the stamp at `stamp_va` reaches `wait`: `producer` is the
+/// producing queue's stamp word, `own` the waiter's stamp.
 pub(crate) fn barrier(
     stamp_va: u64,
     wait: u32,
-    event: u32,
+    producer: stamps::Word,
     own: u32,
     uuid: u32,
     ty: work::BarrierType,
@@ -489,7 +492,7 @@ pub(crate) fn barrier(
     put64(&mut x, barrier::STAMP_VA, stamp_va);
     put64(&mut x, barrier::STAMP_VA2, stamp_va);
     put32(&mut x, barrier::WAIT, wait);
-    put32(&mut x, barrier::EVENT, event);
+    put32(&mut x, barrier::EVENT, producer.index());
     put32(&mut x, barrier::OWN, own);
     put32(&mut x, barrier::UUID, uuid);
     put32(&mut x, barrier::TYPE, ty as u32);
@@ -508,6 +511,8 @@ pub(crate) struct RenderRefs {
     pub(crate) qinfo: [u64; 2],
     pub(crate) user_stamp: [u64; 2],
     pub(crate) fw_stamp: [u64; 2],
+    /// The render queue's index (its TA and FS stamp words).
+    pub(crate) queue: stamps::Render,
     /// Allocators in use (after a rebuild possibly the spare set): UMA managers of TA and FS,
     /// PB manager, scene list, misc record; and the initial PB blocks.
     pub(crate) uma_mgr: [u64; 2],
@@ -666,7 +671,7 @@ pub(crate) fn encode_ta(
     put64(w, 0x768, geo.tpc_bytes);
     put64(w, 0x770, uv);
     put32(w, 0x778, ta::SEQ_SIZE as u32);
-    put32(w, 0x77c, 1);
+    put32(w, 0x77c, r.queue.fs().index());
     put32(w, 0x780, tta);
     put64(w, 0x7a8, compact(p.pre_gva[0]));
     put32(w, 0x840, 0x67);
@@ -675,6 +680,7 @@ pub(crate) fn encode_ta(
     put64(w, 0x864, r.user_stamp[0]);
     put64(w, 0x86c, r.fw_stamp[0]);
     put32(w, 0x874, tta);
+    put32(w, 0x878, r.queue.ta().index());
     put32(w, 0x880, 1);
     put32(w, 0x884, hw::engine::TA_UUID);
     work_tail(
@@ -917,7 +923,7 @@ pub(crate) fn encode_fs(
     put64(w, 0xbac, r.user_stamp[1]);
     put64(w, 0xbb4, r.fw_stamp[1]);
     put32(w, 0xbbc, tfs);
-    put32(w, 0xbc0, 1);
+    put32(w, 0xbc0, r.queue.fs().index());
     put32(w, 0xbc8, 1);
     put32(w, 0xbcc, hw::engine::FS_UUID);
     put32(w, 0xbe8, 1);

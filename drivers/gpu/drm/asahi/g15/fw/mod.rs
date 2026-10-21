@@ -11,4 +11,5 @@ pub(crate) mod buffer;
 pub(crate) mod channels;
 pub(crate) mod graph;
 pub(crate) mod initdata;
+pub(crate) mod stamps;
 pub(crate) mod work;

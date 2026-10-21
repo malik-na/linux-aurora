@@ -34,6 +34,7 @@ use super::command::{Command, ComputeCommand, RenderCommand};
 use super::encode::{self, ClusterLayout, ComputeRefs, Geometry, RenderRefs};
 use super::fw::channels::SubmitRecord;
 use super::fw::graph::qstate;
+use super::fw::stamps;
 use super::fw::work::{self, barrier::RENDER_WAIT_UUID, BarrierType};
 use super::hw::{engine as ids, sizes, tuning};
 use super::job::{Completions, Job};
@@ -654,6 +655,7 @@ impl Firmware {
             qinfo: [r.qinfo[0].va, r.qinfo[1].va],
             user_stamp: [r.user_stamp[0].va, r.user_stamp[1].va],
             fw_stamp: [r.fw_stamp[0].va, r.fw_stamp[1].va],
+            queue: stamps::RENDER,
             uma_mgr: a.uma_mgr,
             pb_mgr: a.pb_mgr,
             scene_list: a.scene_list,
@@ -990,7 +992,7 @@ impl Firmware {
                 qinfo: self.graph.compute.qinfo.va,
                 kind: 2,
                 head: pf.c_head as u16,
-                event: ids::EVENT_SLOT as u8,
+                event: stamps::COMPUTE.event(),
                 new_queue: !self.engine.queue_registered as u8,
                 ..Default::default()
             };
@@ -1006,7 +1008,7 @@ impl Firmware {
                 qinfo: self.graph.render.qinfo[1].va,
                 kind: 1,
                 head: pf.fs_head as u16,
-                event: 1,
+                event: stamps::RENDER.fs().event(),
                 new_queue,
                 ..Default::default()
             };
@@ -1014,7 +1016,7 @@ impl Firmware {
                 qinfo: self.graph.render.qinfo[0].va,
                 kind: 0,
                 head: pf.ta_head as u16,
-                event: 0,
+                event: stamps::RENDER.ta().event(),
                 new_queue,
                 ..Default::default()
             };
@@ -1103,6 +1105,7 @@ impl Firmware {
             qinfo: g.qinfo.va,
             user_stamp: g.user_stamp.va,
             fw_stamp: g.fw_stamp.va,
+            word: stamps::COMPUTE,
             manager: g.manager.va,
             work: s.work.va,
             work_gva: s.work.gva.unwrap_or(0),
@@ -1154,7 +1157,7 @@ impl Firmware {
             let b = encode::barrier(
                 self.graph.render.fw_stamp[1].va,
                 pf.last_fs,
-                1,
+                stamps::RENDER.fs(),
                 t,
                 ids::COMPUTE_UUID,
                 BarrierType::from_stamp_only(type0),
@@ -1170,7 +1173,7 @@ impl Firmware {
             let b = encode::barrier(
                 g.fw_stamp.va,
                 pf.last_ct,
-                ids::EVENT_SLOT,
+                stamps::COMPUTE,
                 t,
                 ids::COMPUTE_UUID,
                 BarrierType::Hold,
@@ -1321,7 +1324,7 @@ impl Firmware {
             let b = encode::barrier(
                 self.graph.compute.fw_stamp.va,
                 pf.last_ct,
-                ids::EVENT_SLOT,
+                stamps::COMPUTE,
                 tta,
                 RENDER_WAIT_UUID,
                 BarrierType::from_stamp_only(type0),
@@ -1332,7 +1335,7 @@ impl Firmware {
             let b = encode::barrier(
                 r.fw_stamp[0].va,
                 encode::stamp_seed(ids::TA_SEED, n - 1),
-                0,
+                stamps::RENDER.ta(),
                 tta,
                 RENDER_WAIT_UUID,
                 BarrierType::Hold,
@@ -1341,7 +1344,7 @@ impl Firmware {
             let b = encode::barrier(
                 r.fw_stamp[1].va,
                 pf.last_fs,
-                1,
+                stamps::RENDER.fs(),
                 tfs,
                 RENDER_WAIT_UUID,
                 BarrierType::Hold,
@@ -1369,7 +1372,7 @@ impl Firmware {
             let b = encode::barrier(
                 r.fw_stamp[1].va,
                 prev_fs,
-                1,
+                stamps::RENDER.fs(),
                 tta,
                 RENDER_WAIT_UUID,
                 BarrierType::from_stamp_only(internal),
@@ -1379,7 +1382,7 @@ impl Firmware {
         let b = encode::barrier(
             r.fw_stamp[0].va,
             tta,
-            0,
+            stamps::RENDER.ta(),
             tfs,
             ids::FS_UUID,
             BarrierType::Stamp,
