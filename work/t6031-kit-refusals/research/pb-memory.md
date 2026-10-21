@@ -873,3 +873,45 @@ observation (`tail`/`observe`) uses the queue of the published flights. No queue
   command's PB-manager pointer and any manager-derived field in the FS/3D command, the shared misc record,
   register 0x1c830 (still the per-pass-slot pointer, §8 says PB index), the growth slot (echoes 0, not 1).
 - M3 back on step 2 (silicon-52). Private log: ~/m3-private/pq3-targeted-dmesg.txt.
+
+### 7.y Fix round after the targeted test: the PB index was missing in three places (2026-10-22)
+
+Offline comparison of queue 1's records with ours for queue 0 and with the native second queue (run Q2,
+`hv-t22-20261022-015122`: kick 11 = queue A TA/FS, kick 12 = queue B TA/FS, their InitBM, FS ring[0] barrier,
+0x40/0x18 records, queue infos and the managers' first words; private). Native A vs B differ, besides per-queue
+addresses (manager, notifier, +0x2c/+0x34 records, heap/tile regions, sequences, stamp pointers), only in:
+
+| field | our queue 0 | our queue 1 (3ed682a7) | native A / B |
+|---|---|---|---|
+| PB manager +0x8 | 0 | **0** | 0 / **1** |
+| InitBM +0x8 | 0 | 1 | 0 / 1 |
+| TA work +0x1c | 0 | 1 | 0 / 1 |
+| TA register 0x1c830 (record 68, work +0x374) | 0 | **0** | 0 / **1** |
+| FS register 0x1c838 (record 75, work +0x408) | 0 | **0** | 0 / **1** |
+| TA +0x878 / +0x77c, FS barrier +0x18, stamp ptrs | 0/1, 0, page+0 | 2/3, 2, page+8 | same as ours |
+| TA register 0x1ca30 (record 69), FS 0x1ca28 (record 76) | compact(scene_user + 0x40) | per pass slot | a per-queue compact pointer |
+| TA +0x840, +0x884 (uuid), +0x8f0; FS ring[0] +0x20 | fixed | same as queue 0 | differ per queue (0x2b/0x2d, 0x01000049/0x0100005a) |
+| 0x40 record, 0x18 record | no PB reference | no PB reference | identical A/B, no PB reference |
+
+Correction to §5.12/§7: our register 0x1c830 value was 0 all along (TA values index 68); the compact pointer
+`compact(scene_user + 0x40)` is register 0x1ca30 (index 69), which natively is a per-queue pointer too.
+
+So a queue-1 render named PB 1's manager, lists and InitBM but PB index 0 to the tiler (both registers) and in
+its manager. That fits the targeted failure exactly: every request echoed slot 0 (the firmware takes the slot
+from the manager or registers, not from InitBM +0x8), and with the replies and page returns going to index 0's
+state, PB 1 never saw its blocks used up/recycled and asked again at once (405 requests in 0.65 s at one
+position). Every FS/sequence field naming the manager already names PB 1's (FS +0x28, TA +0x24, sequences
++0x1c/f+0xc, FS f+0x24): no other field of ours names queue 0's PB.
+
+Fix (two commits on `t6031/pq-step3`, queue 0's values unchanged):
+- `ee488e92` PB manager +0x8 = PB index (`pb_manager_image(index, ..)`, host test `pb_manager`).
+- `3622ffd9` TA register 0x1c830 and FS register 0x1c838 = PB index (`REG_PB_INDEX` with compile-time selector
+  checks).
+Not changed (no evidence they matter for the PB): the per-queue uuid-like words, 0x1ca30/0x1ca28 (ours is a
+per-pass-slot pointer, natively per queue), the shared misc record (no native data on it in these captures).
+
+Package: `~/Projects/build-out/kernel-pbadapt/pkgs/linux-aurora-dev-7.1.12_aurora_dev_silicon-56-pbadapt-r2pq3b-3622ffd90861-aarch64.pkg.tar.xz`.
+Confirming signature in the targeted test: `PB1 growth request 0/1 ... slot 1` (the slot follows the index), PB1
+peak per run of the heavy case near queue 0's (about 1420 blocks over the case, never 4095), requests advancing
+in position rather than hundreds at one position, `refused 0`, no hang. If the slot is 1 and PB1 still runs to
+the maximum: next the per-queue uuid words, then the misc record per PB.
