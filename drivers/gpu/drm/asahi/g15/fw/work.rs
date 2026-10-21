@@ -123,6 +123,9 @@ pub(crate) mod ta {
 
     /// Index of register #33 (PBREQ: the initial PB size in pages, 0x3c when clustered).
     pub(crate) const REG_PBREQ: usize = 32;
+    /// Index of register 0x1c830: the PB index (TA work +0x1c).
+    pub(crate) const REG_PB_INDEX: usize = 68;
+    const _: () = assert!(SEL[REG_PB_INDEX] == 0x1c830);
 }
 
 /// FS work image and microsequence.
@@ -152,6 +155,10 @@ pub(crate) mod fs {
         0x16090, 0x120a1, 0x101e9, 0x160a8, 0x16068, 0x160b8, 0x1a0a9, 0x1a0b1, 0x1a079, 0x1a081,
         0x1a0d9, 0x1a0e1, 0x101c1, 0xd469, 0x1a0f9, 0x1c838, 0x1ca28, 0xa5a9, 0xd429,
     ];
+
+    /// Index of register 0x1c838: the PB index, as TA register 0x1c830.
+    pub(crate) const REG_PB_INDEX: usize = 75;
+    const _: () = assert!(SEL[REG_PB_INDEX] == 0x1c838);
 }
 
 /// The 0x3c timestamp record: `+0` opcode, `+4/+0xc/+0x14` cells of the work image at `B`,

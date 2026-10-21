@@ -651,6 +651,8 @@ pub(crate) fn encode_ta(
         val[ta::REG_PBREQ] = hw::sizes::CLUSTER_PB_PAGES as u64;
         val[33] = compact(cl.m1);
     }
+    // The queue's PB index (0 on render queue 0).
+    val[ta::REG_PB_INDEX] = r.queue.index() as u64;
 
     w.fill(0);
     q.fill(0);
@@ -767,7 +769,7 @@ pub(crate) fn encode_fs(
     let (heap, su) = (p.heap_gva, p.scene_user_gva);
     let ts = ts_va[2] != 0 || ts_va[3] != 0;
     let (d, s) = (&u.depth, &u.stencil);
-    let val: [u64; 79] = [
+    let mut val: [u64; 79] = [
         1,
         geo.utile_config as u64,
         prog_rsrc(u, &u.eot, u.bg_eot_rsrc_spec_hi),
@@ -848,6 +850,8 @@ pub(crate) fn encode_fs(
         0x6000400020,
         0x200000001,
     ];
+    // The queue's PB index (0 on render queue 0), as TA register 0x1c830.
+    val[fs::REG_PB_INDEX] = r.queue.index() as u64;
     let pbg_r = prog_rsrc(u, &u.partial_bg, u.bg_partial_rsrc_spec_hi);
     let pbg_a = prog_addr(usc, &u.partial_bg);
     let peot_a = prog_addr(usc, &u.partial_eot);
