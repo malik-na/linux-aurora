@@ -138,6 +138,8 @@ pub(crate) struct Flight {
     /// The job whose commands the prefix holds, and horizon jobs folded into it (in order).
     pub(crate) job: Arc<Job>,
     pub(crate) group: KVec<Arc<Job>>,
+    /// The render queue (and PB) of its renders, and of any it follows.
+    pub(crate) rq: usize,
     /// Index of the first command of the job in this prefix, and the number of commands.
     pub(crate) first: usize,
     pub(crate) count: usize,
@@ -175,6 +177,7 @@ impl Flight {
         Self {
             job,
             group: KVec::new(),
+            rq: 0,
             first: 0,
             count: 0,
             computes: 0,
@@ -647,7 +650,7 @@ impl Firmware {
     /// The allocator and graph addresses the render encoders name.
     fn render_refs(&self) -> RenderRefs {
         let r = &self.graph.render[0];
-        let a = self.pools.allocator_refs();
+        let a = self.pools.allocator_refs(0);
         RenderRefs {
             hwdata: self.cfg.layout.hwdata_va,
             notifier: r.notifier.va,
@@ -695,7 +698,7 @@ impl Firmware {
 
     fn publish_prefix_into(&mut self, job: &Arc<Job>, f: &mut Flight) -> Result {
         // Every backed PB chunk is mapped in the job's VM before anything of it is visible.
-        self.map_heap(&job.vm)?;
+        self.map_heap(&job.vm, 0)?;
         let overlap = !self.engine.flights.is_empty();
         let mut mixed = tuning::MIXED_PREFIX;
         let mut pf = Prefix {
@@ -920,8 +923,8 @@ impl Firmware {
             self.graph.render[0]
                 .threshold
                 .w32(0, 2u32.wrapping_mul(pf.draw as u32))?;
-            // pb_counter = draw, then C1 once per (re)initialization.
-            self.publish_pb(pf.draw as u32)?;
+            // pb_counter = draw, then C1 with an InitBM.
+            self.publish_pb(0, pf.draw as u32, pf.initbm)?;
         }
         wmb();
         // The queue WRITEs: from here on a failure is uncertain (EIO).

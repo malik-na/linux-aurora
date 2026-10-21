@@ -67,6 +67,8 @@ pub(crate) struct Ledger {
     /// answered forever, under the device lock (ticket malik-na/linux-aurora#69); unanswered,
     /// its TA stalls and the host deadline recovers.
     pub(crate) refusals: u32,
+    /// The PB's index (InitBM +0x8): a request may name it or slot 0.
+    pub(crate) slot: u32,
 }
 
 /// The most blocks ever posted: one below the block list's records, as the producer is the
@@ -94,7 +96,14 @@ impl Ledger {
             next_request: 0,
             refusal_logged: false,
             refusals: 0,
+            slot: 0,
         }
+    }
+
+    /// The same ledger for the PB with index `slot`.
+    pub(crate) const fn with_slot(mut self, slot: u32) -> Self {
+        self.slot = slot;
+        self
     }
 
     /// A re-initialization: the initial blocks are posted again, the request counter starts
@@ -174,14 +183,15 @@ impl Ledger {
         self.refusals >= MAX_REFUSALS
     }
 
-    /// Whether `request` may be answered: growth on, an event of type 7 for PB slot 0 from a
+    /// Whether `request` may be answered: growth on, an event of type 7 for PB slot 0 or this
+    /// PB's slot from a
     /// context with a published render prefix (`live`), a counter not below the next expected
     /// one, the current halt epoch, and refusals at the maximum not used up.
     pub(crate) fn admits(&self, request: &[u32; 14], grow: bool, live: bool, epoch: u64) -> bool {
         !self.exhausted()
             && grow
             && request[grow_request::TYPE] == 7
-            && request[grow_request::SLOT] == 0
+            && (request[grow_request::SLOT] == 0 || request[grow_request::SLOT] == self.slot)
             && live
             && request[grow_request::COUNTER] >= self.next_request
             && request_epoch(request) == epoch
@@ -361,6 +371,16 @@ mod tests {
         let q = request(5, 0, 0x1_0000_0002);
         assert!(l.admits(&q, true, true, 0x1_0000_0002));
         assert!(!l.admits(&q, true, true, 2));
+        // The PB with index 1 admits slot 0 and slot 1, nothing else.
+        let l1 = backed(true, 64, 3072).with_slot(1);
+        let mut q = request(5, 0, 3);
+        assert!(l1.admits(&q, true, true, 3));
+        q[2] = 1;
+        assert!(l1.admits(&q, true, true, 3));
+        q[2] = 2;
+        assert!(!l1.admits(&q, true, true, 3));
+        assert_eq!(l1.slot, 1);
+        assert_eq!(backed(true, 64, 3072).slot, 0);
     }
 
     #[test]

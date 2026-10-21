@@ -458,6 +458,21 @@ pub(crate) mod client {
     pub(crate) const PB_HEAP: u64 = 0x70c0000000;
     pub(crate) const PB_HEAP_SIZE: u64 = 0x20000000;
     pub(crate) const PB_BLOCK_LIST: u64 = 0x70f0000000;
+    pub(crate) const PB_BLOCK_LIST_SIZE: u64 = 0x8000;
+    /// Render queue 1's PB heap, below queue 0's.
+    pub(crate) const PB1_HEAP: u64 = 0x70a0000000;
+    /// The PB heap of render queue `q`.
+    pub(crate) const fn pb_heap(q: usize) -> u64 {
+        if q == 0 {
+            PB_HEAP
+        } else {
+            PB1_HEAP
+        }
+    }
+    /// The block list of render queue `q`'s PB: one list after the other.
+    pub(crate) const fn pb_block_list(q: usize) -> u64 {
+        PB_BLOCK_LIST + q as u64 * PB_BLOCK_LIST_SIZE
+    }
     /// Compact-window objects (32-bit compact pointers: `gva - 0x1000000000`).
     pub(crate) const PRE0_PAGE: u64 = 0x1006080000;
     pub(crate) const PRE1_PAGE: u64 = 0x1006098000;
@@ -468,6 +483,10 @@ pub(crate) mod client {
     pub(crate) const PASS_STRIDE: u64 = 0x118000;
     pub(crate) const PB_PAGE_LIST: u64 = 0x1074000000;
     pub(crate) const PB_PAGE_LIST_SIZE: u64 = 0x28000;
+    /// The page list of render queue `q`'s PB: one list after the other.
+    pub(crate) const fn pb_page_list(q: usize) -> u64 {
+        PB_PAGE_LIST + q as u64 * PB_PAGE_LIST_SIZE
+    }
 }
 
 /// Sizes and counts of the engine's objects.

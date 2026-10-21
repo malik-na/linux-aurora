@@ -164,10 +164,12 @@ pub(crate) mod grow_request {
     pub(crate) const EPOCH: usize = 5;
 }
 
-/// The C1 record written once per (re)initialization before the first render prefix that
-/// follows it: {0x07400000, 4 * initial blocks}.
-pub(crate) const fn c1_record(initial_blocks: u32) -> [u8; 16] {
-    let a = 0x07400000u32.to_le_bytes();
+/// The C1 record written before the render prefix that carries a PB's InitBM:
+/// {compact(page list) >> 4, 4 * initial blocks}. The firmware reads the PB's page list where
+/// C1 says at the InitBM, so with more than one PB it names the page list of the PB being
+/// initialized.
+pub(crate) const fn c1_record(page_list_gva: u64, initial_blocks: u32) -> [u8; 16] {
+    let a = ((compact(page_list_gva) >> 4) as u32).to_le_bytes();
     let b = (PAGES_PER_BLOCK * initial_blocks).to_le_bytes();
     [
         a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3], 0, 0, 0, 0, 0, 0, 0, 0,
@@ -364,10 +366,15 @@ mod tests {
         assert_eq!(get32(&b, 4), 1024);
         assert!(b[8..].iter().all(|&x| x == 0));
         assert_eq!(uma_pools::row(0x7010000000), 0x4000007010000000);
-        let c1 = c1_record(1024);
+        // PB 0's page list at 0x1074000000: the one-PB value.
+        let c1 = c1_record(0x1074000000, 1024);
         assert_eq!(get32(&c1, 0), 0x07400000);
         assert_eq!(get32(&c1, 4), 4096);
         assert!(c1[8..].iter().all(|&x| x == 0));
+        // PB 1's page list one list further.
+        let c1 = c1_record(0x1074000000 + PAGE_LIST_SIZE as u64, 64);
+        assert_eq!(get32(&c1, 0), 0x07402800);
+        assert_eq!(get32(&c1, 4), 256);
     }
 
     #[test]
