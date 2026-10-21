@@ -1,5 +1,5 @@
 #!/bin/bash
-# Host tests of the core-only G15 driver files (fw/buffer.rs, fw/channels.rs, pools/growth.rs).
+# Host tests of the core-only G15 driver files (fw/buffer.rs, fw/channels.rs, fw/stamps.rs, pools/growth.rs).
 # Usage: run.sh <kernel-tree>   (needs rustup toolchain 1.93.1; the tree is never modified)
 set -eu
 TREE=${1:?usage: $0 <kernel-tree>}

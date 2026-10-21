@@ -11,6 +11,8 @@ pub mod g15 {
         pub mod buffer;
         #[path = "../../g15/fw/channels.rs"]
         pub mod channels;
+        #[path = "../../g15/fw/stamps.rs"]
+        pub mod stamps;
     }
     pub mod pools {
         #[path = "../../g15/pools/growth.rs"]
