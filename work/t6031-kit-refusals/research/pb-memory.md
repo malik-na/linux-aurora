@@ -915,3 +915,13 @@ Confirming signature in the targeted test: `PB1 growth request 0/1 ... slot 1` (
 peak per run of the heavy case near queue 0's (about 1420 blocks over the case, never 4095), requests advancing
 in position rather than hundreds at one position, `refused 0`, no hang. If the slot is 1 and PB1 still runs to
 the maximum: next the per-queue uuid words, then the misc record per PB.
+
+### 7.z Boot result, step 3b (silicon-56 = 3622ffd9, 2026-10-22 04:28): refused at boot; step 3 stopped
+
+PB index 1 written into the PB manager +0x8 and TA/FS registers 0x1c830/0x1c838 (§7.y). The first VM
+(the desktop, ctx 3) took queue 1 at 6.86 s; queue 1 completed 3 renders (stamps 0x300 of 0x500), then the
+next prefix FAILED in 3 ms with errors=0 (the r0pq-g signature: an instant firmware refusal), fail-stop
+(EIO) at 7.02 s; acceptance FAIL (no client could render). So the firmware does key the PB on these words,
+but a queue naming PB index 1 needs more firmware-side state than we give it, and 3 renders succeed before
+the refusal. Per the gated plan step 3 stops here; M3 back on step 2 (silicon-52). Private log:
+~/m3-private/pq3b-dmesg.txt.
