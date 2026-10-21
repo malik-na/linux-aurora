@@ -660,6 +660,8 @@ pub(crate) fn encode_ta(
     put64(w, 0x4, 1);
     put32(w, 0xc, ctx);
     put64(w, 0x14, r.notifier);
+    // The queue's PB index (InitBM +0x8).
+    put32(w, 0x1c, r.queue.index());
     put64(w, 0x24, r.pb_mgr);
     put64(w, 0x2c, p.scene);
     put64(w, 0x34, r.legacy_empty);
@@ -1010,12 +1012,20 @@ pub(crate) fn scene(r: &RenderRefs, p: &PassRefs, n: u64) -> [u8; scene::SIZE] {
     x
 }
 
-/// The InitBM record that (re)initializes the PB before a render.
-pub(crate) fn initbm(ctx: u32, pb_init_blocks: u32, pb_mgr: u64, tta: u32) -> [u8; initbm::SIZE] {
+/// The InitBM record that (re)initializes PB `pb` (its index: the render queue's) before a
+/// render.
+pub(crate) fn initbm(
+    ctx: u32,
+    pb: u32,
+    pb_init_blocks: u32,
+    pb_mgr: u64,
+    tta: u32,
+) -> [u8; initbm::SIZE] {
     let mut x = [0u8; initbm::SIZE];
 
     put32(&mut x, 0x0, work::op::INIT_BM);
     put32(&mut x, initbm::CTX, ctx);
+    put32(&mut x, initbm::PB_INDEX, pb);
     put32(&mut x, initbm::BLOCKS, pb_init_blocks);
     put64(&mut x, initbm::PB_MANAGER, pb_mgr);
     put32(&mut x, initbm::STAMP, tta);

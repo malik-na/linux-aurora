@@ -44,7 +44,8 @@
 //!   backed at boot; queue 1's (with `g15_render_queues` 2) has its records and lists allocated
 //!   at boot, at its own heap range and list GVAs ([`client::pb_heap`], [`client::pb_page_list`],
 //!   [`client::pb_block_list`]: the firmware reads a PB's lists through whatever VM is current,
-//!   so no two PBs share a list GVA), and is backed only when a VM first takes the queue. The UMA managers, their counters and the misc record are
+//!   so no two PBs share a list GVA), and is backed only when a VM first takes the queue
+//!   ([`Firmware::activate_pb`]); it then stays backed and follows the reclaim like queue 0's. The UMA managers, their counters and the misc record are
 //!   shared by the queues; block_ctl, PB counter, scene list, manager, lists, heap, ledger and
 //!   statistics are per PB. A growth request goes to the PB of the published render prefix of
 //!   its context. Recovery and reclaim re-initialize every PB together.
@@ -856,6 +857,26 @@ impl Firmware {
                 }
             }
         }
+    }
+
+    /// Backs PB `pb`'s initial posting and reserve the first time its render queue is taken
+    /// (an active PB is left as it is). A failure leaves it inactive (the chunks backed so far
+    /// stay counted) and the queue not taken.
+    pub(crate) fn activate_pb(&mut self, pb: usize) -> Result {
+        let p = self.pools.pbs.get_mut(pb).ok_or(EINVAL)?;
+        if p.active {
+            return Ok(());
+        }
+        p.back_initial(&self.pools.adev)?;
+        dev_info!(
+            self.pools.dev,
+            "G15: {} heap: {} blocks posted, {} chunks of {} MiB backed\n",
+            pb_name(pb),
+            p.ledger.initial,
+            p.heap.len(),
+            CHUNK_BYTES >> 20
+        );
+        Ok(())
     }
 
     /// Maps PB `pb`'s backed heap chunks into a job's VM before its publication on render

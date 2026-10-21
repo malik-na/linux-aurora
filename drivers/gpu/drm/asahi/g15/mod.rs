@@ -66,6 +66,7 @@ mod power;
 mod queue;
 mod recovery;
 mod regs;
+mod rq;
 mod slots;
 mod timestamp;
 mod uat;

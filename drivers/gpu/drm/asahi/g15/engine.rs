@@ -2,7 +2,12 @@
 
 //! The prefix/horizon/flight engine.
 //!
-//! One device-global compute queue and one TA+FS queue pair serve every logical queue and VM.
+//! One device-global compute queue and one or two render queues (TA+FS queue pairs, one graph
+//! and PB each) serve every logical queue and VM: with `g15_render_queues` 2 the VM that holds
+//! render queue 1 ([`super::rq`]) renders there, every other VM on render queue 0. Each render
+//! queue has its own draw ordinal (stamps, threshold, PB counter, scene index) and InitBM
+//! priming; the prefixes keep one total order across the queues (a VM's prefixes are published
+//! behind another VM's only once those retired, so the flights are always on one queue).
 //! Jobs (one per SUBMIT) wait in `pending`; pick order: priority, then the least recently
 //! served queue, then FIFO. A *prefix* is a run of consecutive commands of one job (up to 16
 //! computes and [`super::hw::tuning::PREFIX_RENDERS`] renders) published together: images,
@@ -18,7 +23,8 @@
 //!
 //! Barrier types per edge (type 0 = firmware stamp only, 1 = also the predecessor job hold):
 //! FS -> own TA 0; TA -> previous FS 0 only inside a prefix after a render with no
-//! InitBM/resync, else 1; compute -> TA 1 on class 2; FS -> compute 1 (`CROSS_ENGINE_HOLD`
+//! InitBM/resync, else 1 (the previous FS of the total order: at a prefix start with nothing in
+//! flight, that of the newest render, possibly on the other render queue's stamp word); compute -> TA 1 on class 2; FS -> compute 1 (`CROSS_ENGINE_HOLD`
 //! bit 0); compute -> compute 1 on class 2; early tiling (off) TA -> TA and FS -> FS 1.
 //!
 //! Completions: rather than signalling a fence under the device lock, the engine pushes the job
@@ -38,7 +44,9 @@ use super::fw::stamps;
 use super::fw::work::{self, barrier::RENDER_WAIT_UUID, BarrierType};
 use super::hw::{engine as ids, sizes, tuning};
 use super::job::{Completions, Job};
+use super::rq::{self, Pick};
 use super::slots::Claims;
+use super::vm::VmState;
 use super::{params, Firmware, Shared};
 
 /// `wmb()`: `dsb st` (a full fence on other architectures).
@@ -210,6 +218,11 @@ struct Prefix {
     computes: u32,
     renders: u32,
     prev: Prev,
+    /// The render queue of the prefix's renders, and that of `last_fs`.
+    q: usize,
+    last_q: usize,
+    /// The prefix's first render primes its queue: InitBM, one render, nothing behind it.
+    prime: bool,
     /// This prefix (re)initializes the PB with InitBM.
     initbm: bool,
     c_head: u32,
@@ -349,6 +362,41 @@ fn image<const N: usize>(v: &mut KVec<u8>) -> Result<&mut [u8; N]> {
     <&mut [u8; N]>::try_from(&mut v[..]).map_err(|_| EINVAL)
 }
 
+/// One render queue's ordinal and newest published receipts.
+#[derive(Copy, Clone)]
+pub(crate) struct RenderTail {
+    /// Draw ordinal of the last publication (the queue's renders: stamps, threshold, PB
+    /// counter, scene index).
+    pub(crate) draw: u64,
+    /// Final TA/FS stamps and ring ends of the queue's newest render prefix.
+    pub(crate) ta_target: u32,
+    pub(crate) fs_target: u32,
+    pub(crate) ta_head: u32,
+    pub(crate) fs_head: u32,
+    /// Registered by a first record (`new_queue`).
+    pub(crate) registered: bool,
+    /// The queue's next render prefix carries its PB's InitBM and primes: the first after
+    /// boot and after every (re)initialization of the PBs.
+    pub(crate) initbm: bool,
+    /// Render prefixes published on the queue.
+    pub(crate) prefixes: u64,
+}
+
+impl RenderTail {
+    const fn new() -> Self {
+        Self {
+            draw: 0,
+            ta_target: 0,
+            fs_target: 0,
+            ta_head: 0,
+            fs_head: 0,
+            registered: false,
+            initbm: true,
+            prefixes: 0,
+        }
+    }
+}
+
 /// Engine state.
 pub(crate) struct Engine {
     /// Runnable jobs of every queue, in arrival order.
@@ -365,26 +413,29 @@ pub(crate) struct Engine {
     /// The device's shared state, for the transport-error latch; set by the first poll or
     /// submission.
     pub(crate) shared: Option<Arc<Shared>>,
-    /// Host compute ordinal and draw ordinal of the last publication.
+    /// Host compute ordinal of the last publication.
     pub(crate) ordinal: u64,
-    pub(crate) draw: u64,
-    /// Newest published receipts, the tail.
+    /// Newest published compute receipts, the tail.
     pub(crate) target: u32,
     pub(crate) head: u32,
-    pub(crate) ta_target: u32,
-    pub(crate) fs_target: u32,
-    pub(crate) ta_head: u32,
-    pub(crate) fs_head: u32,
+    /// Per render queue: draw ordinal and newest published receipts.
+    pub(crate) rq: [RenderTail; stamps::RENDER_QUEUES],
+    /// The render queue of the newest published render prefix.
+    pub(crate) last_rq: usize,
+    /// The VM that holds render queue 1, and how often it was taken and given back.
+    pub(crate) holder: Option<Arc<VmState>>,
+    pub(crate) takes: u64,
+    pub(crate) releases: u64,
     /// Event counts at the tail's publication.
     pub(crate) events: u32,
     pub(crate) stage_seen: u32,
-    /// Last member of the newest prefix.
+    /// Last member of the newest prefix, and the render queue of `tail_fs`.
     pub(crate) tail_prev: Prev,
     pub(crate) tail_ct: u32,
     pub(crate) tail_fs: u32,
-    /// The compute queue / render queues were registered by a first record (`new_queue`).
+    pub(crate) tail_q: usize,
+    /// The compute queue was registered by a first record (`new_queue`).
     pub(crate) queue_registered: bool,
-    pub(crate) render_registered: bool,
     /// The rebuild (priming) prefix is published and not yet retired.
     pub(crate) rebuild_live: bool,
     /// A ready prefix waits only for a record's consumption: repoll sooner.
@@ -412,20 +463,20 @@ impl Engine {
             turn: 0,
             shared: None,
             ordinal: 0,
-            draw: 0,
             target: 0,
             head: 0,
-            ta_target: 0,
-            fs_target: 0,
-            ta_head: 0,
-            fs_head: 0,
+            rq: [RenderTail::new(); stamps::RENDER_QUEUES],
+            last_rq: 0,
+            holder: None,
+            takes: 0,
+            releases: 0,
             events: 0,
             stage_seen: 0,
             tail_prev: Prev::None,
             tail_ct: 0,
             tail_fs: 0,
+            tail_q: 0,
             queue_registered: false,
-            render_registered: false,
             rebuild_live: false,
             chan_wait: false,
             progress_flight: 0,
@@ -550,6 +601,7 @@ impl Firmware {
         let mut result = Ok(());
 
         self.engine.chan_wait = false;
+        self.release_queue1();
         // Nothing is published while a hang request is armed.
         while self.recovery.failed().is_none()
             && !self.engine.frozen
@@ -647,10 +699,74 @@ impl Firmware {
         n
     }
 
-    /// The allocator and graph addresses the render encoders name.
-    fn render_refs(&self) -> RenderRefs {
-        let r = &self.graph.render[0];
-        let a = self.pools.allocator_refs(0);
+    /// Gives render queue 1 back when its holder's client handle is closed and nothing of it is
+    /// published or pending ([`rq::release_due`]). Called at every publication and in idle
+    /// poll passes.
+    pub(crate) fn release_queue1(&mut self) {
+        let Some(holder) = self.engine.holder.as_ref() else {
+            return;
+        };
+        let busy = self
+            .engine
+            .flights
+            .iter()
+            .any(|f| Arc::ptr_eq(&f.job.vm, holder))
+            || self
+                .engine
+                .pending
+                .iter()
+                .any(|j| Arc::ptr_eq(&j.vm, holder));
+        if !rq::release_due(holder.vm.is_closed(), busy) {
+            return;
+        }
+        dev_info!(
+            self.graph.dev.as_ref(),
+            "G15: ctx {} (VM {}) releases render queue 1 after {} renders on it\n",
+            holder.slot,
+            holder.id,
+            self.engine.rq[1].draw
+        );
+        self.engine.holder = None;
+        self.engine.releases += 1;
+    }
+
+    /// The render queue of a prefix of `job` ([`rq::pick`]): queue 1 for its holder, taken by
+    /// the job's VM if it is free and the prefix starts with a render with nothing in flight
+    /// (its PB is backed at the first take; if that fails, queue 0).
+    fn render_queue(&mut self, job: &Arc<Job>, overlap: bool, render0: bool) -> usize {
+        let holder = self.engine.holder.as_ref().map(|h| h.id);
+        let queues = self.graph.render.len() as u32;
+        match rq::pick(queues, holder, job.vm.id, overlap, render0) {
+            Pick::Take => {
+                if let Err(e) = self.activate_pb(1) {
+                    dev_warn!(
+                        self.graph.dev.as_ref(),
+                        "G15: render queue 1 not taken by ctx {}: its PB could not be backed ({})\n",
+                        job.vm.slot,
+                        e.to_errno()
+                    );
+                    return 0;
+                }
+                self.engine.holder = Some(job.vm.clone());
+                self.engine.takes += 1;
+                dev_info!(
+                    self.graph.dev.as_ref(),
+                    "G15: ctx {} (VM {}) takes render queue 1 (draw {}, take {})\n",
+                    job.vm.slot,
+                    job.vm.id,
+                    self.engine.rq[1].draw,
+                    self.engine.takes
+                );
+                1
+            }
+            pick => pick.queue(),
+        }
+    }
+
+    /// The allocator and graph addresses the render encoders name for render queue `q`.
+    fn render_refs(&self, q: usize) -> RenderRefs {
+        let r = &self.graph.render[q];
+        let a = self.pools.allocator_refs(q);
         RenderRefs {
             hwdata: self.cfg.layout.hwdata_va,
             notifier: r.notifier.va,
@@ -658,7 +774,7 @@ impl Firmware {
             qinfo: [r.qinfo[0].va, r.qinfo[1].va],
             user_stamp: [r.user_stamp[0].va, r.user_stamp[1].va],
             fw_stamp: [r.fw_stamp[0].va, r.fw_stamp[1].va],
-            queue: stamps::RENDER,
+            queue: r.queue,
             uma_mgr: a.uma_mgr,
             pb_mgr: a.pb_mgr,
             scene_list: a.scene_list,
@@ -697,18 +813,26 @@ impl Firmware {
     }
 
     fn publish_prefix_into(&mut self, job: &Arc<Job>, f: &mut Flight) -> Result {
-        // Every backed PB chunk is mapped in the job's VM before anything of it is visible.
-        self.map_heap(&job.vm, 0)?;
         let overlap = !self.engine.flights.is_empty();
-        let mut mixed = tuning::MIXED_PREFIX;
-        let mut pf = Prefix {
-            n: self.engine.ordinal,
-            draw: self.engine.draw,
-            ..Default::default()
-        };
         let i = job.progress.sent();
         let count = job.progress.count();
         let render0 = is_render(job, i);
+        let q = self.render_queue(job, overlap, render0);
+        // Every backed PB chunk of the shared heap, and of the queue's own, is mapped in the
+        // job's VM before anything of it is visible.
+        self.map_heap(&job.vm, 0)?;
+        if q != 0 {
+            self.map_heap(&job.vm, q)?;
+        }
+        let mut mixed = tuning::MIXED_PREFIX;
+        let mut pf = Prefix {
+            n: self.engine.ordinal,
+            draw: self.engine.rq[q].draw,
+            q,
+            last_q: q,
+            prime: self.recovery.reinit || self.engine.rq[q].initbm,
+            ..Default::default()
+        };
         let (mut computes, mut renders, mut end) = (0u32, 0u32, i);
         let mut last_render = None;
         let mut hz_stop: Option<usize> = None;
@@ -743,14 +867,14 @@ impl Firmware {
                         break;
                     }
                     // The prefix that primes freshly initialized render allocators (the first
-                    // after boot, or after an abort's re-init) holds one render: their
-                    // submitted cell is 1 and their completed count 0, so the first completed
-                    // TA (FS) catches its allocator up and clears its registration. A second
-                    // render of the prefix then holds a position of that allocator with no
-                    // registered manager until it completes, and the firmware's
-                    // progress/preemption path dereferences the missing manager: RTKit crash
-                    // at F+0x35568, FAR 0x58.
-                    if renders != 0 && (self.recovery.reinit || self.engine.draw == 0) {
+                    // after boot, or after an abort's re-init, on each render queue) holds one
+                    // render: their submitted cell is 1 and their completed count 0, so the
+                    // first completed TA (FS) catches its allocator up and clears its
+                    // registration. A second render of the prefix then holds a position of
+                    // that allocator with no registered manager until it completes, and the
+                    // firmware's progress/preemption path dereferences the missing manager:
+                    // RTKit crash at F+0x35568, FAR 0x58.
+                    if renders != 0 && pf.prime {
                         break;
                     }
                     let geo = Geometry::new(&r.cmd, 0);
@@ -819,15 +943,21 @@ impl Firmware {
             };
             self.slots.pass_cursor = cursor % (sizes::RENDER_SLOTS as u32 - 1).max(1);
             // After a recovered render abort the allocator state is not trusted. The priming
-            // prefix (also the first after boot) retires before anything is published behind
-            // it.
-            rebuild = self.recovery.reinit || self.engine.draw == 0;
+            // prefix (also the first after boot, and the first of each queue after a
+            // re-initialization) retires before anything is published behind it.
+            rebuild = pf.prime;
             if self.recovery.reinit {
                 self.init_render_pools(true)?;
+                // Every PB was re-initialized: every queue's next render carries its InitBM.
+                for t in self.engine.rq.iter_mut() {
+                    t.initbm = true;
+                }
+                let which = if q != 0 { " of render queue 1" } else { "" };
                 dev_info!(
                     self.graph.dev.as_ref(),
-                    "G15: render allocators re-initialized; InitBM at draw {}\n",
-                    self.engine.draw + 1
+                    "G15: render allocators re-initialized; InitBM at draw {}{}\n",
+                    pf.draw + 1,
+                    which
                 );
             }
         }
@@ -835,14 +965,16 @@ impl Firmware {
             self.engine.scratch = Some(KBox::new(Scratch::new()?, GFP_KERNEL)?);
         }
         if overlap {
+            // Behind flights of the same VM, so of the same render queue.
             pf.prev = self.engine.tail_prev;
             pf.last_ct = self.engine.tail_ct;
             pf.last_fs = self.engine.tail_fs;
+            pf.last_q = self.engine.tail_q;
         }
         let cap = sizes::QUEUE_CAP;
         pf.c_head = self.graph.compute.qstate.r32(qstate::WRITE)? % cap;
-        pf.ta_head = self.graph.render[0].qstate[0].r32(qstate::WRITE)? % cap;
-        pf.fs_head = self.graph.render[0].qstate[1].r32(qstate::WRITE)? % cap;
+        pf.ta_head = self.graph.render[q].qstate[0].r32(qstate::WRITE)? % cap;
+        pf.fs_head = self.graph.render[q].qstate[1].r32(qstate::WRITE)? % cap;
         f.c_start = pf.c_head;
         f.ta_start = pf.ta_head;
         f.fs_start = pf.fs_head;
@@ -851,7 +983,7 @@ impl Firmware {
                 last_render = Some(k);
             }
         }
-        let refs = self.render_refs();
+        let refs = self.render_refs(q);
         lap.lap(&mut self.engine.prof.select_ns);
         for k in i..end {
             match command(job, k).ok_or(EINVAL)? {
@@ -920,11 +1052,11 @@ impl Firmware {
             self.graph.compute.counter.w32(0, pf.n as u32)?;
         }
         if renders != 0 {
-            self.graph.render[0]
+            self.graph.render[q]
                 .threshold
                 .w32(0, 2u32.wrapping_mul(pf.draw as u32))?;
-            // pb_counter = draw, then C1 with an InitBM.
-            self.publish_pb(0, pf.draw as u32, pf.initbm)?;
+            // pb_counter = the queue's draw, then C1 with an InitBM.
+            self.publish_pb(q, pf.draw as u32, pf.initbm)?;
         }
         wmb();
         // The queue WRITEs: from here on a failure is uncertain (EIO).
@@ -933,13 +1065,14 @@ impl Firmware {
                 self.graph.compute.qstate.w32(qstate::WRITE, pf.c_head)?;
             }
             if renders != 0 {
-                self.graph.render[0].qstate[0].w32(qstate::WRITE, pf.ta_head)?;
-                self.graph.render[0].qstate[1].w32(qstate::WRITE, pf.fs_head)?;
+                self.graph.render[q].qstate[0].w32(qstate::WRITE, pf.ta_head)?;
+                self.graph.render[q].qstate[1].w32(qstate::WRITE, pf.fs_head)?;
             }
             Ok(())
         })();
         wmb();
 
+        f.rq = q;
         f.first = i as usize;
         f.count = (end - i) as usize;
         f.computes = computes;
@@ -952,21 +1085,26 @@ impl Firmware {
             self.engine.head = pf.c_head;
         }
         if renders != 0 {
+            let t = &mut self.engine.rq[q];
             f.ta_target = encode::stamp_seed(ids::TA_SEED, pf.draw);
-            self.engine.ta_target = f.ta_target;
+            t.ta_target = f.ta_target;
             f.fs_target = pf.last_fs;
-            self.engine.fs_target = pf.last_fs;
+            t.fs_target = pf.last_fs;
             f.ta_head = pf.ta_head;
-            self.engine.ta_head = pf.ta_head;
+            t.ta_head = pf.ta_head;
             f.fs_head = pf.fs_head;
-            self.engine.fs_head = pf.fs_head;
-            self.engine.draw = pf.draw;
+            t.fs_head = pf.fs_head;
+            t.draw = pf.draw;
+            t.initbm = false;
+            t.prefixes += 1;
+            self.engine.last_rq = q;
             self.recovery.fs_resync = false;
             self.recovery.reinit = false;
         }
         self.engine.tail_prev = pf.prev;
         self.engine.tail_ct = pf.last_ct;
         self.engine.tail_fs = pf.last_fs;
+        self.engine.tail_q = pf.last_q;
         self.engine.events = self.events.compute_events;
         self.engine.stage_seen = self.events.stage_events;
         self.stat_publish(f);
@@ -1005,20 +1143,23 @@ impl Firmware {
             }
         }
         if posted.is_ok() && renders != 0 {
-            let new_queue = !self.engine.render_registered as u8;
+            // Every render queue on the same two channels (the native queues of one client
+            // share a channel group); the records name the queue's queue infos and words.
+            let r = &self.graph.render[q];
+            let new_queue = !self.engine.rq[q].registered as u8;
             let fs_rec = SubmitRecord {
-                qinfo: self.graph.render[0].qinfo[1].va,
+                qinfo: r.qinfo[1].va,
                 kind: 1,
                 head: pf.fs_head as u16,
-                event: stamps::RENDER.fs().event(),
+                event: r.queue.fs().event(),
                 new_queue,
                 ..Default::default()
             };
             let ta_rec = SubmitRecord {
-                qinfo: self.graph.render[0].qinfo[0].va,
+                qinfo: r.qinfo[0].va,
                 kind: 0,
                 head: pf.ta_head as u16,
-                event: stamps::RENDER.ta().event(),
+                event: r.queue.ta().event(),
                 new_queue,
                 ..Default::default()
             };
@@ -1032,7 +1173,7 @@ impl Firmware {
             if posted.is_ok() {
                 posted = self.session.ring(Channel::Ta);
             }
-            self.engine.render_registered = true;
+            self.engine.rq[q].registered = true;
         }
         f.rec = [
             self.channels.producer(Channel::Ta),
@@ -1050,12 +1191,13 @@ impl Firmware {
         crate::cls_dev_dbg!(
             Queue,
             self.graph.dev,
-            "G15: prefix ctx={} computes {} (n={} head {}) renders {} (draw {} ta/fs head {}/{}) behind {}: {:?}\n",
+            "G15: prefix ctx={} computes {} (n={} head {}) renders {} (queue {} draw {} ta/fs head {}/{}) behind {}: {:?}\n",
             job.vm.slot,
             computes,
             pf.n,
             pf.c_head,
             renders,
+            q,
             pf.draw,
             pf.ta_head,
             pf.fs_head,
@@ -1156,10 +1298,12 @@ impl Firmware {
                 && ts[0] == 0
                 && ts[1] == 0
                 && tuning::CROSS_ENGINE_HOLD & 1 == 0;
+            // The FS of the previous render: of this prefix's queue, or of the tail's.
+            let r = &self.graph.render[pf.last_q];
             let b = encode::barrier(
-                self.graph.render[0].fw_stamp[1].va,
+                r.fw_stamp[1].va,
                 pf.last_fs,
-                stamps::RENDER.fs(),
+                r.queue.fs(),
                 t,
                 ids::COMPUTE_UUID,
                 BarrierType::from_stamp_only(type0),
@@ -1308,7 +1452,7 @@ impl Firmware {
         p.fs_seq.write(0, &scratch.fss[..])?;
         p.scene.write(0, &encode::scene(refs, &pass, n))?;
 
-        let r = &self.graph.render[0];
+        let r = &self.graph.render[pf.q];
         if pf.prev == Prev::Compute {
             // Compute -> render: the TA waits on the previous compute; type 0 when that compute
             // is of this prefix and this render starts no InitBM, on the class-0 compute queue
@@ -1317,8 +1461,7 @@ impl Firmware {
             let type0 = pf.computes != 0
                 && !pf.initbm
                 && !self.recovery.fs_resync
-                && n != 1
-                && !(pf.renders == 0 && self.recovery.reinit)
+                && !(pf.renders == 0 && pf.prime)
                 && !pf.ct_ts
                 && ts.iter().all(|t| *t == 0)
                 && tuning::CROSS_ENGINE_HOLD & 2 == 0
@@ -1337,7 +1480,7 @@ impl Firmware {
             let b = encode::barrier(
                 r.fw_stamp[0].va,
                 encode::stamp_seed(ids::TA_SEED, n - 1),
-                stamps::RENDER.ta(),
+                r.queue.ta(),
                 tta,
                 RENDER_WAIT_UUID,
                 BarrierType::Hold,
@@ -1346,7 +1489,7 @@ impl Firmware {
             let b = encode::barrier(
                 r.fw_stamp[1].va,
                 pf.last_fs,
-                stamps::RENDER.fs(),
+                r.queue.fs(),
                 tfs,
                 RENDER_WAIT_UUID,
                 BarrierType::Hold,
@@ -1354,12 +1497,19 @@ impl Firmware {
             p.fs_dep.write(0, &b)?;
             self.engine.stats.early += 1;
         } else {
+            // The previous FS of the total order: the tail's, or with nothing in flight the
+            // newest render's, possibly on the other render queue (all of it retired).
+            let s = if pf.prev != Prev::None {
+                pf.last_q
+            } else {
+                self.engine.last_rq
+            };
+            let rs = &self.graph.render[s];
             let mut prev_fs = if pf.prev != Prev::None {
                 pf.last_fs
-            } else if n == 1 {
-                ids::FS_SEED
             } else {
-                encode::stamp_seed(ids::FS_SEED, n - 1)
+                // FS_SEED itself before the queue's first render.
+                encode::stamp_seed(ids::FS_SEED, self.engine.rq[s].draw)
             };
             // Restricted type 0: predecessor render in this prefix, no InitBM/resync.
             let internal = pf.prev == Prev::Render
@@ -1369,12 +1519,12 @@ impl Firmware {
                 && tuning::RENDER_INTERNAL_HOLD == 0;
             // After a recovered failure the previous FS may never have written.
             if pf.prev == Prev::None && self.recovery.fs_resync {
-                prev_fs = r.fw_stamp[1].read()?;
+                prev_fs = rs.fw_stamp[1].read()?;
             }
             let b = encode::barrier(
-                r.fw_stamp[1].va,
+                rs.fw_stamp[1].va,
                 prev_fs,
-                stamps::RENDER.fs(),
+                rs.queue.fs(),
                 tta,
                 RENDER_WAIT_UUID,
                 BarrierType::from_stamp_only(internal),
@@ -1384,16 +1534,17 @@ impl Firmware {
         let b = encode::barrier(
             r.fw_stamp[0].va,
             tta,
-            stamps::RENDER.ta(),
+            r.queue.ta(),
             tfs,
             ids::FS_UUID,
             BarrierType::Stamp,
         );
         p.own_barrier.write(0, &b)?;
         let cap = sizes::QUEUE_CAP;
-        if n == 1 || (pf.renders == 0 && self.recovery.reinit) {
+        // The queue's priming render: InitBM of its PB first.
+        if pf.renders == 0 && pf.prime {
             pf.initbm = true;
-            let bm = encode::initbm(ctx, refs.pb_init_blocks, refs.pb_mgr, tta);
+            let bm = encode::initbm(ctx, r.queue.index(), refs.pb_init_blocks, refs.pb_mgr, tta);
             r.initbm.write(0, &bm)?;
             r.ring[0].w64(8 * pf.ta_head as usize, r.initbm.va)?;
             pf.ta_head = (pf.ta_head + 1) % cap;
@@ -1439,6 +1590,7 @@ impl Firmware {
         pf.renders += 1;
         pf.draw = n;
         pf.last_fs = tfs;
+        pf.last_q = pf.q;
         pf.fs_ts = ts.iter().any(|t| *t != 0);
         pf.prev = Prev::Render;
         Ok(())

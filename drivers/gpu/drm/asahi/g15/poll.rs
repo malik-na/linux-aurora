@@ -207,9 +207,11 @@ impl Firmware {
         // prefixes published the retirement loop below drains first.
         if self.engine.flights.is_empty() {
             self.drain_rings()?;
-            // Idle bookkeeping of the PB: when the idle began, and the reclaim once it is due.
+            // Idle bookkeeping of the PB: when the idle began, and the reclaim once it is due;
+            // render queue 1 given back by a closed holder.
             self.note_idle();
             self.reclaim_check();
+            self.release_queue1();
             if self.recovery_idle() {
                 return Ok(false);
             }
@@ -282,18 +284,19 @@ impl Firmware {
         if self.engine.flights.len() > 1 {
             return self.flight_retired(f);
         }
-        let (g, r, e) = (&self.graph.compute, &self.graph.render[0], &self.engine);
+        let (g, r, e) = (&self.graph.compute, &self.graph.render[f.rq], &self.engine);
+        let t = &e.rq[f.rq];
         let ch = &self.channels;
-        // A render: both stamp pairs, both queues, both pipes.
+        // A render: both stamp pairs, both queues, both pipes (of its render queue).
         if f.renders != 0 {
-            let pending = r.user_stamp[0].read()? != e.ta_target
-                || r.fw_stamp[0].read()? != e.ta_target
-                || r.user_stamp[1].read()? != e.fs_target
-                || r.fw_stamp[1].read()? != e.fs_target
-                || Self::r32(&r.qstate[0], qstate::DONE)? != e.ta_head
-                || Self::r32(&r.qstate[0], qstate::READ)? != e.ta_head
-                || Self::r32(&r.qstate[1], qstate::DONE)? != e.fs_head
-                || Self::r32(&r.qstate[1], qstate::READ)? != e.fs_head
+            let pending = r.user_stamp[0].read()? != t.ta_target
+                || r.fw_stamp[0].read()? != t.ta_target
+                || r.user_stamp[1].read()? != t.fs_target
+                || r.fw_stamp[1].read()? != t.fs_target
+                || Self::r32(&r.qstate[0], qstate::DONE)? != t.ta_head
+                || Self::r32(&r.qstate[0], qstate::READ)? != t.ta_head
+                || Self::r32(&r.qstate[1], qstate::DONE)? != t.fs_head
+                || Self::r32(&r.qstate[1], qstate::READ)? != t.fs_head
                 || ch.read(Channel::Ta)? != ch.producer(Channel::Ta)
                 || ch.read(Channel::Fs)? != ch.producer(Channel::Fs);
             if pending {
@@ -328,7 +331,9 @@ impl Firmware {
     /// within the published interval, DONE past its saved ring ends, its channel records
     /// consumed. Engine idle is not required; faults still are checked.
     fn flight_retired(&self, f: &Flight) -> Result<bool> {
-        let (g, r, e) = (&self.graph.compute, &self.graph.render[0], &self.engine);
+        let (g, r, e) = (&self.graph.compute, &self.graph.render[f.rq], &self.engine);
+        // The flights are of one VM, so the tail of its render queue bounds them.
+        let t = &e.rq[f.rq];
         let ch = &self.channels;
         let cap = sizes::QUEUE_CAP;
         let rec_passed = |c: Channel, rec: u32| -> Result<bool> {
@@ -357,22 +362,22 @@ impl Firmware {
             }
         }
         if f.renders != 0 {
-            let pending = !stamp_reached(r.user_stamp[0].read()?, f.ta_target, e.ta_target)
-                || !stamp_reached(r.fw_stamp[0].read()?, f.ta_target, e.ta_target)
-                || !stamp_reached(r.user_stamp[1].read()?, f.fs_target, e.fs_target)
-                || !stamp_reached(r.fw_stamp[1].read()?, f.fs_target, e.fs_target)
+            let pending = !stamp_reached(r.user_stamp[0].read()?, f.ta_target, t.ta_target)
+                || !stamp_reached(r.fw_stamp[0].read()?, f.ta_target, t.ta_target)
+                || !stamp_reached(r.user_stamp[1].read()?, f.fs_target, t.fs_target)
+                || !stamp_reached(r.fw_stamp[1].read()?, f.fs_target, t.fs_target)
                 || !ring_passed(
                     Self::r32(&r.qstate[0], qstate::DONE)?,
                     f.ta_start,
                     f.ta_head,
-                    e.ta_head,
+                    t.ta_head,
                     cap,
                 )
                 || !ring_passed(
                     Self::r32(&r.qstate[1], qstate::DONE)?,
                     f.fs_start,
                     f.fs_head,
-                    e.fs_head,
+                    t.fs_head,
                     cap,
                 )
                 || !rec_passed(Channel::Ta, f.rec[0])?
@@ -489,7 +494,8 @@ impl Firmware {
         let Some(f) = self.engine.oldest() else {
             return;
         };
-        let (g, r, e) = (&self.graph.compute, &self.graph.render[0], &self.engine);
+        let (g, r, e) = (&self.graph.compute, &self.graph.render[f.rq], &self.engine);
+        let t = &e.rq[f.rq];
         let (mut c, mut ta, mut fs) = (0, 0, 0);
 
         if f.computes != 0 {
@@ -501,10 +507,10 @@ impl Firmware {
         if f.renders != 0 {
             ta = r.fw_stamp[0].read().unwrap_or(0);
             fs = r.fw_stamp[1].read().unwrap_or(0);
-            if stamp_reached(ta, f.ta_target, e.ta_target) {
+            if stamp_reached(ta, f.ta_target, t.ta_target) {
                 ta = 0;
             }
-            if stamp_reached(fs, f.fs_target, e.fs_target) {
+            if stamp_reached(fs, f.fs_target, t.fs_target) {
                 fs = 0;
             }
         }
@@ -588,11 +594,14 @@ impl Firmware {
     /// Engine state report for failures and hang requests (without the initdata Runtime
     /// readiness and Flags words).
     pub(crate) fn report(&self, what: &str) {
-        let (g, r, e) = (&self.graph.compute, &self.graph.render[0], &self.engine);
+        let (g, e) = (&self.graph.compute, &self.engine);
         let ch = &self.channels;
         let rd = |o: &super::object::FwObject, off| o.r32(off).unwrap_or(0xdeadbeef);
         let state = self.session.regs.engine_state().unwrap_or_default();
         let f = e.oldest();
+        let q = f.map_or(e.last_rq, |f| f.rq);
+        let (r, t) = (&self.graph.render[q], &e.rq[q]);
+        let which = if q != 0 { " queue 1" } else { "" };
         let ms = f.map_or(0, |f| now_ns().wrapping_sub(f.published_ns) / 1_000_000);
 
         dev_info!(
@@ -621,24 +630,25 @@ impl Firmware {
         if f.is_some_and(|f| f.renders != 0) {
             dev_info!(
                 self.graph.dev.as_ref(),
-                "G15:   render: draw={} ta {:#x}/{:#x}/{:#x} done={} read={} write={} head={} ch0={}/{}; fs {:#x}/{:#x}/{:#x} done={} read={} write={} head={} ch1={}/{}; stage events={}/{}\n",
-                e.draw,
-                e.ta_target,
+                "G15:   render{}: draw={} ta {:#x}/{:#x}/{:#x} done={} read={} write={} head={} ch0={}/{}; fs {:#x}/{:#x}/{:#x} done={} read={} write={} head={} ch1={}/{}; stage events={}/{}\n",
+                which,
+                t.draw,
+                t.ta_target,
                 r.user_stamp[0].read().unwrap_or(0xdeadbeef),
                 r.fw_stamp[0].read().unwrap_or(0xdeadbeef),
                 rd(&r.qstate[0], qstate::DONE),
                 rd(&r.qstate[0], qstate::READ),
                 rd(&r.qstate[0], qstate::WRITE),
-                e.ta_head,
+                t.ta_head,
                 ch.read(Channel::Ta).unwrap_or(0xdeadbeef),
                 ch.write_cell(Channel::Ta).unwrap_or(0xdeadbeef),
-                e.fs_target,
+                t.fs_target,
                 r.user_stamp[1].read().unwrap_or(0xdeadbeef),
                 r.fw_stamp[1].read().unwrap_or(0xdeadbeef),
                 rd(&r.qstate[1], qstate::DONE),
                 rd(&r.qstate[1], qstate::READ),
                 rd(&r.qstate[1], qstate::WRITE),
-                e.fs_head,
+                t.fs_head,
                 ch.read(Channel::Fs).unwrap_or(0xdeadbeef),
                 ch.write_cell(Channel::Fs).unwrap_or(0xdeadbeef),
                 self.events.stage_events,
@@ -709,6 +719,7 @@ impl Firmware {
             s.hz_ahead
         )?;
         self.pools.write_stats(f)?;
+        self.write_rq_stats(f)?;
         writeln!(
             f,
             "stage: ta_us {} fs_us {} cdm_us {} span_us {}",
@@ -735,5 +746,44 @@ impl Firmware {
             slots.flushes,
             us(slots.flush_ns)
         )
+    }
+
+    /// The debugfs lines `rq: queues N holder ctx C vm V takes T releases R` (ctx/vm -1 while
+    /// render queue 1 is free) and per render queue `rqQ: draw D prefixes P ta T/S fs T/S`
+    /// (the queue's draw ordinal, its render prefixes, and its TA/FS stamp targets and the
+    /// firmware stamp words); queue 1's line ends with the stage events naming its words.
+    fn write_rq_stats(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let e = &self.engine;
+        let (ctx, vm) = e
+            .holder
+            .as_ref()
+            .map_or((-1, -1), |h| (h.slot as i64, h.id as i64));
+        writeln!(
+            f,
+            "rq: queues {} holder ctx {} vm {} takes {} releases {}",
+            self.graph.render.len(),
+            ctx,
+            vm,
+            e.takes,
+            e.releases
+        )?;
+        for (q, (r, t)) in self.graph.render.iter().zip(e.rq.iter()).enumerate() {
+            write!(
+                f,
+                "rq{}: draw {} prefixes {} ta {:#x}/{:#x} fs {:#x}/{:#x}",
+                q,
+                t.draw,
+                t.prefixes,
+                t.ta_target,
+                r.fw_stamp[0].read().unwrap_or(0xdeadbeef),
+                t.fs_target,
+                r.fw_stamp[1].read().unwrap_or(0xdeadbeef)
+            )?;
+            if q != 0 {
+                write!(f, " events {}", self.events.stage_events_1)?;
+            }
+            writeln!(f)?;
+        }
+        Ok(())
     }
 }

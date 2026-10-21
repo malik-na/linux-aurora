@@ -3,7 +3,8 @@
 //! Decoded firmware events.
 //!
 //! Event ring records are 0x38 bytes: type 1 stage flags (u64 at +4: bit i for the queue whose
-//! stamp word and event byte is i, [`super::fw::stamps`]; a bit of no queue is logged once),
+//! stamp word and event byte is i, [`super::fw::stamps`]: TA bits 0 and 2 and FS bits 1 and 3
+//! of render queues 0 and 1, compute bit 6; a bit of no queue is logged once),
 //! type 0 fault, type 4 timeout (i32 culprit slot at +0xc), type 7 PB growth request
 //! (copied whole into an 8-entry queue; never answered by the drain itself), type 8 channel
 //! error. The drain runs under the device lock from the poll work (and inline in the boot and
@@ -21,13 +22,16 @@ use super::regs::{mb, rmb, wmb};
 /// Number of queued PB growth requests.
 pub(crate) const GROW_QUEUE: usize = 8;
 
-/// Stage-flag bits of the engine's TA, FS and compute stamp words.
+/// Stage-flag bits of the engine's TA (both render queues), FS (both) and compute stamp
+/// words.
 const STAGE_BITS: [u64; 3] = [
-    stamps::RENDER.ta().stage_bit(),
-    stamps::RENDER.fs().stage_bit(),
+    stamps::RENDER.ta().stage_bit() | stamps::RENDER1.ta().stage_bit(),
+    stamps::RENDER.fs().stage_bit() | stamps::RENDER1.fs().stage_bit(),
     stamps::COMPUTE.stage_bit(),
 ];
 const STAGE_MASK: u64 = STAGE_BITS[0] | STAGE_BITS[1] | STAGE_BITS[2];
+/// Stage-flag bits of render queue 1's words.
+const STAGE_BITS_1: u64 = stamps::RENDER1.ta().stage_bit() | stamps::RENDER1.fs().stage_bit();
 
 /// A copied firmware error event (type 0 fault or type 4 timeout).
 #[derive(Copy, Clone, Default)]
@@ -43,6 +47,8 @@ pub(crate) struct Events {
     /// Compute completions and stage events seen.
     pub(crate) compute_events: u32,
     pub(crate) stage_events: u32,
+    /// Stage events naming render queue 1's words.
+    pub(crate) stage_events_1: u32,
     /// Error events seen, and the last one.
     pub(crate) errors: u32,
     pub(crate) last_error: Option<ErrorEvent>,
@@ -63,6 +69,7 @@ impl Events {
         Self {
             compute_events: 0,
             stage_events: 0,
+            stage_events_1: 0,
             errors: 0,
             last_error: None,
             channel_errors: 0,
@@ -114,6 +121,9 @@ impl Events {
                 self.stage_events = self
                     .stage_events
                     .wrapping_add((flags & STAGE_MASK).count_ones());
+                if flags & STAGE_BITS_1 != 0 {
+                    self.stage_events_1 = self.stage_events_1.wrapping_add(1);
+                }
                 let stray = flags & !STAGE_MASK & !self.stray_bits;
                 if stray != 0 {
                     self.stray_bits |= stray;

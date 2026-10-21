@@ -190,6 +190,8 @@ pub(crate) mod barrier {
 pub(crate) mod initbm {
     pub(crate) const SIZE: usize = 0x20;
     pub(crate) const CTX: usize = 0x4;
+    /// The PB's index: its render queue's (TA work +0x1c).
+    pub(crate) const PB_INDEX: usize = 0x8;
     pub(crate) const BLOCKS: usize = 0x10;
     pub(crate) const PB_MANAGER: usize = 0x14;
     pub(crate) const STAMP: usize = 0x1c;

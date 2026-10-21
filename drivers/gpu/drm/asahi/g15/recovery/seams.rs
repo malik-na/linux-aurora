@@ -58,16 +58,27 @@ impl Firmware {
         }
     }
 
-    /// The newest published receipts: the `engine::Engine` fields and the channel producers.
+    /// The render queue recovery observes: that of the published prefixes (one VM's, so one
+    /// queue's), else that of the newest render prefix.
+    pub(crate) fn active_rq(&self) -> usize {
+        self.engine
+            .flights
+            .first()
+            .map_or(self.engine.last_rq, |f| f.rq)
+    }
+
+    /// The newest published receipts: the `engine::Engine` fields of the compute queue and the
+    /// active render queue ([`Self::active_rq`]) and the channel producers.
     pub(crate) fn tail(&self) -> Tail {
         let e = &self.engine;
+        let t = &e.rq[self.active_rq()];
         Tail {
             target: e.target,
             head: e.head,
-            ta_target: e.ta_target,
-            fs_target: e.fs_target,
-            ta_head: e.ta_head,
-            fs_head: e.fs_head,
+            ta_target: t.ta_target,
+            fs_target: t.fs_target,
+            ta_head: t.ta_head,
+            fs_head: t.fs_head,
             producer: [
                 self.channels.producer(Channel::Ta),
                 self.channels.producer(Channel::Fs),
@@ -77,9 +88,11 @@ impl Firmware {
     }
 
     /// One observation of the firmware-written receipt words: the compute/TA/FS FW stamps, the
-    /// compute/TA/FS work-ring DONE and READ cursors and the three submit channels' consumers.
+    /// compute/TA/FS work-ring DONE and READ cursors (TA/FS of the active render queue) and the
+    /// three submit channels' consumers.
     pub(crate) fn observe(&self) -> Result<Observed> {
-        let (g, r, ch) = (&self.graph.compute, &self.graph.render[0], &self.channels);
+        let (g, ch) = (&self.graph.compute, &self.channels);
+        let r = &self.graph.render[self.active_rq()];
         Ok(Observed {
             compute_stamp: g.fw_stamp.read()?,
             ta_stamp: r.fw_stamp[0].read()?,
