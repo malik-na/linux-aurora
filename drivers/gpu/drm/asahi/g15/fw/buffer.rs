@@ -60,6 +60,9 @@ pub(crate) const fn block_record_offset(block: u32) -> usize {
 /// PB manager offsets (0xac bytes, firmware-only).
 pub(crate) mod pb_manager {
     pub(crate) const SIZE: usize = 0xac;
+    /// The PB index (0 for render queue 0's PB, 1 for queue 1's): the same index as InitBM +0x8,
+    /// TA work +0x1c and TA/FS registers 0x1c830/0x1c838.
+    pub(crate) const INDEX: usize = 0x08;
     /// u64 page-list GVA, and its size in bytes.
     pub(crate) const PAGE_LIST: usize = 0x1c;
     pub(crate) const PAGE_LIST_BYTES: usize = 0x24;
@@ -184,8 +187,9 @@ fn put64(image: &mut [u8], offset: usize, value: u64) {
     image[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
 }
 
-/// The PB manager image.
+/// The PB manager image of PB `index`.
 pub(crate) fn pb_manager_image(
+    index: u32,
     initial: u32,
     max: u32,
     page_list_gva: u64,
@@ -194,6 +198,7 @@ pub(crate) fn pb_manager_image(
     counter_va: u64,
 ) -> [u8; pb_manager::SIZE] {
     let mut p = [0u8; pb_manager::SIZE];
+    put32(&mut p, pb_manager::INDEX, index);
     put64(&mut p, pb_manager::PAGE_LIST, page_list_gva);
     put32(&mut p, pb_manager::PAGE_LIST_BYTES, PAGE_LIST_SIZE as u32);
     put32(&mut p, pb_manager::PAGES, PAGES_PER_BLOCK * initial);
@@ -295,6 +300,7 @@ mod tests {
     #[test]
     fn pb_manager() {
         let p = pb_manager_image(
+            1,
             1024,
             2048,
             0x1074000000,
@@ -302,6 +308,8 @@ mod tests {
             0xfffffc2d00010000,
             0xfffffc2d00020000,
         );
+        // +0x8: the PB index (InitBM +0x8, TA +0x1c, registers 0x1c830/0x1c838).
+        assert_eq!(get32(&p, 0x8), 1);
         assert_eq!(get64(&p, 0x1c), 0x1074000000);
         assert_eq!(get32(&p, 0x24), 0x28000);
         assert_eq!(get32(&p, 0x28), 4096);
@@ -316,6 +324,7 @@ mod tests {
         assert_eq!(get32(&p, 0x74), 8192);
         // Every other byte is zero (the zero fill).
         let written = [
+            (0x8, 4),
             (0x1c, 8),
             (0x24, 4),
             (0x28, 4),

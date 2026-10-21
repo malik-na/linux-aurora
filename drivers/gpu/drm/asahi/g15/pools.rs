@@ -489,6 +489,7 @@ impl Pb {
             // (the firmware cannot finish a scene at its maximum without them; refused, its TA
             // stalls and no kill ends it: ticket malik-na/linux-aurora#69).
             &buffer::pb_manager_image(
+                self.index as u32,
                 initial,
                 self.soft_max(),
                 gva(&self.pb_pages)?,
