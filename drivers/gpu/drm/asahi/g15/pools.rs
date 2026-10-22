@@ -234,6 +234,8 @@ pub(crate) struct Pb {
     /// The never-exposed uncached records the first rebuild moves to; afterwards the replaced
     /// cached ones, retained (only with `manager_cached`).
     spare: Option<PbSet>,
+    /// The spare records have not been used yet (a rebuild of every PB, or of this one alone).
+    spare_ready: bool,
     pb_pages: Arc<FwObject>,
     pb_blocks: Arc<FwObject>,
     /// The PB growth ledger since the last (re)initialization.
@@ -422,6 +424,7 @@ impl Pb {
             index,
             heap: KVec::with_capacity(growth::MAX_CHUNKS as usize, GFP_KERNEL)?,
             live,
+            spare_ready: spare.is_some(),
             spare,
             pb_pages,
             pb_blocks,
@@ -501,6 +504,18 @@ impl Pb {
         set.block_ctl.write(0, &buffer::block_ctl_image(initial))?;
         set.pb_counter.w32(0, 1)?;
         Ok(())
+    }
+
+    /// Moves this PB to its never-exposed uncached spare records, once: the cached ones may
+    /// still have dirty lines in the ASC and are retained untouched.
+    fn take_spare(&mut self) {
+        if !self.spare_ready {
+            return;
+        }
+        if let Some(spare) = self.spare.as_mut() {
+            core::mem::swap(&mut self.live, spare);
+        }
+        self.spare_ready = false;
     }
 
     /// Frees the backing chunks from index `keep` on (their VM mappings are dropped by the
@@ -627,9 +642,7 @@ impl Pools {
             core::mem::swap(&mut self.live, spare);
         }
         for pb in self.pbs.iter_mut() {
-            if let Some(spare) = pb.spare.as_mut() {
-                core::mem::swap(&mut pb.live, spare);
-            }
+            pb.take_spare();
         }
         self.spare_ready = false;
         dev_info!(
@@ -722,6 +735,18 @@ impl Firmware {
             self.pools.take_spare();
         }
         self.pools.init()
+    }
+
+    /// Re-initializes PB `pb` alone, as a rebuild does for every PB (the first time onto its
+    /// uncached spare records, then in place): fresh lists, manager, block_ctl, counter and
+    /// scene list, the initial blocks posted again, the backing kept. Its render queue's next
+    /// render prefix must carry the InitBM. Only with nothing of the queue in flight.
+    pub(crate) fn reinit_pb(&mut self, pb: usize) -> Result {
+        let p = self.pools.pbs.get_mut(pb).ok_or(EINVAL)?;
+        p.take_spare();
+        p.init()?;
+        crate::mem::sync();
+        Ok(())
     }
 
     /// The PB counters of a publication with renders on PB `pb`, after the render threshold:

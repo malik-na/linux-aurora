@@ -737,11 +737,20 @@ impl Firmware {
         let holder = self.engine.holder.as_ref().map(|h| h.id);
         let queues = self.graph.render.len() as u32;
         match rq::pick(queues, holder, job.vm.id, overlap, render0) {
-            Pick::Take => {
-                if let Err(e) = self.activate_pb(1) {
+            pick @ Pick::Take => {
+                // Backed at the first take; re-initialized for the new holder at every take
+                // (nothing is in flight: a take needs empty flights).
+                let ready = self.activate_pb(1).and_then(|()| {
+                    if pick.reinit_pb() {
+                        self.reinit_pb(1)?;
+                        self.engine.rq[1].initbm = true;
+                    }
+                    Ok(())
+                });
+                if let Err(e) = ready {
                     dev_warn!(
                         self.graph.dev.as_ref(),
-                        "G15: render queue 1 not taken by ctx {}: its PB could not be backed ({})\n",
+                        "G15: render queue 1 not taken by ctx {}: its PB could not be backed or re-initialized ({})\n",
                         job.vm.slot,
                         e.to_errno()
                     );
@@ -751,7 +760,7 @@ impl Firmware {
                 self.engine.takes += 1;
                 dev_info!(
                     self.graph.dev.as_ref(),
-                    "G15: ctx {} (VM {}) takes render queue 1 (draw {}, take {})\n",
+                    "G15: ctx {} (VM {}) takes render queue 1 (draw {}, take {}); PB1 re-initialized, InitBM at its next render\n",
                     job.vm.slot,
                     job.vm.id,
                     self.engine.rq[1].draw,

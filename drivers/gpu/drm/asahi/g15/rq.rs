@@ -7,7 +7,8 @@
 //! *holder*; every other VM renders on queue 0 and the shared PB. A VM takes queue 1 when it
 //! publishes a render prefix with nothing published (no prefix of another queue in flight, the
 //! engine's flights of one VM only) while queue 1 is free; it keeps it until its client handle
-//! is closed and nothing of it is published or pending. So a VM never changes queues while a
+//! is closed and nothing of it is published or pending; every take re-initializes queue 1's PB
+//! ([`Pick::reinit_pb`]). So a VM never changes queues while a
 //! prefix of it is in flight, and the engine's single total order stays: the queue of the
 //! newest flight is the queue of every flight.
 //!
@@ -31,6 +32,13 @@ impl Pick {
             Pick::Shared => 0,
             Pick::Held | Pick::Take => 1,
         }
+    }
+
+    /// Whether queue 1's PB is re-initialized before the prefix (InitBM of the initial blocks,
+    /// fresh lists, the prefix primes): at every take, since the PB would otherwise pass from
+    /// one VM to the next with the firmware's PB state still that of the previous holder.
+    pub(crate) const fn reinit_pb(self) -> bool {
+        matches!(self, Pick::Take)
     }
 }
 
@@ -95,6 +103,10 @@ mod tests {
         }
         assert_eq!(Pick::Held.queue(), 1);
         assert_eq!(Pick::Shared.queue(), 0);
+        // Only a take (a new holder) re-initializes queue 1's PB.
+        assert!(Pick::Take.reinit_pb());
+        assert!(!Pick::Held.reinit_pb());
+        assert!(!Pick::Shared.reinit_pb());
     }
 
     #[test]
