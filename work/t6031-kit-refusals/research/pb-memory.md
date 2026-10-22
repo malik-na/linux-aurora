@@ -976,3 +976,30 @@ q1-heavy.sh saw a dead device). Candidate (the §7 failure list): queue 1's PB i
 InitBM at a take, so the firmware's PB owner (filed per context from TA +0x1c) still names the previous
 holder's context; an InitBM at every take is the next fix. Not tried: #72 parks per the agreed gate. M3 back
 on step 2 (silicon-52). Private log: ~/m3-private/pq3c-dmesg.txt.
+
+### 7.u Fix round 3d: re-initialize queue 1's PB at every take (2026-10-22)
+
+**Take 2 vs take 3 in the 7601d83a boot** (private log ~/m3-private/pq3c-dmesg.txt):
+- Both takes came 2-4 ms after the previous holder's release (87.058 -> 87.060 s; 101.610 -> 101.614 s); a
+  release needs the holder closed with nothing published or pending, so nothing of the previous holder was in
+  flight either time. Neither take came with a re-initialization (no re-init line in the whole boot; no
+  growth either); PB 1 was initialized once, at boot, and InitBM'd once, at take 1's first render.
+- Take 3's failure is a **firmware crash** (RTKit "co-processor has crashed", 3.3 ms after the take), not a
+  refusal: its first render (draw 1519) completed (TA/FS words at 0x..ef00), the second (draw 1520) of the
+  same prefix did not. So the new holder's first prefix on queue 1 held two renders.
+- The crash shape matches the one the priming rule exists for (a second render in a prefix whose PB has no
+  registered owner state crashes the firmware's progress path), and it lands at a holder change with no
+  InitBM: consistent with the hypothesis that the firmware's PB 1 owner state still belonged to the previous
+  holder. Take 2 survived the same hand-over, so a hand-over without InitBM is not always fatal: most likely
+  take 2's first prefix held one render. Supported, not proven.
+
+**Change** (`07aa987b`): every take re-initializes PB 1 alone (`Firmware::reinit_pb`: the first time onto
+its uncached spare records, then in place, the way a rebuild moves every PB; fresh lists, manager, block_ctl,
+counter, scene list; ledger reinit keeping the backing) and marks queue 1's next render prefix as priming:
+InitBM of the initial blocks, C1 entry 1, one render, nothing behind it until it retired. Spare use is now per
+PB (a later whole rebuild does not swap PB 1 back). Decision host-tested (`Pick::reinit_pb`, rq.rs).
+
+Package: `~/Projects/build-out/kernel-pbadapt/pkgs/linux-aurora-dev-7.1.12_aurora_dev_silicon-60-pbadapt-r2pq3d-07aa987bae80-aarch64.pkg.tar.xz`.
+The boot must show: every take logs `takes render queue 1 (draw D, take N); PB1 re-initialized, InitBM at its
+next render`; takes >= 3 survive (no crash or refusal after any take); q1-heavy.sh runs pass with `PB1 growth
+request ... slot 1` advancing and PB1 peaking at about 1420 blocks, `refused 0`.
