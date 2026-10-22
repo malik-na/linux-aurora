@@ -965,3 +965,14 @@ Confirming signature: boot past the first queue-1 renders with no instant refusa
 `PB1 growth request 0/1 ... slot 1` and requests advancing in position; PB1 peak about 1420 blocks over the
 heavy case, `refused 0`; queue 0 clients unaffected. If entry 1's last two words turn out to be host-set
 (a refusal persists with everything above agreeing), the next step is to observe them at queue creation.
+
+### 7.v Boot result, step 3c (silicon-58 = 7601d83a, 2026-10-22 06:01): index 1 accepted; refused at the third take
+
+FS start record +0x60 and C1 descriptor entry 1 added (§7.w). Boot and acceptance PASS: queue 1 ran with PB
+index 1 in all seven places, take 1 (ctx 3, draws 0-318) and take 2 (ctx 16, draws 318-1518) clean, no
+growth needed by those holders. Take 3 (ctx 19 at 101.6 s, a short-lived desktop client): its second render
+on queue 1 (draw 1520) FAILED in 3 ms, errors=0, fail-stop (EIO), before the targeted test started (so
+q1-heavy.sh saw a dead device). Candidate (the §7 failure list): queue 1's PB is handed from VM to VM with no
+InitBM at a take, so the firmware's PB owner (filed per context from TA +0x1c) still names the previous
+holder's context; an InitBM at every take is the next fix. Not tried: #72 parks per the agreed gate. M3 back
+on step 2 (silicon-52). Private log: ~/m3-private/pq3c-dmesg.txt.
