@@ -1,7 +1,11 @@
 # J516C stack on omacom/linux-aurora#177
 
-Date: 2026-10-23. Built, host-tested and package-built; not booted. The lead boots it, and Naeem
-approves any PR text.
+Date: 2026-10-23. Built, host-tested and package-built.
+
+- **Booted:** 21c1e29d (results/20261023-0145-stack177-j516c).
+- **After that boot:** the user's changes are applied (see "Changes after the J516C run"); head
+  `35e74f79642f` is not booted yet.
+- **PR text:** Naeem approves it.
 
 - **Branch:** `t6031/stack-on-177` on origin (malik-na/linux-aurora). Head and per-commit
   results are under "Checks".
@@ -18,14 +22,17 @@ approves any PR text.
 
 | # | Commit | Subject | Ports / changes |
 |---|---|---|---|
-| 1 | 9f2f0e4303dd | drm/apple: give the T6031 panel a base EDID | #363 fd3c8adf + 87ab56de, squashed. |
-| 2 | 1807fd82e2ae | drm/apple: stamp the T6031 panel's 14.7 swaps | #363 e3dad1b5 + a08331e7, squashed. |
-| 3 | b20a8e313057 | drm/asahi: g15: m3: account PB backing and re-initialization in the growth ledger | Ledger part of #363 bc9bfeaa. |
-| 4 | eda4d5ade7cf | drm/asahi: g15: m3: back the PB in 16 MiB chunks after the reply, with a reserve | #363 1f15a0f3, replacing Chris's synchronous back_pb() (ac670ded). |
-| 5 | 9c5e1a65a2e3 | drm/asahi: g15: m3: start the parameter buffer at 64 blocks | #363 c4d0c0a1. |
-| 6 | f32ebe589e55 | drm/asahi: g15: m3: reclaim the parameter buffer when the engine is idle | #363 4e13611e. |
-| 7 | ea8e7bc2297a | drm/asahi: g15: m3: re-initialize the parameter buffer at a client boundary | #363 661b7c19. |
-| 8 | 21c1e29dc1cb | drm/asahi: g15: m3: bound the CDM stream walk by bytes, not by 8192 records | New: fixes #177's g15/gate.rs. |
+| 1 | 6c4ac0d20a9d | drm/apple: give the J516C panel a base EDID | #363 fd3c8adf + 87ab56de, squashed; J516C record only. |
+| 2 | 33922ce924af | drm/apple: stamp the J516C panel's 14.7 swaps | #363 e3dad1b5 + a08331e7, squashed; J516C record only. |
+| 3 | 9e9dee1883bc | drm/asahi: g15: m3: account PB backing and re-initialization in the growth ledger | Ledger part of #363 bc9bfeaa. |
+| 4 | a683065e4a67 | drm/asahi: g15: m3: back the PB in 16 MiB chunks after the reply, with a reserve | #363 1f15a0f3, replacing Chris's synchronous back_pb() (ac670ded). |
+| 5 | ccad73caefb3 | drm/asahi: g15: m3: start the parameter buffer at 64 blocks | #363 c4d0c0a1. |
+| 6 | 7087f2a36ef5 | drm/asahi: g15: m3: reclaim the parameter buffer when the engine is idle | #363 4e13611e. |
+| 7 | ab98a7241a59 | drm/asahi: g15: m3: re-initialize the parameter buffer at a client boundary | #363 661b7c19. |
+| 8 | f2c2d4fcb46b | drm/asahi: g15: m3: bound the CDM stream walk by bytes, not by 8192 records | New: fixes #177's g15/gate.rs. |
+| 9 | 6db7b57444d9 | drm/asahi: g15: select the Rust firmware loader abstractions | New: restores the Kconfig select #177 dropped. |
+| 10 | c758cffb7380 | drm/asahi: g15: m3: run the PB reclaim check after the idle time without new work | New: the idle engine arms the poll work for the reclaim. |
+| 11 | 35e74f79642f | drm/asahi: g15: say when the boot loader left the GPU node disabled | New: one log line for `chosen.asahi,t603x-gpu` off. |
 
 #363 e272b673 (the cap below K) is not ported, because #177's 821fd4d5 (`MAX_POSTED`) is the
 same. Chris's 821fd4d5 and 59ee84c5 (`gpu_backing()` with checked geometry) are kept as they
@@ -42,13 +49,13 @@ The J516C on #177 uses the native 14.7 path (`iomfb_v14_7.c`, `dcp_v14_swap()`),
   - On #177 the J514S DT has a panel node (`apple,panel-j514`), so gating on the panel node alone
     would also give the J514S/J516S an EDID.
   - The gate is therefore a new `base_edid` flag in #177's `struct dcp_v14_board`. It is set
-    only on the J516C and J514C records.
+    only on the J516C record (user decision 2026-10-23: nothing on the J514C, untested).
   - `dcp_get_modes()` publishes the block through #177's `dcp_is_v14_7_panel()`.
 - **Swap timestamps**
   - `dcp_v14_swap_timestamps()` writes 120 into slots 0, 1 and 6 (byte offsets 0, 8, 0x30),
     straight after `dcp_v14_encode_swap()` zeroes the record.
   - This happens only when `dcp_v14_board_stamps_swaps(board, external)` is true: the internal
-    panel of a record with the new `swap_timestamps` flag (J516C, J514C).
+    panel of a record with the new `swap_timestamps` flag (J516C only).
   - #177's native path never sets `main_display`, so "internal" stands in for #363's
     main-display check.
   - #177's VRR counter timestamps live in `iomfb_template.c`. The native 14.7 path never calls
@@ -59,8 +66,8 @@ The J516C on #177 uses the native 14.7 path (`iomfb_v14_7.c`, `dcp_v14_swap()`),
     byte-identical).
   - `aurora.kunitconfig` already enables `DRM_APPLE_KUNIT_TEST`, and `kunit-expected.json` lists
     only skips and failures, so no CI file changes.
-- **Not yet measured:** the 120 fps result is from #363's path. The commit says that it is not
-  yet measured on this one.
+- **Measured since:** the J516C run of 21c1e29d gave EDID 128 B and kmscube 120 fps on this
+  path. The commit message still cites the #363 measurement.
 
 ### 3-7. Parameter buffer: #363's design on #177's code
 
@@ -183,17 +190,67 @@ J516C (#363); a T6030 desktop that needs more pays a few growth round trips once
 - **Not covered:** a single draw call at Honeykrisp's `maxMultiDrawCount` (UINT16_MAX)
   tessellated draws would need about 250 links and is still refused. dEQP does not go there.
 
+## Changes after the J516C run (user decisions, 2026-10-23)
+
+1. **J514C flags dropped.** `base_edid` and `swap_timestamps` are set on the J516C record only.
+   The KUnit cases now expect both clear on the J514C. The two display commits and their
+   subjects say J516C.
+2. **PB defaults stay shared with the T6030.** Every PB commit message says the change is
+   untested on the T6030. From the 64-block commit on, the messages also say that
+   `g15_pb_blocks=1024` restores the old start, and `g15_pb_reclaim=0` turns the reclaim off.
+   The ledger and chunk commits predate the parameter.
+3. **Kconfig (commit 9):** `DRM_ASAHI_G15` selects `RUST_FW_LOADER_ABSTRACTIONS`, which depends
+   only on RUST (DRM_ASAHI already requires it) and selects FW_LOADER.
+   - The test config turns off APPLE_AOP, APPLE_SEP, both AOP audio options, both AOP sensors,
+     NOVA_CORE and AMCC_QT2025_PHY.
+   - At the parent commit the symbol resolves to n, and drivers/gpu/drm/asahi fails:
+     `unresolved import kernel::firmware` in g15/board/blob.rs.
+   - At commit 9 it resolves to y, and drivers/gpu/drm/asahi builds.
+   - Script: `~/aurora-test/silicon/kconfig-noaop-stack177.sh`, out dir
+     `kernel-stack177-noaop`.
+4. **Idle reclaim timer (commit 10).**
+   - **Cause:** #177's poll work stops when a pass ends idle. On the J516C, kept backing
+     (23 chunks) was freed only at the next job.
+   - **Fix:** when `run_poll()` ends idle, `Firmware::reclaim_delay_ns()` gives the idle time
+     still needed before `reclaim_check()` would act, using the pure
+     `Ledger::reclaim_delay()`:
+     - `reclaim_due` at `g15_pb_idle_ms`;
+     - `free_due` at level 2;
+     - `drain_reinit_due` at 50 ms.
+   - The poll work is queued for that delay (`mod_poll`). Its pass takes the device lock and
+     runs the idle path, `note_idle()` then `reclaim_check()`, the same as any idle pass.
+   - **Not armed** while busy, while a re-initialization or recovery is pending, or when
+     nothing can become due.
+   - **Cancel:** a job's arrival re-arms the poll work for its publication (`rearm()`, 1
+     jiffy), which replaces the expiry.
+   - **Host test** `reclaim_delay_matches_the_checks`: over levels, floors, idle times, posted
+     counts and backing, the delay is the first idle time at which a check holds, none holds
+     one nanosecond earlier, and none ever holds when there is no delay. The J516C case gives
+     1 s at level 2.
+5. **Boot-loader notice (commit 11).** At module activation (`g15::activate()`, a C helper in
+   g15/glue.c), the driver logs one `pr_info` when `/chosen` has `asahi,t6031-gpu` or
+   `asahi,t6030-gpu` and the matching `apple,agx-t603x` node is disabled. It names the node and
+   the value ("native G15 not started: the boot loader left the GPU node ... disabled
+   (/chosen/asahi,t6031-gpu = "0")").
+   - On our M3 the property is the string "1" or "0".
+   - Nothing changes on any machine.
+   - checkpatch gives one AVOID_EXTERNS warning: the prototype in glue.c, like the file's other
+     helpers.
+
 ## Checks
 
 - **Static checks:**
   - `git diff --check pr177..HEAD`: clean.
-  - `checkpatch --strict` per commit: 0 errors. The only warning is FILE_PATH_CHANGES
-    (MAINTAINERS) on commit 1's new files.
-  - `tools/aurora-ci/check-commits.py --base pr177 --head HEAD`: every commit signed off.
-    checkpatch shows 1 warning on commit 1, and the rest are clean.
+  - `checkpatch --strict` per commit: 0 errors, 0 checks. Two warnings:
+    - FILE_PATH_CHANGES (MAINTAINERS) on commit 1's new files;
+    - AVOID_EXTERNS on commit 11, the glue.c prototype, the same style as the file's other
+      helpers.
+  - `tools/aurora-ci/check-commits.py --base pr177 --head HEAD`: all 11 commits signed off.
+    checkpatch shows 1 warning each on commits 1 and 11, and the rest are clean.
 - **Keyword scan** (message and diff): clean.
 - **rustfmt** (1.93.1, kernel .rustfmt.toml): every changed G15 file is clean.
-  `asahi_core.rs` and `hw.rs` had drift before these commits and gained none.
+  `asahi_core.rs`, `hw.rs`, `boot.rs` and `mod.rs` had drift before these commits and gained
+  none.
 - **Per-commit build on the M3** (`~/aurora-test/silicon/bisect-build-stack177.sh`,
   drivers/gpu/drm/asahi plus drivers/gpu/drm/apple at W=1): all OK. The only W=1 warning is
   #177's own plane.c:372.
@@ -204,30 +261,36 @@ J516C (#363); a T6030 desktop that needs more pays a few growth round trips once
     - apple-dcp/run.sh: 37 cases;
     - g15-maintained-handoff-tests: a host `c_char` sign issue on aarch64;
     - aurora-display-notifier and t6030-display-linkage: could not start.
-  - On the M3 chroot, at every commit from b20a8e31: the asahi-g15 selftest,
+  - On the M3 chroot, at every PB commit and every later commit: the asahi-g15 selftest,
     g15-pb-growth-tests (with `--mutations` at head) and g15-zero-words-tests. See the results
     below.
 
-Results at head `21c1e29dc1cb` (origin `t6031/stack-on-177`):
+Results at head `35e74f79642f` (origin `t6031/stack-on-177`):
 
 | Commit | asahi build | apple W=1 | asahi-g15 selftest | g15-pb-growth | g15-zero-words |
 |---|---|---|---|---|---|
-| 9f2f0e4303dd | OK | OK, 1 warning (plane.c:372 C23 label, also on pr177) | - | - | - |
-| 1807fd82e2ae | OK | OK, 0 new | - | - | - |
-| b20a8e313057 | OK | OK | 61 passed | 24 passed | pass |
-| eda4d5ade7cf | OK | OK | 63 passed | 23 passed | pass |
-| 9c5e1a65a2e3 | OK | OK | 63 passed | 23 passed | pass |
-| f32ebe589e55 | OK | OK | 65 passed | 24 passed | pass |
-| ea8e7bc2297a | OK | OK | 67 passed | 24 passed | pass |
-| 21c1e29dc1cb | OK | OK | 69 passed | 24 passed, 22/22 mutations as intended, control passes | pass, with `--mutations` |
+| 6c4ac0d20a9d | OK | OK, 1 warning (plane.c:372 C23 label, also on pr177) | - | - | - |
+| 33922ce924af | OK | OK, 0 new | - | - | - |
+| 9e9dee1883bc | OK | OK | 61 passed | 24 passed | pass |
+| a683065e4a67 | OK | OK | 63 passed | 23 passed | pass |
+| ccad73caefb3 | OK | OK | 63 passed | 23 passed | pass |
+| 7087f2a36ef5 | OK | OK | 65 passed | 24 passed | pass |
+| ab98a7241a59 | OK | OK | 67 passed | 24 passed | pass |
+| f2c2d4fcb46b | OK | OK | 69 passed | 24 passed | pass |
+| 6db7b57444d9 | OK (also with AOP/SEP off) | OK | 69 passed | 24 passed | pass |
+| c758cffb7380 | OK | OK | 70 passed | 24 passed | pass |
+| 35e74f79642f | OK | OK | 70 passed | 24 passed, 22/22 mutations as intended, control passes | pass, with `--mutations` |
 
 - **Builds and host tests:** both ran in the M3 build chroot (rustc 1.93.1):
-  `~/aurora-test/silicon/bisect-build-stack177.sh` and `hosttests-stack177.sh`.
-- **Package:** `~/Projects/build-out/kernel-stack177/linux-aurora-dev-7.2.11_aurora_dev_silicon-4-aarch64.pkg.tar.xz`
-  (on the M3), built from `21c1e29dc1cb` with `~/aurora-test/silicon/build-stack177.sh` (#177's
-  .config plus DRM_APPLE=y, DRM_ASAHI_G15=y and EXTRA_FIRMWARE `asahi/t6031-j516c-board.bin`).
-  It reports `7.2.11-aurora-dev-silicon #4`, the same release string as the #177 and #363
-  packages.
+  `~/aurora-test/silicon/bisect-build-stack177.sh` and `hosttests-stack177.sh`. The log is
+  `~/aurora-test/silicon/verify2-stack177.log`.
+- **Package ("silicon-5"):** `~/Projects/build-out/kernel-stack177/linux-aurora-dev-7.2.11_aurora_dev_silicon-6-aarch64.pkg.tar.xz`
+  (on the M3).
+  - It is linked as `~/Projects/build-out/kernel-stack177/silicon-5.pkg.tar.xz`.
+  - Built from `35e74f79642f` with `~/aurora-test/silicon/build-stack177.sh`: #177's .config
+    plus DRM_APPLE=y, DRM_ASAHI_G15=y and EXTRA_FIRMWARE `asahi/t6031-j516c-board.bin`.
+  - It reports `7.2.11-aurora-dev-silicon #6` (kbuild's build counter). The release string is
+    the same as the #177 and #363 packages.
 
 ## Test plan (lead's boot)
 
@@ -236,7 +299,7 @@ Results at head `21c1e29dc1cb` (origin `t6031/stack-on-177`):
 2. **Display:**
    - eDP-1 has a 128-byte EDID (make APP, monitor name J516, size from the panel node);
    - kmscube runs at 120 fps on the native path;
-   - the J514S, if available, gets no EDID and no timestamps.
+   - the J514S, if available, gets no EDID and no timestamps; nor does a J514C.
 3. **dEQP-VK:** the three `multi_draw.mosaic ... max_draws ... with_tess` cases now pass, with no
    "rejecting CDM" line. Then run the full VK/GLES lists twice without a reboot, with no
    fail-stop.
@@ -244,12 +307,18 @@ Results at head `21c1e29dc1cb` (origin `t6031/stack-on-177`):
    - at idle, `pb: blocks 64/64/...` and `backed 256/2`;
    - during dEQP the growth shows `waits 0` and `refills` rising;
    - 1-2 s after a heavy run, the `PB heap: idle ... re-initialization` line appears and backing
-     returns to 2 chunks;
+     returns to 2 chunks, with no new job (commit 10).
+   - After a client-boundary re-init followed by one small scene, the kept backing is freed about
+     `g15_pb_idle_ms` after the engine goes idle, again with no new job;
    - the heavy case run back to back 8 times does not fail-stop;
    - with the same flow as 20261022-1832-pr177-j516c, glmark2 is close to #363 (583-587).
 5. **No-GPU boot:** boot the stacked kernel once without the GPU, either a plain boot without the
    chainload or with the GPU node left disabled. The desktop must stay usable, with software
-   rendering and Hyprland at normal CPU. The kernel log must say why native G15 did not start.
+   rendering and Hyprland at normal CPU.
+   - **Kernel side:** the kernel log must show `asahi: G15: native G15 not started: the boot
+     loader left the GPU node ... disabled (/chosen/asahi,t6031-gpu = "0")` (commit 11).
+   - **Desktop side:** this is the installer's or distro's part, and it fails until they ship the
+     fallback (see the PR notes).
 6. **Module parameters:** `g15_pb_reclaim=0` (no reclaim lines) and `g15_pb_blocks=1024` (the
    old start) each work for one boot.
 
@@ -272,6 +341,10 @@ Results at head `21c1e29dc1cb` (origin `t6031/stack-on-177`):
    - **What the PR text must say:** a kernel with `CONFIG_DRM_ASAHI_G15=y` does not start the
      GPU on a J516C unless the installed `/etc/m1n1.conf` has `chosen.asahi,t6031-gpu=1`
      (then `update-m1n1`). No installer path does that today.
+   - **Installer requirement:** shipping native G15 on the M3 Max needs the installer to write
+     `chosen.asahi,t6031-gpu=1` into the installed m1n1 config.
+   - **Without it:** the kernel now logs one line naming `/chosen/asahi,t6031-gpu` (commit 11),
+     and nothing else changes.
    - **On our M3:** the ESP has `=0` from bring-up, so a plain power-on boots with no GPU.
 2. **No-GPU desktop fallback.**
    - **What #177 ships:** the "installed guard" / "desktop fallback" is two things, and neither
@@ -288,21 +361,17 @@ Results at head `21c1e29dc1cb` (origin `t6031/stack-on-177`):
      spins at 100 % CPU (seen on our M3 after a plain power-on).
    - **What the PR text must say:** the "fallback preserved" statement is from the M3 Pro
      (J516S), and the Max is not covered.
-   - **Code:** no kernel change is needed. The fix is distro- or installer-side (extend the
-     session hook to T6031 and to the no-render-node case).
+   - **Installer requirement:** a desktop software-rendering fallback for the J516C. Extend the
+     session hook (or an equivalent guard) to T6031 and to the no-render-node case, so that
+     Hyprland starts with software rendering when no GPU is bound.
+   - **Kernel side:** no kernel change beyond the log line of commit 11.
 
 ## Open questions
 
-1. **A J514C on the new flags:** the J514C record gets `base_edid` and `swap_timestamps`, as
-   #363 a08331e7's T6031 profile did. Its panel values are the J514S's from the board file, and
-   neither is tested on a J514C. Keep or drop?
-2. **The T6030 defaults:** keep the shared PB defaults (64-block start, reclaim on) for the T6030,
-   or scope the start to T6031 until a J514S run?
-3. **The `RUST_FW_LOADER_ABSTRACTIONS` select:** #177 dropped it from `DRM_ASAHI_G15`, but
-   `g15/board/blob.rs` uses `kernel::firmware`. A config without APPLE_AOP/APPLE_SEP would not
-   build. Add the one-line `select` back, as a small extra commit?
-4. **Other differences on #177:**
+1. **Other differences on #177:**
    - eDP-1 comes up at 3456x2160 (the notch hidden, `adj-height-mm`) where #363 gave
      3456x2234;
-   - light glmark2 scenes ran 5-16 % slower on one boot.
+   - glmark2 is 529-536 against 583-587 on #363, one boot each.
    Neither is addressed here. Follow up?
+2. **Package label:** the package is kbuild build #6. "silicon-5" is the symlink name only;
+   nothing in the image says silicon-5.
