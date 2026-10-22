@@ -1003,3 +1003,15 @@ Package: `~/Projects/build-out/kernel-pbadapt/pkgs/linux-aurora-dev-7.1.12_auror
 The boot must show: every take logs `takes render queue 1 (draw D, take N); PB1 re-initialized, InitBM at its
 next render`; takes >= 3 survive (no crash or refusal after any take); q1-heavy.sh runs pass with `PB1 growth
 request ... slot 1` advancing and PB1 peaking at about 1420 blocks, `refused 0`.
+
+### 7.t Boot result, step 3d (silicon-60 = 07aa987b, 2026-10-22 06:18): take 3 survives, take 4 fails; #72 parked
+
+PB1 re-initialized at every take (§7.u). Acceptance PASS; takes 1-3 (ctx 3, 16, 19; each logged the PB1
+re-init) clean, rq1 draw 1814 (take 3 failed on silicon-58). Take 4 = the targeted test's heavy client
+(ctx 25 at 133.91 s): its second render on queue 1 (draw 1816) FAILED in 1 ms, errors=0, fail-stop (EIO);
+PB1 had not grown (requests 0). Same signature as take 3 on silicon-58: the new holder's first render
+completes, the second in the same prefix is refused, so the re-init narrowed it (take 3 now survives) but a
+holder-change state is still missing. Open leads for whoever resumes: what the firmware keeps per PB owner
+beyond InitBM (the two unexplained words of C1 entry 1; the owner table filed from TA +0x1c per context),
+and whether a take should also need one render alone before a second render in a prefix. Parked per the
+agreed gate; M3 back on step 2 (silicon-52). Private log: ~/m3-private/pq3d-dmesg.txt.
