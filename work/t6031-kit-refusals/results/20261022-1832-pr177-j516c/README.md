@@ -16,3 +16,29 @@ research/pr177-vs-363.md.
   comparison) reaching 4095; run 2 refused at the maximum, request left unanswered, hung, fail-stop
   (ETIMEDOUT). Same failure as the 512 MiB static heap; the #363 head runs 8/8.
 - M3 back on the #363 head (silicon-50). Private log: ~/m3-private/pr177-dmesg.txt.
+
+## Second pass with #177's own J516C device tree (2026-10-22 21:06-21:40)
+
+The first boot used the device tree inside our chainload image (boot.bin.gpu1-702, built from our tree), which
+has no `apple,t6031-pmp-v2-report` node: the "no internal panel" above came from our boot chain, not #177.
+`~/m3-images/t35/boot.bin.pr177` = gpu1-702 with only the J516C DTB replaced by #177's t6031-j516c.dtb
+(config confirmed: APPLE_T6030_DISPLAY_GATE=y, APPLE_PMP_REPORT=y, DRM_APPLE=y, DRM_ASAHI_G15=y).
+
+| | #177 (own DT) | #363 head e272b673 |
+|---|---|---|
+| display | PMP + DCP up, eDP-1 3456x2160, kmscube 60 fps, EDID 0 bytes | 3456x2234, 120 fps, EDID 128 bytes |
+| native checks (runs in 5 s) | compute 8409, vk 5524, gl 6530, zink 4404 | 8999 / 6993 / 7696 / 4988 |
+| gpu-heat clock | 1380 MHz, pstate 8 | 1380 MHz |
+| glmark2 (sddm stopped) | 476-481 | 583-587 (same flow, r2f) |
+| dEQP run 1 | VK 703/2/3 Crash, GLES3 952 + 3 flaky, GLES31 796/1 | VK 706/2/0, GLES3 955, GLES31 796/1 |
+| dEQP run 2 (no reboot) | VK 702/1/3 Crash, then **fail-stop**: PB at 4095, 2 refusals, request unanswered, hang | same as run 1, 0 faults |
+| concurrency test (fresh boot) | 703/2/3 Crash, 0 faults, PB 2794 posted / 2816 backed after | 706/2/0, 0 faults |
+| idle PB | 1024 posted, 128 MiB backed at start, never freed | 64 posted, 32 MiB, freed back after idle |
+
+- The 3 VK crashes: `asahi: G15: rejecting CDM record budget record ...` then `IOCTL: submit failed (EINVAL)`:
+  #177's command-stream gate (g15/gate.rs) walks a compute (CDM) stream for a fixed record budget and refuses
+  longer streams; the multi_draw max_draws tessellation cases exceed it. Kernel-side limit, not a Mesa error.
+- glmark2 light scenes 5-16 % lower than r2f (jellyfish 687-720 vs 812-829), GPU-bound scenes equal (terrain
+  46 vs 43, refract 93 vs 93); one boot each, light scenes vary up to 20 % between boots (20261020-2025-pb-perf).
+- Not tested: suspend/resume, back-to-back heavy test beyond the dEQP runs. Private logs:
+  ~/m3-private/pr177dt-dmesg.txt, pr177dt2-dmesg.txt. M3 back on the #363 head (silicon-50).
