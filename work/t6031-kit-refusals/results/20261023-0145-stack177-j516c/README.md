@@ -23,3 +23,13 @@ Package 7.2.11-aurora-dev-silicon #4 (built on the M3), booted with #177's own J
   checks of the test plan fail; the desktop part belongs to the installer/distro (research/stack-on-177.md).
 - glmark2 and native-check counts are one boot each; light scenes vary up to 20 % between boots.
 - M3 back on the #363 head (silicon-50). Private log: ~/m3-private/stack177-dmesg.txt.
+
+## Re-test of head 35e74f79 (11 commits; silicon #6), 2026-10-23 02:30-02:45
+
+- Display: EDID 128 B, kmscube 120 fps (J516C flags only; J514C dropped). Acceptance: FAIL only on the crtc
+  debugfs file (ours, absent on #177).
+- Full unfiltered dEQP: VK 706/2/0, GLES3 955 + 1 Warn, GLES31 796/1, 0 faults (= #363).
+- Idle free without a job (the gap above): heavy case to 23 chunks, then no job: +0 s 23, +3 s 2 (21 freed). Fixed.
+- No-GPU boot (plain reboot, ESP boot.bin gpu=0): `asahi: G15: native G15 not started: the boot loader left the
+  GPU node /soc/gpu@40a400000 disabled (/chosen/asahi,t6031-gpu = "0")`. The desktop spin is unchanged (installer side).
+- M3 back on the #363 head. Private log: ~/m3-private/stack177b-dmesg.txt.
