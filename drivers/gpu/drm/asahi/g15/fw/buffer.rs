@@ -167,7 +167,16 @@ pub(crate) mod grow_request {
     pub(crate) const EPOCH: usize = 5;
 }
 
-/// The C1 record written before the render prefix that carries a PB's InitBM:
+/// Bytes of one C1 entry: C1 (Runtime +0x2b0/+0x2b8) is an array of PB descriptors, entry i
+/// for the PB with index i.
+pub(crate) const C1_ENTRY: usize = 16;
+
+/// Byte offset of PB `index`'s entry in the C1 array.
+pub(crate) const fn c1_offset(index: u32) -> usize {
+    C1_ENTRY * index as usize
+}
+
+/// The C1 entry written before the render prefix that carries a PB's InitBM:
 /// {compact(page list) >> 4, 4 * initial blocks}. The firmware reads the PB's page list where
 /// C1 says at the InitBM, so with more than one PB it names the page list of the PB being
 /// initialized.
@@ -380,6 +389,9 @@ mod tests {
         assert_eq!(get32(&c1, 0), 0x07400000);
         assert_eq!(get32(&c1, 4), 4096);
         assert!(c1[8..].iter().all(|&x| x == 0));
+        // PB i's descriptor is entry i of the C1 array: 16 bytes each.
+        assert_eq!((c1_offset(0), c1_offset(1), c1_offset(4)), (0, 0x10, 0x40));
+        assert_eq!(C1_ENTRY, 16);
         // PB 1's page list one list further.
         let c1 = c1_record(0x1074000000 + PAGE_LIST_SIZE as u64, 64);
         assert_eq!(get32(&c1, 0), 0x07402800);

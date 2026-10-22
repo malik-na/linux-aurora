@@ -72,9 +72,13 @@ impl InitData {
 }
 
 impl super::Firmware {
-    /// Writes the 16-byte C1 record into the initdata C1 object.
-    pub(crate) fn write_c1(&mut self, record: &[u8; 16]) -> Result {
-        self.init.c1.as_ref().ok_or(ENODEV)?.write(0, record)
+    /// Writes PB `index`'s 16-byte entry of the initdata C1 array.
+    pub(crate) fn write_c1(&mut self, index: u32, record: &[u8; 16]) -> Result {
+        let at = super::fw::buffer::c1_offset(index);
+        if at + record.len() > cbuf::C1_SIZE {
+            return Err(EINVAL);
+        }
+        self.init.c1.as_ref().ok_or(ENODEV)?.write(at, record)
     }
 }
 

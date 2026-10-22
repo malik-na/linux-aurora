@@ -727,14 +727,14 @@ impl Firmware {
     /// The PB counters of a publication with renders on PB `pb`, after the render threshold:
     /// the PB counter names the prefix's last draw of its queue, and a prefix that carries the
     /// PB's InitBM (`initbm`, the first render prefix after every (re)initialization) writes
-    /// C1 = {compact(page list) >> 4, 4 * initial blocks} for this PB's page list. An error
-    /// leaves the prefix unpublished.
+    /// the PB's entry of the C1 array (entry `pb`) = {compact(page list) >> 4, 4 * initial
+    /// blocks} for this PB's page list. An error leaves the prefix unpublished.
     pub(crate) fn publish_pb(&mut self, pb: usize, draw: u32, initbm: bool) -> Result {
         let p = self.pools.pbs.get(pb).ok_or(EINVAL)?;
         p.live.pb_counter.w32(0, draw)?;
         if initbm {
             let record = buffer::c1_record(gva(&p.pb_pages)?, p.ledger.initial);
-            self.write_c1(&record)?;
+            self.write_c1(pb as u32, &record)?;
         }
         Ok(())
     }
