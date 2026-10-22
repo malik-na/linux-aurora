@@ -159,6 +159,7 @@ static const struct dcp_v14_board dcp_v14_board_j516c = {
 	.panel_height = 2234,
 	.promotion = true,
 	.log_bringup = true,
+	.base_edid = true,
 };
 
 /*
@@ -1539,6 +1540,11 @@ const struct dcp_v14_board *iomfb_v14_7_board(struct device *dev)
 const char *iomfb_v14_7_board_name(const struct dcp_v14_board *board)
 {
 	return board->name;
+}
+
+bool iomfb_v14_7_base_edid(const struct apple_dcp *dcp)
+{
+	return dcp->v14 && dcp->v14->board && dcp->v14->board->base_edid;
 }
 
 int iomfb_v14_7_probe(struct apple_dcp *dcp)

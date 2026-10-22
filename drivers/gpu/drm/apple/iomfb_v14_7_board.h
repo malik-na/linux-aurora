@@ -39,6 +39,11 @@ struct dcp_v14_board {
 	 * releases, so they are only set where tested.
 	 */
 	u32 ctm_set, ctm_get;
+	/*
+	 * The panel gets a base EDID (make, model and size) built from its
+	 * device-tree node, as the firmware gives none.
+	 */
+	bool base_edid;
 };
 
 /* Whether the DCP node or the machine (as @ctx gives them) has @compat. */
