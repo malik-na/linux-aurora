@@ -955,6 +955,7 @@ pub(crate) fn encode_fs(
     put64(q, 0x4c, wv);
     put32(q, 0x54, ctx);
     put32(q, 0x58, 1);
+    put32(q, fs::SEQ_PB_INDEX, r.queue.index());
     put64(q, 0x68, (n as u32).wrapping_sub(1) as u64);
     put64(q, 0x74, wv + 0xa58);
     put64(q, 0x7c, wv + 0xbd8);

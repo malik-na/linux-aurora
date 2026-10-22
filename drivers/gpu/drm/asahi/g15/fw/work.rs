@@ -156,6 +156,9 @@ pub(crate) mod fs {
         0x1a0d9, 0x1a0e1, 0x101c1, 0xd469, 0x1a0f9, 0x1c838, 0x1ca28, 0xa5a9, 0xd429,
     ];
 
+    /// FS microsequence start record +0x60: the PB index.
+    pub(crate) const SEQ_PB_INDEX: usize = 0x60;
+
     /// Index of register 0x1c838: the PB index, as TA register 0x1c830.
     pub(crate) const REG_PB_INDEX: usize = 75;
     const _: () = assert!(SEL[REG_PB_INDEX] == 0x1c838);
