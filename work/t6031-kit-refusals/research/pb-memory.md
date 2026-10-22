@@ -925,3 +925,43 @@ next prefix FAILED in 3 ms with errors=0 (the r0pq-g signature: an instant firmw
 but a queue naming PB index 1 needs more firmware-side state than we give it, and 3 renders succeed before
 the refusal. Per the gated plan step 3 stops here; M3 back on step 2 (silicon-52). Private log:
 ~/m3-private/pq3b-dmesg.txt.
+
+### 7.w Fix round 3c: the FS start record's PB index and the PB descriptor array (2026-10-22)
+
+New facts from the G15S driver maintainer (G15S firmware, used here as facts, checked on G15C below): the PB
+index must agree in seven places (manager +0x8, TA work +0x1c, TA reg 0x1c830, FS start record +0x60, FS reg
+0x1c838, a 16-byte PB descriptor at [Runtime +0x2b8] + 16 i, and the PB's own lists/block_ctl/counters); growth
+is imported into the owner selected by manager +0x8; the owner table has 127 entries; PB indices are separate
+from UMA indices.
+
+**Checked on G15C (private captures):**
+- FS start record +0x60 (the FS microsequence's first record, opcode 7): in the 2026-10-13 13:04 login snapshot
+  every FS start record names its queue's PB index: 241 records of the queue whose manager has +0x8 = 1 carry
+  +0x60 = 1, 241 of the queue with PB index 4 (the cell-5 queue of §8.2) carry 4 (+0x64 = 1 in all). The FS
+  work image's +0x60 is 0 for both native queues A and B (Q2): the field is in the sequence, not the work.
+  Ours: never written (0).
+- Runtime +0x2b8 (and +0x2b0) is our **C1** pointer (`runtime::C1_2`/`C1`, both = va::C1): C1 is the descriptor
+  array, entry i at C1 + 16 i, `{compact(page list) >> 4, initial pages, word, word}`. Native at login (13:04):
+  entry 0 `{0x40800, 0x100, 0x18, 0x18}` (page list 0x1000408000), entry 1 `{0xfd000, 0x100, 0x6d, 0x6d}`
+  (page list 0x1000fd0000 = the PB with manager +0x8 = 1), entry 2 `{0x40800, 0x5c, 8, 8}`, entry 3
+  `{0x8d000, 0x5c, 0x10, 0x10}`, entry 4 `{0x40800, 0x5c, 0x4c, 0x4c}` (the index-4 PB's manager names page
+  list 0x1000408000), entry 5 `{0x66800, 0x100, 0x1d, 0x1d}`, the rest 0. Word 1 is the initial page count
+  (0x100 = 4 x 64 blocks; 0x5c = the TA register #33 value of those queues). At MSG_INIT (13:23) the whole page
+  is zero, so the entries appear per PB after start; the last two words differ per entry and are not ours to
+  set (we write 0, as for entry 0 since the first job): who writes them (host at creation, or the firmware) is
+  not visible in these captures.
+- Ours before this round: `publish_pb` wrote **entry 0** with the page list of whichever PB the InitBM was for
+  (`write_c1` at offset 0). So queue 1's InitBM overwrote PB 0's descriptor with PB 1's list and left entry 1
+  empty; with PB index 1 in the manager and registers (3622ffd9) PB 1 had no descriptor at all, which fits the
+  §7.z refusal after 3 renders, and queue 0's PB pointing at PB 1's list fits a failure shortly after.
+
+**Fix** (two commits on `t6031/pq-step3`; queue 0's values and offset unchanged):
+- `cdf23e48` each PB writes C1 entry <PB index> (`c1_offset(i) = 16 i`, host test in `small_records`;
+  bounded by the 16 KiB C1 page).
+- `7601d83a` FS start record +0x60 = PB index (`fs::SEQ_PB_INDEX`).
+
+Package: `~/Projects/build-out/kernel-pbadapt/pkgs/linux-aurora-dev-7.1.12_aurora_dev_silicon-58-pbadapt-r2pq3c-7601d83af491-aarch64.pkg.tar.xz`.
+Confirming signature: boot past the first queue-1 renders with no instant refusal; q1-heavy.sh runs pass;
+`PB1 growth request 0/1 ... slot 1` and requests advancing in position; PB1 peak about 1420 blocks over the
+heavy case, `refused 0`; queue 0 clients unaffected. If entry 1's last two words turn out to be host-set
+(a refusal persists with everything above agreeing), the next step is to observe them at queue creation.
