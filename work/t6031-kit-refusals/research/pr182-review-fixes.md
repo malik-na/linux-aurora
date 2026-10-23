@@ -59,3 +59,36 @@ New series: d60121ff..61d68d9f8bd7 (11 commits).
 - check-commits.py d60121ff..61d68d9f: 11 commits signed off; checkpatch 1 warning each on the
   EDID and loader-notice commits (the same two Marcelo saw), 0 errors. Trailers
   `Assisted-by: Claude:claude-opus-5-5` + `Signed-off-by` on all 11. Keyword scan clean.
+
+## Item 2: recovery can strand a growth request
+
+**Finding (Marcelo; reproduced by Chris):** `refill_backing()` returned early whenever
+`recovery.reinit` was set. A fragment kill sets it while the later same-VM flights, only marked
+doomed, still run and ask for growth; with their reserve used up `accept()` returns Wait and
+nothing refills, so the request strands until the deadline (and a failed recovery there
+fail-stops).
+
+**Validation: real.** Chris's reproducer as harness case
+`pending_reinit_with_a_live_render_refills`; with the old guard (mutation
+`refill-skip-with-live-render`, which restores the old line) it fails with
+`growth request stranded: posted=256 backed=256 waits=4 refills=0`, Chris's numbers.
+
+**Fix (fixup into "back the PB in 16 MiB chunks after the reply, with a reserve", now
+4481c2d1):** skip the refill only when a re-initialization is pending and no render flight is
+live (`receipts(i).renders != 0`). Narrower than the review's "no flights": a compute-only
+flight cannot ask for growth, and refilling for one right after a level-2 reclaim (posted still
+high until the next InitBM, backing cut to the kept chunks) would back again everything the
+reclaim freed. A render cannot be published while reinit is pending without clearing it
+(engine.rs, its publication does the InitBM), so a live render with reinit pending is always one
+published before the kill. Harness: `pending_reinit_backs_nothing` (it had a live flight and
+required the stall) split into `..._without_flights_backs_nothing`,
+`..._with_compute_only_backs_nothing` and `..._with_a_live_render_refills`; new mutations
+`refill-skip-with-live-render` and `refill-for-any-flight`. Commit message updated.
+
+**Fix validation (M3 chroot):** pb-growth `--mutations` 26 passed, 24/24 mutations caught by
+their intended test (was 24 / 22), control passes; asahi-g15 selftest 70 passed (2 ignored);
+per-commit build of the rewritten commits OK (apple W=1: 0 warnings) and per-commit host tests
+green (the autosquash had harness conflicts in the backing and reclaim commits, resolved);
+check-commits 11 signed off, checkpatch unchanged (2 warnings, 0 errors); keyword scan clean;
+rustfmt drift 0. No hardware run for this item (host logic; covered by the final J516C
+regression). Supervisor verdict: APPROVED. Branch head a2e8b5d1.
