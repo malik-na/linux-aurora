@@ -224,3 +224,24 @@ nothing faulted, also within one client. Validation: selftest 71 passed; asahi b
 warnings; per-commit build and host tests are green (harness 36 passed, 36/36 mutations caught);
 rustfmt (Air, 1.93.1) is clean; check-commits is unchanged; the keyword scan is clean.
 Supervisor verdict: APPROVED. Branch head b1f6bbb7.
+
+## Item 7: stats.freed counted before the VM walk can fail
+
+**Finding (Marcelo):** the reclaim's free added the dropped chunks to `stats.freed` before
+`vms.open()`. If that walk fails, the VMs' aliases keep the pages, so the stat and the info line
+overstate what was freed.
+
+**Validation: real, test-first.** New harness case `failed_vm_walk_counts_nothing_freed`
+(an injected registry-walk failure) failed on the unfixed code with "freed counted with the VM
+walk failed".
+
+**Fix (reclaim commit a6438e26):** `free_backing()` counts and returns the dropped chunks only
+once every VM has been walked and unmapped. A failed walk warns and counts 0. The chunks still
+leave the backing, and each VM drops its stale aliases at its next publication, which is when
+the pages go. The harness case checks this through to that publication; mutation
+`freed-without-walk` added (client-boundary commit 9e151cd1).
+
+**Fix validation (M3 chroot):** harness 37 passed, 37/37 mutations caught; selftest 71 passed;
+per-commit build and host tests green; check-commits unchanged; keyword scan clean; rustfmt (Air,
+1.93.1) clean. No hardware run, because a failed walk needs an allocation failure. Supervisor
+verdict: APPROVED. Branch head 575a3484.
