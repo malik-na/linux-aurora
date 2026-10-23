@@ -1,0 +1,14 @@
+#10 SMP PREEMPT_DYNAMIC Fri Oct 23 13:17:37 IST 2026
+step 0 D40000: 779.8 ms, ok: 40000 dispatches, submit 229.38 ms, idle after 490.70 ms
+  calls: cr 0 ru 0 
+step 0 P8000: 153.4 ms, ok: 8000 dispatches, submit 45.29 ms, idle after 78.44 ms
+  calls: cr 0 ru 0 
+step 0 P9000: 171.5 ms, ok: 9000 dispatches, submit 50.81 ms, idle after 93.28 ms
+  calls: cr 0 ru 0 
+step 0 P20000: 420.8 ms, ok: 20000 dispatches, submit 115.37 ms, idle after 236.49 ms
+  calls: cr 0 ru 0 
+  validate 229.14 ms
+  validate 45.14 ms
+  validate 50.69 ms
+  validate 115.23 ms
+[ 3468.332288] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000

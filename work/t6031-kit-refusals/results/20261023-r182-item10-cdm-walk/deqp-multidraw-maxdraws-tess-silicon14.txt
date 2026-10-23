@@ -1,0 +1,1837 @@
+Writing test log into /tmp/md14.qpa
+dEQP Core vulkan-cts-1.4.7.0-0-ge272471311301a35aae6364def1a3f5ea35215f7 (0xe2724713) starting..
+  target implementation = 'Surfaceless'
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.10_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.10_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.10_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.10_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.1_instance.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.1_instance.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.1_instance.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.1_instance.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.no_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.no_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.no_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.no_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.10_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.10_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.10_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.10_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.1_instance.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.1_instance.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.1_instance.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.1_instance.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.no_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.no_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.no_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.no_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.10_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.10_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.10_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.10_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.1_instance.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.1_instance.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.1_instance.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.1_instance.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.no_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.no_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.no_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.no_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.10_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.10_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.10_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.10_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.1_instance.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.1_instance.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.1_instance.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.1_instance.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.no_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.no_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.no_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.no_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.10_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.10_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.10_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.10_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.1_instance.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.1_instance.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.1_instance.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.1_instance.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.no_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.no_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.no_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.no_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.10_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.10_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.10_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.10_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.1_instance.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.1_instance.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.1_instance.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.1_instance.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.no_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.no_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.no_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.standard_stride.no_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.10_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.10_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.10_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.10_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.1_instance.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.1_instance.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.1_instance.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.1_instance.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.no_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.no_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.no_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.no_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.10_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.10_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.10_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.10_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.1_instance.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.1_instance.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.1_instance.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.1_instance.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.no_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.no_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.no_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.no_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.standard_stride.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.standard_stride.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.standard_stride.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.standard_stride.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.standard_stride.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.standard_stride.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.standard_stride.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.standard_stride.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.standard_stride.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.standard_stride.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.standard_stride.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.standard_stride.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_12.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_12.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_12.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_12.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_12.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_12.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_12.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_12.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_12.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_12.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_12.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_12.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_4.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_4.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_4.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_4.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_4.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_4.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_4.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_4.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_4.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_4.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_4.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.dynamic_rendering.primary_cmd_buff.multi_draw.mosaic.normal.max_draws.stride_extra_4.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.10_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.10_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.10_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.10_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.1_instance.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.1_instance.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.1_instance.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.1_instance.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.no_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.no_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.no_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.standard_stride.no_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.10_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.10_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.10_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.10_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.1_instance.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.1_instance.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.1_instance.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.1_instance.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.no_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.no_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.no_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_12.no_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.10_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.10_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.10_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.10_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.1_instance.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.1_instance.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.1_instance.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.1_instance.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.no_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.no_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.no_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_mixed.max_draws.stride_extra_4.no_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.10_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.10_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.10_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.10_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.1_instance.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.1_instance.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.1_instance.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.1_instance.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.no_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.no_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.no_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_12.no_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.10_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.10_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.10_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.10_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.1_instance.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.1_instance.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.1_instance.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.1_instance.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.no_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.no_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.no_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_packed.max_draws.stride_extra_4.no_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.10_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.10_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.10_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.10_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.1_instance.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.1_instance.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.1_instance.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.1_instance.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.no_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.no_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.no_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.standard_stride.no_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.10_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.10_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.10_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.10_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.1_instance.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.1_instance.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.1_instance.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.1_instance.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.no_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.no_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.no_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_12.no_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.10_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.10_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.10_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.10_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.1_instance.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.1_instance.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.1_instance.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.1_instance.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.no_instances.with_tess.multiview.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.no_instances.with_tess.multiview.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.no_instances.with_tess.single_view.offset_6'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.indexed_random.max_draws.stride_extra_4.no_instances.with_tess.single_view.offset_6_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.standard_stride.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.standard_stride.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.standard_stride.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.standard_stride.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.standard_stride.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.standard_stride.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.standard_stride.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.standard_stride.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.standard_stride.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.standard_stride.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.standard_stride.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.standard_stride.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.standard_stride.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.standard_stride.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_12.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_12.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_12.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_12.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_12.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_12.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_12.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_12.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_12.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_12.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_12.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_12.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_12.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_12.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_4.10_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_4.10_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_4.10_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_4.10_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_4.1_instance.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_4.1_instance.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_4.1_instance.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_4.1_instance.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_4.2_instances_base_3.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_4.2_instances_base_3.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_4.no_instances.with_tess.multiview.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_4.no_instances.with_tess.multiview.no_offset_no_draw_id'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_4.no_instances.with_tess.single_view.no_offset'..
+  Pass (Pass)
+
+Test case 'dEQP-VK.draw.renderpass.multi_draw.mosaic.normal.max_draws.stride_extra_4.no_instances.with_tess.single_view.no_offset_no_draw_id'..
+  Pass (Pass)
+
+DONE!
+
+Test run totals:
+  Passed:        608/608 (100.0%)
+  Failed:        0/608 (0.0%)
+  Not supported: 0/608 (0.0%)
+  Warnings:      0/608 (0.0%)
+  Waived:        0/608 (0.0%)
+kernel lines during the run: rejecting CDM 0, fault/recovery 0

@@ -8,6 +8,10 @@
  *     R       one render pass: clear, then TRIANGLES triangles of SIZE (NDC units) spread over a
  *             2048x2048 target, read back; checks that sampled pixels were drawn
  *     C       one compute dispatch writing 65536 words; checks every word
+ *     D<n>    one command buffer of n indirect dispatches (1x1x1 groups each); prints the time
+ *             vkQueueSubmit took (the kernel's submit ioctl, its stream checks included)
+ *             and the time to idle; checks the words the dispatches wrote
+ *     P<n>    as D<n>, with each dispatch's arguments on its own 16 KiB page
  *     <ms>    stay idle that long (nothing submitted)
  *   -x CMD    run CMD (a shell command) after every step, e.g. to print the PB stats line
  *
@@ -44,7 +48,7 @@ F(vkCmdPushConstants); F(vkCmdDraw); F(vkCmdDispatch); F(vkCmdCopyImageToBuffer)
 F(vkCmdPipelineBarrier); F(vkQueueSubmit); F(vkQueueWaitIdle); F(vkResetCommandBuffer);
 F(vkCreateBuffer); F(vkGetBufferMemoryRequirements); F(vkBindBufferMemory); F(vkMapMemory);
 F(vkCreateDescriptorSetLayout); F(vkCreateDescriptorPool); F(vkAllocateDescriptorSets);
-F(vkUpdateDescriptorSets); F(vkCmdBindDescriptorSets);
+F(vkUpdateDescriptorSets); F(vkCmdBindDescriptorSets); F(vkCmdDispatchIndirect);
 
 static VkInstance inst;
 static VkDevice dev;
@@ -79,7 +83,7 @@ static void load_instance(void)
 	L(vkQueueWaitIdle); L(vkResetCommandBuffer); L(vkCreateBuffer);
 	L(vkGetBufferMemoryRequirements); L(vkBindBufferMemory); L(vkMapMemory);
 	L(vkCreateDescriptorSetLayout); L(vkCreateDescriptorPool); L(vkAllocateDescriptorSets);
-	L(vkUpdateDescriptorSets); L(vkCmdBindDescriptorSets);
+	L(vkUpdateDescriptorSets); L(vkCmdBindDescriptorSets); L(vkCmdDispatchIndirect);
 #undef L
 }
 
@@ -389,6 +393,11 @@ int main(int argc, char **argv)
 	VkPipeline cp;
 	CK(vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &cpci, NULL, &cp));
 
+	void *imap;
+	VkBuffer ibuf = host_buffer(12, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, &imap);
+	((uint32_t *)imap)[0] = 1;
+	((uint32_t *)imap)[1] = 1;
+	((uint32_t *)imap)[2] = 1;
 	void *rmap;
 	VkBuffer rbuf = host_buffer((VkDeviceSize)W * H * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, &rmap);
 	VkCommandPoolCreateInfo cpoolci = {
@@ -463,6 +472,51 @@ int main(int argc, char **argv)
 				failed = 1;
 				snprintf(result, sizeof(result), "FAIL: %u of %u words wrong", bad, CWORDS);
 			}
+		} else if (step[0] == 'D' || step[0] == 'P') {
+			uint32_t key = ++seq * 0x9e3779b9u, count = strtoul(step + 1, NULL, 0), bad = 0;
+			bool paged = step[0] == 'P';
+			VkBuffer args = ibuf;
+			void *amap;
+			VkSubmitInfo si = {
+				.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1,
+				.pCommandBuffers = &cmd,
+			};
+			double s0, s1;
+
+			if (paged) {
+				args = host_buffer((VkDeviceSize)count * 16384, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+						   &amap);
+				for (uint32_t k = 0; k < count; k++) {
+					uint32_t *a = (uint32_t *)((char *)amap + (size_t)k * 16384);
+
+					a[0] = a[1] = a[2] = 1;
+				}
+			}
+			memset(cmap, 0, CWORDS * 4);
+			begin();
+			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cp);
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cl, 0, 1, &ds, 0, NULL);
+			vkCmdPushConstants(cmd, cl, VK_SHADER_STAGE_COMPUTE_BIT, 0, 4, &key);
+			for (uint32_t k = 0; k < count; k++)
+				vkCmdDispatchIndirect(cmd, args, paged ? (VkDeviceSize)k * 16384 : 0);
+			CK(vkEndCommandBuffer(cmd));
+			s0 = now_ms();
+			VkResult sr = vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
+			s1 = now_ms();
+			if (sr != VK_SUCCESS) {
+				failed = 1;
+				snprintf(result, sizeof(result), "REFUSED: %u dispatches, submit %d after %.2f ms",
+					 count, sr, s1 - s0);
+				printf("step %d %s: %.1f ms, %s\n", i - optind, step, now_ms() - t0, result);
+				break;
+			}
+			CK(vkQueueWaitIdle(queue));
+			for (uint32_t k = 0; k < 64; k++)
+				bad += ((const uint32_t *)cmap)[k] != (k ^ key);
+			if (bad)
+				failed = 1;
+			snprintf(result, sizeof(result), "%s: %u dispatches, submit %.2f ms, idle after %.2f ms",
+				 bad ? "FAIL" : "ok", count, s1 - s0, now_ms() - s1);
 		} else {
 			char *end;
 			long ms = strtol(step, &end, 10);

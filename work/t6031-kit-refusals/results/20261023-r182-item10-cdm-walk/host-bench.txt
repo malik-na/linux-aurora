@@ -1,0 +1,12 @@
+barriers (4 B)                     records  1064830  read/cover calls   16640  walk    2.42 ms  x64 commands   154.8 ms
+direct launches, one program page  records   106470  read/cover calls   18071  walk    1.99 ms  x64 commands   127.2 ms
+direct launches, a page each       records   106470  read/cover calls  124540  walk    2.80 ms  x64 commands   178.9 ms
+indirect launches (24 B)           records   177450  read/cover calls  195521  walk    4.45 ms  x64 commands   284.9 ms
+8192 barriers (the old cap)        records     8192  walk   0.018 ms  x64 commands    1.17 ms
+one modelled 256-byte read_user: 29 ns
+barriers (4 B)                     records  1064830  read/cover calls   16640  walk    1.60 ms  x64 commands   102.7 ms
+direct launches, one program page  records   106470  read/cover calls   18071  walk    1.24 ms  x64 commands    79.1 ms
+direct launches, a page each       records   106470  read/cover calls  124540  walk    1.80 ms  x64 commands   115.5 ms
+indirect launches (24 B)           records   177450  read/cover calls  195521  walk    2.25 ms  x64 commands   144.0 ms
+8192 barriers (the old cap)        records     8192  walk   0.011 ms  x64 commands    0.68 ms
+one modelled 256-byte read_user: 17 ns

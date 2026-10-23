@@ -305,3 +305,33 @@ evidence is the item 6 and item 8 acceptance records and their dmesg.
 
 **Validation:** all 11 trees are identical to the previous head. check-commits is unchanged and
 the keyword scan is clean. Supervisor verdict: APPROVED. Branch head d465423f.
+
+## Item 10: the CDM byte budget
+
+**Question (Marcelo):** how long does a worst-case walk under the 1,064,960-word byte budget
+take, and how long does it hold its lock?
+
+**Finding: unreasonable before the fix.** The walk holds no device lock. The queue's mutex covers
+the SUBMIT, and the VM's GPUVM lock is taken per check or read. On the J516C, `Prepared::validate()`
+was timed with kprobes. A page check (`covers_range`) costs about 4 us and a 256-byte read about
+5 us. Each indirect launch made one uncached check of its arguments. The worst case was a stream
+of distinct argument pages: about 0.8 s per command and about 51 s per 64-command SUBMIT (the
+old record cap: about 2.4 s). A real Mesa stream of 40000 indirect dispatches took 224-229 ms.
+The host benchmark runs the actual `gate.rs` with modelled calls and understates the kernel about
+200x; it is kept for the record. Evidence: `results/20261023-r182-item10-cdm-walk/`.
+
+**Fix (decision P1 + P2, cap 16384, Naeem):** fixup into the byte-budget commit (now ae93621a).
+The walk caches the last argument page found good, as it does for the program page. It allows at
+most 16384 uncached page checks per walk; one more is refused with "CDM page check budget". The
+cap was first 8192. The measurements then showed Mesa's arguments move to a new page every few
+dispatches, so the largest stream the link budget admits makes about 8050-8100 checks. The cap
+was raised to twice that.
+
+**Fix validation:** three new selftest cases (one check per reused page, the 16384 boundary, a
+large valid stream) fail on the old gate and pass now; selftest 74 passed. On the J516C
+(silicon-14), 40000 dispatches take 94 ms with 6848 checks. The largest admitted stream takes
+106.8 ms with 8047 checks; larger streams are refused by the link budget, and the page budget
+never trips. The worst case is now about 149 ms per command and about 9.5 s per SUBMIT. All 608
+dEQP-VK `multi_draw.mosaic ... max_draws ... with_tess` cases pass, with no CDM rejections.
+Per-commit build and host tests are green; checkpatch shows 0 issues; the keyword scan is clean.
+Supervisor verdict: APPROVED (revision 4). Branch head a089fd06.

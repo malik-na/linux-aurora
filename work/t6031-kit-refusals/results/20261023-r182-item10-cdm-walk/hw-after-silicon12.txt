@@ -1,0 +1,27 @@
+#12 SMP PREEMPT_DYNAMIC Fri Oct 23 17:30:11 IST 2026
+== timing (COUNT=0)
+step 0 D40000: 609.2 ms, ok: 40000 dispatches, submit 91.79 ms, idle after 469.07 ms
+  calls: 
+step 0 P8000: 114.5 ms, ok: 8000 dispatches, submit 18.83 ms, idle after 67.44 ms
+  calls: 
+step 0 P8191: 114.9 ms, ok: 8191 dispatches, submit 19.25 ms, idle after 68.90 ms
+  calls: 
+step 0 P8192: 124.8 ms, ok: 8192 dispatches, submit 18.97 ms, idle after 80.57 ms
+  calls: 
+step 0 P9000: 135.6 ms, ok: 9000 dispatches, submit 21.06 ms, idle after 81.33 ms
+  calls: 
+  validate 91.60 ms
+  validate 18.71 ms
+  validate 19.14 ms
+  validate 18.86 ms
+  validate 20.93 ms
+== counts
+step 0 D40000: 621.9 ms, ok: 40000 dispatches, submit 98.38 ms, idle after 466.85 ms
+  calls: cr 6848 ru 13464 
+step 0 P8191: 122.9 ms, ok: 8191 dispatches, submit 22.47 ms, idle after 71.14 ms
+  calls: cr 1404 ru 2758 
+step 0 P8192: 114.0 ms, ok: 8192 dispatches, submit 20.24 ms, idle after 69.58 ms
+  calls: cr 1404 ru 2759 
+  validate 98.24 ms
+  validate 22.35 ms
+  validate 20.09 ms

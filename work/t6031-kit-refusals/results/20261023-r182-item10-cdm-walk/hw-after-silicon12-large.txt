@@ -1,0 +1,61 @@
+#12 SMP PREEMPT_DYNAMIC Fri Oct 23 17:30:11 IST 2026
+## D44000 timing (COUNT=0)
+step 0 D44000: 629.4 ms, ok: 44000 dispatches, submit 95.93 ms, idle after 474.90 ms
+  calls: 
+  validate 95.75 ms
+[  198.693597] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+[  199.277291] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+[  199.857081] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+## D44000 counts
+step 0 D44000: 632.3 ms, ok: 44000 dispatches, submit 107.46 ms, idle after 466.23 ms
+  calls: cr 7533 ru 14809 
+## D46000 timing (COUNT=0)
+step 0 D46000: 610.1 ms, ok: 46000 dispatches, submit 104.01 ms, idle after 444.10 ms
+  calls: 
+  validate 103.88 ms
+[  198.693597] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+[  199.277291] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+[  199.857081] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+## D46000 counts
+step 0 D46000: 640.7 ms, ok: 46000 dispatches, submit 117.00 ms, idle after 461.52 ms
+  calls: cr 7876 ru 15483 
+## D47000 timing (COUNT=0)
+step 0 D47000: 640.7 ms, ok: 47000 dispatches, submit 105.73 ms, idle after 474.32 ms
+  calls: 
+  validate 105.55 ms
+[  198.693597] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+[  199.277291] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+[  199.857081] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+## D47000 counts
+step 0 D47000: 633.5 ms, ok: 47000 dispatches, submit 110.65 ms, idle after 460.98 ms
+  calls: cr 8047 ru 15818 
+## D48000 timing (COUNT=0)
+step 0 D48000: 178.2 ms, REFUSED: 48000 dispatches, submit -4 after 113.24 ms
+  calls: 
+  validate 113.07 ms
+[  199.277291] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+[  199.857081] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+[ 1024.148842] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+## D48000 counts
+step 0 D48000: 180.0 ms, REFUSED: 48000 dispatches, submit -4 after 115.36 ms
+  calls: cr 8101 ru 15927 
+## D49000 timing (COUNT=0)
+step 0 D49000: 183.0 ms, REFUSED: 49000 dispatches, submit -4 after 111.09 ms
+  calls: 
+  validate 110.87 ms
+[ 1024.148842] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+[ 1024.653043] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+[ 1025.176295] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+## D49000 counts
+step 0 D49000: 181.4 ms, REFUSED: 49000 dispatches, submit -4 after 114.54 ms
+  calls: cr 8101 ru 15927 
+## D52000 timing (COUNT=0)
+step 0 D52000: 184.3 ms, REFUSED: 52000 dispatches, submit -4 after 112.47 ms
+  calls: 
+  validate 112.27 ms
+[ 1025.176295] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+[ 1025.683661] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+[ 1026.265126] asahi: G15: rejecting CDM link budget record at 0x5bedc4d820: 2000005b ed8bc000 00000000 00000000
+## D52000 counts
+step 0 D52000: 188.5 ms, REFUSED: 52000 dispatches, submit -4 after 117.00 ms
+  calls: cr 8101 ru 15927 

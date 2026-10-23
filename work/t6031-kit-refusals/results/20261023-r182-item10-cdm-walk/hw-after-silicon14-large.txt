@@ -1,0 +1,57 @@
+#14 SMP PREEMPT_DYNAMIC Fri Oct 23 18:05:49 IST 2026
+## D40000 timing (COUNT=0)
+step 0 D40000: 629.5 ms, ok: 40000 dispatches, submit 94.10 ms, idle after 489.38 ms
+  calls: 
+  validate 93.95 ms
+## D40000 counts
+step 0 D40000: 623.1 ms, ok: 40000 dispatches, submit 98.87 ms, idle after 467.23 ms
+  calls: cr 6848 ru 13464 
+## new reject lines: 0, page budget: 0
+## D44000 timing (COUNT=0)
+step 0 D44000: 698.5 ms, ok: 44000 dispatches, submit 103.01 ms, idle after 534.18 ms
+  calls: 
+  validate 102.95 ms
+## D44000 counts
+step 0 D44000: 713.1 ms, ok: 44000 dispatches, submit 107.66 ms, idle after 543.10 ms
+  calls: cr 7533 ru 14809 
+## new reject lines: 0, page budget: 0
+## D46000 timing (COUNT=0)
+step 0 D46000: 733.8 ms, ok: 46000 dispatches, submit 106.58 ms, idle after 561.90 ms
+  calls: 
+  validate 106.49 ms
+## D46000 counts
+step 0 D46000: 722.2 ms, ok: 46000 dispatches, submit 112.61 ms, idle after 542.28 ms
+  calls: cr 7876 ru 15483 
+## new reject lines: 0, page budget: 0
+## D47000 timing (COUNT=0)
+step 0 D47000: 757.9 ms, ok: 47000 dispatches, submit 106.95 ms, idle after 583.64 ms
+  calls: 
+  validate 106.81 ms
+## D47000 counts
+step 0 D47000: 753.1 ms, ok: 47000 dispatches, submit 118.53 ms, idle after 566.60 ms
+  calls: cr 8047 ru 15818 
+## new reject lines: 0, page budget: 0
+## D48000 timing (COUNT=0)
+step 0 D48000: 176.7 ms, REFUSED: 48000 dispatches, submit -4 after 108.15 ms
+  calls: 
+  validate 108.06 ms
+## D48000 counts
+step 0 D48000: 178.6 ms, REFUSED: 48000 dispatches, submit -4 after 117.57 ms
+  calls: cr 8101 ru 15927 
+## new reject lines: 2, page budget: 0
+## D49000 timing (COUNT=0)
+step 0 D49000: 180.2 ms, REFUSED: 49000 dispatches, submit -4 after 110.49 ms
+  calls: 
+  validate 110.36 ms
+## D49000 counts
+step 0 D49000: 185.5 ms, REFUSED: 49000 dispatches, submit -4 after 116.03 ms
+  calls: cr 8101 ru 15927 
+## new reject lines: 4, page budget: 0
+## D52000 timing (COUNT=0)
+step 0 D52000: 183.0 ms, REFUSED: 52000 dispatches, submit -4 after 109.45 ms
+  calls: 
+  validate 109.33 ms
+## D52000 counts
+step 0 D52000: 184.5 ms, REFUSED: 52000 dispatches, submit -4 after 116.23 ms
+  calls: cr 8101 ru 15927 
+## new reject lines: 6, page budget: 0
