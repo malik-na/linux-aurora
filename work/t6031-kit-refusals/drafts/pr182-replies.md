@@ -286,3 +286,7 @@ omacom repos (omarchy-mac, omarchy-mac-installer, omarchy-mac-pkgs) do not hold 
 
 > Fixed in `59aced96`/`aa142eed`. The long-idle free runs while a reclaim's re-initialization
 > is pending, and the poll is armed for it. See the reply to Marcelo's first point.
+
+---
+
+Posted 2026-10-23: PR head force-pushed to a089fd06; PR body updated; replies issuecomment-6366598792, -6366599353, -6366600007, -6366600851, discussion_r4360321327, r4360322859; issues omacom/linux-aurora#189 and #190.
