@@ -59,5 +59,3 @@ Static checks:
 - Untested on the T6030 (see the note above) and on the 14" J514C, which gets no new display flags.
 - The panel comes up at 3456×2160 with the notch hidden. #363's path gave 3456×2234. This PR leaves that unchanged.
 - Suspend and resume were not re-tested on this branch.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)

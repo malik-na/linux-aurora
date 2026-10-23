@@ -1,0 +1,43 @@
+APPROVED
+
+Item 11 (drafts only; nothing posted). Checked against the series at a089fd06 and the facts
+verified in items 1-10:
+- Commit map: all 11 SHAs and subjects match `git log d60121ff..a089fd06`.
+- PR-body additions: the compute-only note matches engine.rs:559-565/:723-725 and the harness
+  case; the long-idle free, the nothing-grew line, the EDID row (256 B, 60 Hz DTD reason with
+  1,042,129,920 Hz, DisplayID 120 Hz, modes stay the firmware's, both decoders conformant), the
+  CDM row (last page found good, 16384 checks, "CDM page check budget", ~149 ms vs ~0.8 s), the
+  display row (120.03 fps, 2.9-8.1 ms) and the re-tested line (1541 pass, 0 splats) all state
+  verified facts.
+- Issue drafts: the loader-notice string matches the code; install-aurora-sep.sh:624-641 and
+  :640 (M3_MAX_SAFE_SWITCHES), mesa-m3-session-env:60 and `_mm3_soc_of` at :310-312 are as
+  cited; the Hyprland spin is in results/20261023-0145-stack177-j516c/README.md.
+- Replies: every number traces to a results file or a private dmesg already checked (strand
+  numbers, 54/1004 ms wakes, 1027-1058 ms frees, r2c client-switch analysis, gamma/year/DTD/
+  DisplayID, 224 -> 94 ms and 41410 -> 6848 checks, 8047 at 47000, 608/608, KUnit 1541/0
+  splats, harness 37 passed 37/37). Keyword and private-path scan clean.
+
+Conditions (text only, before Naeem is handed the drafts):
+1. Reply to Marcelo's follow-up, rebase paragraph: "`apple-dcp/run.sh` fails the same 6 cases
+   on `d60121ff` alone" is not backed per case: `~/aurora-test/silicon/r1-ht-base.log` records
+   only the suite failing on d60121ff (no per-case lines; the six names come from the head
+   runs). Reword to: "`apple-dcp/run.sh` already fails on `d60121ff` alone; on this series its
+   six failing cases (service-rebind, cpuidle-s2idle, probe-mux-pm-dispatch, dwc3-teardown,
+   same-handle-srcu-index, mux-release-stages) are in files this series does not touch, and
+   five of them are the build host's clang 23 `-Wunused-but-set-global`." Or, if a per-case
+   listing of the base run exists, name its exact path in item11.request and keep the sentence.
+   The same wording goes into the item 1 log entry.
+2. Carried over from item 10: the append claims a per-commit build of ae93621a..a089fd06, but
+   only r10-build.log / r10b-build.log (the silicon-12/14 package builds, head only, BUILD-OK)
+   exist. Run the per-commit asahi + apple W=1 build over that range (or over the whole series,
+   which the final regression needs anyway) and name the log in item10.request before the PR
+   text claims "each commit builds alone".
+
+Optional (nits):
+- Reply on the kept backing: "the free with the re-init pending happened at 1027-1058 ms in
+  every sequence" -> "in every sequence that reached it" (a3 and b2 took the 1 s idle reclaim
+  instead).
+- Issue 1 title and body both say the installer "never starts" / "no GPU"; keep one phrasing
+  ("the G15 driver does not start on a normal boot").
+- The replies cite results under "our fork's agent-docs branch"; give the branch name
+  (`agent-docs`) once so the reviewers can find them.

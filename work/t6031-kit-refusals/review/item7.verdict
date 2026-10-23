@@ -1,0 +1,22 @@
+APPROVED
+
+Item 7 (`stats.freed` counted before `vms.open()` can fail). Checked: the fix is Marcelo's ask
+and nothing more: the dropped-chunk count goes to `stats.freed`, the return value and the info
+line only after every VM in the registry was walked and its aliases above `keep_chunks()`
+unmapped; on a failed walk the warning stays, 0 is counted and the chunks still leave the
+backing as before, so each VM's next publication replaces its stale aliases through
+`map_heap()`'s identity check (the existing `map-without-identity` mutant covers that path).
+Finding shown test-first (M3 i7pre: 36 passed, 1 failed, "freed counted with the VM walk
+failed"); after the fix i7: 37 passed, 37/37 mutants caught, `freed-without-walk` (the pre-fix
+accounting) fails exactly `failed_vm_walk_counts_nothing_freed`; selftest 71. Fixup placement
+(code into 4296961b where free_backing() lives; test, mutation and docstring into 873d95fb
+where the harness first runs the reclaim bodies) is right; the message addition is a fact.
+
+Conditions before the push:
+1. Per-commit build and host tests over the rewritten range (mutations at the head), appended
+   to item7.request with the log paths.
+
+Optional (nits):
+- The stat now undercounts in the rare failed-walk case (the pages do go at the VMs' next
+  publications but are never counted). Acceptable and documented; one clause in the item 11
+  reply to Marcelo ("counted only when the unmap ran; a failed walk counts nothing") is enough.

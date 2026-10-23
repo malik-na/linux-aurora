@@ -1,0 +1,36 @@
+Item 9: 33922ce9's message (Marcelo)
+
+The commit is now 0c52e79ea818 "drm/apple: stamp the J516C panel's 14.7 swaps", on head 98dc5a9c
+(pushed). Message-only change, not yet applied; item9.diff is the message diff.
+
+FINDING
+The message says 120 fps was measured "on an earlier 14.7 present path (not yet on this one)",
+while the PR body reports kmscube at 120 fps on this branch. Real: the message predates the
+measurement on this branch.
+
+VALIDATION (evidence on this branch, J516C, #177 device tree)
+- results/20261023-093208-r182-item6-accept (package silicon-8, items 1-5): kmscube_fps 120.0287,
+  edp_mode 3456x2160.
+- results/20261023-131907-r182-item8-d4-accept (package silicon-10, items 1-8): kmscube_fps
+  120.028006, edp_mode 3456x2160.
+- Swap completion times, from the "swap N complete" dmesg lines (the driver logs only a boot's
+  first swaps): item 6 boot 6163, 8104, 5225 us; item 8 boot 5112, 8060, 2887 us, so 2.9 to
+  8.1 ms. The dmesg files are private (~/m3-private/r182-item8-d4-dmesg.txt; the item 6 lines
+  are quoted in item 6's acceptance output above).
+- The mode is 3456x2160@120 with the notch hidden (the DCP mode line), not 3456x2234 as the old
+  text said.
+
+FIX
+Message diff in item9.diff: the measured paragraph now says "Measured on the J516C on this
+branch: kmscube (atomic) presents at 120 fps (120.03 on two boots) on the panel's 120 Hz mode,
+3456x2160 with the 74 notch rows hidden, and the first swaps of a boot complete in 2.9 to 8.1 ms
+instead of 16.7 ms." No code changes; the tree is unchanged, verified with git diff after the
+reword. Lines are at most 72 columns.
+
+FIX VALIDATION
+Message only; trees are compared before and after. check-commits and the keyword scan run
+after the reword. No build is needed, since tree identity is checked.
+
+APPENDED AFTER APPROVAL
+Reworded (the commit is now the second in the series). All 11 trees are identical to 98dc5a9c's.
+check-commits: 11 signed off, the same 2 warnings. Keyword scan clean. Head d465423f, pushed.

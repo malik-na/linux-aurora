@@ -1,0 +1,27 @@
+APPROVED
+
+Revision 2 (series a2e8b5d1 -> f4d644d5e50d, local). Checked: range-diff shows only commits 6, 7
+and 10 changed; 9b999a24 is a verbatim extraction of free_backing() (behaviour-neutral, message
+unchanged); b375d3d2 carries the free half (reclaim_pending, pending_free_due, the guard and
+pending branch, direct check_at tests, 4 mutations) and its message now states the no-render
+case; 049e1d7b carries the delay half (pending_free_delay, reclaim_delay_ns, idle_polls wake
+tests, 3 mutations, pending-reinit-stops-free re-pointed). Head tree differs from the revision-1
+WIP only in two doc wordings and the added direct-check tests. Trailers and keyword scan clean
+on all three. M3 i3a (commit 7): 29 passed, 28/28 mutants caught, the pre-fix guard fails "kept
+backing not freed: 18 chunks", selftest 68; i3b (commit 10): 31 passed, 31/31 caught,
+old-reinit-guards "kept backing not freed: 18 chunks, wakes [54] ms", the two arming mutants
+"poll woke in a loop: 8 wakes, next in 0 ns", selftest 71. r3-bisect.log so far: b9334a4d and
+9b999a24 OK.
+
+Conditions before the push (message-only, trees unchanged):
+1. Rewrap the body of 049e1d7b: the line "client that exits with no render after it. A job's
+   arrival re-arms the poll work for its" is 88 characters (checkpatch warns above 75); the
+   subject at 81 is the existing one and may stay.
+2. Let the running per-commit build and host tests over 4481c2d1..f4d644d5 finish green and
+   append the result (r3-bisect.log, r3-ht.log) to item3.request, as for item 2.
+
+Optional (nits):
+- The i3a single runs for free-on-recovery-reinit and pending-free-at-level-1 are covered by
+  the mutation run; no need to list them separately next time.
+- Item 2's log line about rustfmt: correct it as you said, and from now on state where rustfmt
+  ran (Air) in each entry.

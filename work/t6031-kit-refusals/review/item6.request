@@ -1,0 +1,102 @@
+Item 6: hardware safety on the J516C (Marcelo)
+
+Uncommitted: item6.diff (a doc-comment correction in pools/growth.rs) on top of 40b47534 (series
+head, pushed). Not committed yet in agent-docs: the test tool tools/pb-idle-check/ (C source,
+3 shaders, build.sh, pb-idle-run.sh) and results/20261023-r182-item6-pb-idle/ (README.md and
+run.txt). Please read that README; it is the write-up.
+
+FINDINGS
+(a) A mid-client re-init is guarded only by time: ab98a724 says a no-idle re-init between two
+renders of one client faulted at the heap base, and the 50 ms path does not know whose render
+comes next. Asked for: one process with a heavy scene (> 2047 blocks), idle 60 ms, render, idle
+1.1 s, render, plus the fault count and pb stats.
+(b) A level-2 reclaim frees posted blocks before the re-init. Asked for: compute right after a
+level-2 reclaim, before the next render's InitBM, plus the fault count.
+Also: write up what we know about why the no-idle re-init faulted.
+
+HARDWARE RUN (all on this boot)
+- Package built on the M3 from 40b47534 (build-stack177.sh, BUILD-OK; the vmlinux holds the
+  item 3 log string). It was installed with pacman -U and booted with
+  `m3-accept r182-item6 --image ~/m3-images/t35/boot.bin.pr177`. Verdict FAIL only on
+  crtc_file/presents, which is expected with #177's display driver. Native checks ran
+  (compute 8399, vk 5632, gl 6523, zink 4171 runs in 5 s), kmscube 120.03 fps, edid_bytes 128.
+  Record: results/20261023-093208-r182-item6-accept/.
+- Tool: tools/pb-idle-check, one Vulkan device per process, so one VM and one client. It was
+  built in the M3's Mesa chroot (cc -Wall -Wextra, no warnings). Calibration on the #363 kernel:
+  350000 triangles grow about 2550 blocks from 64 in one render (above 2047, below the 3072
+  firmware maximum); 200000 grow about 1440.
+- Sequences (pb-idle-run.sh, desktop stopped; output in run.txt; the boot's dmesg is in
+  ~/m3-private/r182-item6-dmesg.txt on the M3):
+  a1 R 60 R 1100 R (350k); a2 R 60 R 60 R 1100 R 60 R 1100 R; a3 the same as a1 with 200k;
+  a4 R 60 x6 (6 consecutive client-boundary re-inits in one client, the r2c failure shape);
+  c six heavy processes back to back; b1/b2 R 1100 C 10 C 100 C R (350k/200k);
+  b3 R 1100 C 1100 C R C.
+- RESULT: 0 GPU faults, recoveries or hangs. All 8 sequences report `faults: 0`; the only
+  boot-wide pattern match is "raid6: using neon recovery algorithm". Every readback and every
+  compute check passed. Kernel events: 15 client-boundary re-inits at 51 ms (6 consecutive in
+  a4), 5 frees of the kept backing with the re-init pending (20 chunks each, at 1027-1058 ms),
+  2 level-2 idle reclaims (11 chunks), and 8 computes between a level-2 free and the next InitBM.
+  pb counters ended at "requests 5932 grown 59320 refused 0 bad 0 waits 0 refills 264
+  reclaims 24 freed 244".
+- So (a) shows no problem, and per the task I did NOT implement the "next render from a
+  different VM" keying. The r2c analysis below also shows that keying would not have avoided
+  the r2c faults.
+
+WHY THE NO-IDLE RE-INIT FAULTED (r2c private log, details in the README)
+- Every r2c no-idle re-init was at a client switch: ctx 40->43, 43->46, 49->52, 52->55,
+  58->61, 61->2, with a new VM for each dEQP run. The faulting render was the NEW client's first
+  render. The faults came on the second no-idle re-init in a row (43->46, 52->55, 61->2); the
+  first one after a long idle or after a recovery did not fault.
+- Signature: 0.4 ms after the InitBM, before any growth request, units 0x15 and 0x25 wrote to
+  unmapped addresses at heap base +0x100/+0x500/+0x700 (block 0, posted and backed, and mapped
+  by map_pb() at publication), in the new client's ctx. Event type 4 followed, then recovery,
+  and the client lost its device.
+- Cause unknown (firmware internal). Supported conclusions: it is not a host mapping gap, and it
+  needs two back-to-back no-idle InitBMs; a recovery or a long idle in between clears the
+  condition. Leading hypothesis, not shown: the firmware's own PB page recycling after a scene
+  has no completion signal, and an InitBM that lands during it corrupts what the next InitBM
+  starts from. 50 ms is an empirical margin, not a proven quiescence point. r2d never ran
+  consecutive re-inits; this run had 15 at 51 ms, 6 of them consecutive, with no fault.
+- Compute after a level-2 reclaim: a compute-only prefix has no TA/3D work and does not tile
+  into the PB. 8 computes ran in the window (about 60 ms to 1.2 s after the free) without a fault.
+  Firmware background PB work in that window rests on the same empirical argument, not on an
+  interface guarantee.
+
+CODE FIX (item6.diff): a factual correction found by this analysis
+Our own text says the no-idle fault happened "between two renders of one client"; the r2c log
+shows client switches. Corrected:
+- pools/growth.rs, drain_reinit_due() doc: "A re-initialization with no idle time faulted at the
+  heap base (at a client switch, the second in a row with no recovery between); with 50 ms of
+  idle none did, also between two renders of one client."
+- Planned message change in 14cc13d9 "re-initialize the parameter buffer at a client
+  boundary": replace "50 ms is longer than the gaps between one client's renders: a
+  re-initialization with no idle time, between two renders of one client, faulted at the heap
+  base." with "50 ms is longer than the gaps between one client's renders. On the J516C a
+  re-initialization with no idle time faulted at the heap base, at a client switch, the second
+  time in a row with no recovery between; with 50 ms of idle none faulted, also between two
+  renders of one client 60 ms apart." Fixup target: 14cc13d9 (the commit that introduces
+  drain_reinit_due() and that text).
+Validation of the fix (comment only): asahi-g15 selftest 71 passed (2 ignored); make
+drivers/gpu/drm/asahi/ OK, 0 warnings; rustfmt (Air, 1.93.1) clean. Per-commit build and host
+tests will run after the squash, as before.
+
+PLANNED agent-docs COMMIT (after APPROVED): tools/pb-idle-check/, results/20261023-r182-item6-
+pb-idle/ and the acceptance record results/20261023-093208-r182-item6-accept/ (m3-accept wrote
+only README.md there, not collect.txt), plus the item 6 log entry. run.txt holds driver info
+lines only. Scanned: no MAC addresses or serials.
+
+NOTE for item 8: this boot's DCP mode line is "3456x2160": 120 1042130 3456 3464 3496 3536 2160
+2278 2360 2456 (74 notch rows hidden). The task gives 2234 2352 2360 2456 for the full panel.
+That is the same vtotal and vsync end with the notch added back. I will use the task's numbers
+for the EDID DTD, with the pixel clock from 3536 x 2456 x 120 = 1,042,145,280 Hz.
+
+APPENDED AFTER APPROVAL
+- Conditions 1/2: build.sh takes BUILD_ROOT (default $HOME/Projects/build-root-mesa); the run
+  script's pattern now matches only the driver's recovery lines ("G15: recovery", "recovery
+  error|halted|resumed"); on this boot it counts 0, on the r2c log 24. The README explains the
+  "1" in run.txt (raid6) and the boot-wide counts (the acceptance run adds them).
+- Condition 3: comment squashed into the client-boundary commit (now 873d95fb, message
+  reworded as planned). Per-commit build over 4296961b..b1f6bbb7 (M3 r6-bisect.log): all OK,
+  apple W=1 0 warnings; per-commit host tests (r6-ht.log): green, selftest 68..71, pb-growth
+  33..36; head --mutations 36 passed, 36/36. check-commits unchanged, keyword scan clean.
+  Head b1f6bbb71072, pushed.

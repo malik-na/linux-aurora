@@ -1,0 +1,179 @@
+Item 3: kept backing not freed after a client-boundary re-init with no later render
+(Greptile P1, Marcelo)
+
+Uncommitted in .claude/worktrees/stack177-review on top of a2e8b5d193b6; item3.diff = `git diff`.
+
+FINDING
+With more than half the maximum posted, the 50 ms path of reclaim_check() sets recovery.reinit
+and keeps the backing. From then on reclaim_check() and reclaim_delay_ns() both return early on
+recovery.reinit, so the 1 s free never runs (and no poll is armed for it) until the next render.
+An idle machine after a heavy client keeps up to the whole 512 MiB.
+
+VALIDATION OF THE FINDING: real.
+The growth harness now runs the actual reclaim_check(), free_backing(), reclaim_delay_ns(),
+note_idle() and Pools::free_chunks(), plus params pb_reclaim()/pb_idle_ns()/pb_reclaim_blocks()
+with their asahi_core.rs defaults, and a model of the idle poll work exactly as poll.rs arms it
+(each idle pass: note_idle(), reclaim_check(); re-arm for reclaim_delay_ns() rounded up to ms
+plus one 4 ms jiffy; stop when None; panic "poll woke in a loop" after 8 wakes).
+New case client_boundary_reinit_frees_without_a_render: one VM grows to 2100 posted (18
+chunks), its last flight retires, nothing renders after.
+Against the pre-fix code (mutation old-reinit-guards: both guards back to `|| self.recovery.reinit`,
+which is the old behaviour; the free_backing() refactor is behaviour-neutral):
+  FAILED client_boundary_reinit_frees_without_a_render:
+  "kept backing not freed: 18 chunks, wakes [54] ms"
+i.e. one wake at 54 ms (the re-init), then nothing armed, 18 chunks (288 MiB) held for good.
+
+FIX
+pools.rs:
+- Pools gains `reclaim_pending: bool` ("the pending re-initialization was set by a reclaim, not a
+  recovery"), set where reclaim_check() sets recovery.reinit, cleared in Pools::init() next to
+  the ledger reset (the InitBM path, also recovery's).
+- reclaim_check(): the early return is `recovery.reinit && !reclaim_pending` (a recovery's
+  pending re-init still stops it). With a reclaim's re-init pending, it only does the free:
+  at level 2, when Ledger::pending_free_due(idle, g15_pb_idle_ms) holds, it frees the chunks
+  above keep_chunks() and logs "PB heap: idle N ms with P blocks posted and the
+  re-initialization pending: F chunks freed, B backed"; it does not count another reclaim or
+  set anything. The free + VM unmap moved into a helper free_backing(), used by both paths
+  (same statements as before).
+- reclaim_delay_ns(): same guard; with a reclaim's re-init pending it returns
+  Ledger::pending_free_delay(level, idle, g15_pb_idle_ms) = the REMAINING long-idle time
+  (not the expired 50 ms), or None at level < 2 or when nothing is above the kept chunks.
+- module doc: one clause.
+growth.rs:
+- pending_free_due(idle, min_idle) = idle >= min_idle && backed > keep_chunks() * CHUNK_BLOCKS
+  (keep_chunks, not chunks_for(posted): the posted count drops to the initial size at the
+  InitBM, so the posted count must not hold the backing).
+- pending_free_delay(level, idle, min_idle).
+- unit test pending_reinit_frees_kept_backing.
+Harness (tools/asahi/g15-pb-growth-tests.py): the extraction above; model gains Engine.pending
+/frozen, Recovery.armed/failed(), a VM Registry with open() (failure injectable, FAIL_OPEN, for
+item 7), Pools.idle/reclaim_pending, stats.reclaims/freed, a monotonic clock NOW; LEDGER_RESET
+also checks `self.reclaim_pending = false;` in Pools::init(). New cases:
+- client_boundary_reinit_frees_without_a_render: wakes exactly [54, 1004] ms after the idle
+  began, 2 chunks left (backed 256), freed = chunks - 2, every freed chunk unmapped from the VM
+  and its object freed, posted count unchanged (reset waits for the InitBM), recovery.reinit
+  and reclaim_pending still set, then at +100 s reclaim_check() does nothing and
+  reclaim_delay_ns() is None (no loop);
+- client_boundary_reinit_at_level_1_keeps_the_backing: one wake, nothing armed after, a job
+  arriving 5 s later (reclaim_check) frees nothing;
+- idle_reclaim_arms_nothing_after: the ordinary 1 s reclaim below half the maximum: wakes
+  [1004], frees to 2 chunks, nothing armed after;
+- recovery_reinit_frees_nothing: reinit set without a reclaim: no wake, nothing freed even
+  after 5 s.
+New mutations (intended test, message): old-reinit-guards (client_boundary..., "kept backing
+not freed"); pending-reinit-stops-free (only the check's guard reverted -> "poll woke in a
+loop": the delay is armed but the check never acts, a real wake loop); pending-reinit-arms-
+nothing (only the delay's guard -> "kept backing not freed"); pending-delay-from-drain (arm for
+the 50 ms -> "poll woke in a loop"); pending-free-at-level-1 (level_1 case, "freed at level 1");
+reclaim-pending-not-set ("kept backing not freed"); free-on-recovery-reinit
+(recovery_reinit_frees_nothing, "freed for a recovery").
+
+Item boundary: the harness extraction of reclaim_check()/reclaim_delay_ns() is part of item 5
+(Chris) as well; it is done here because item 3's test needs it. Item 5 will still replace the
+old `Pools::drop_chunks()` model (immediate ledger reset) used by freed_chunks_are_mapped_again
+and add its 60 ms / 1.1 s / compute-only cases.
+
+FIX VALIDATION (M3 chroot, outputs ~/Projects/build-out/kernel-stack177/i3/)
+- g15-pb-growth-tests.py --mutations: "30 passed; 0 failed"; 31 mutations, 31 caught by
+  their intended test with the intended message; control tuning-whole-heap passes.
+  (After item 2: 26 passed, 24/24.)
+- single runs: old-reinit-guards, reclaim-pending-not-set, pending-reinit-stops-free fail as
+  listed above (m-*/result.json).
+- asahi-g15 selftest: 71 passed, 0 failed, 2 ignored (was 70; + pending_reinit_frees_kept_backing).
+- zero-words --mutations: pass.
+- make drivers/gpu/drm/asahi/ (LLVM=1): OK, 0 warnings.
+- rustfmt (Air, toolchain 1.93.1 rustfmt 1.8.0, kernel .rustfmt.toml): no drift against
+  d60121ff in any changed .rs file (one assert_eq! wrapped). NOTE: my item 2 rustfmt line was
+  produced by a script whose rustfmt calls failed silently in the chroot (the chroot has no
+  rustfmt). Re-run properly on the Air for a2e8b5d1: no drift (every file now == base). I will
+  correct the item 2 log line.
+- No hardware run for this item: host logic; the J516C idle-free-without-a-job check is in the
+  final regression (and item 6 exercises the drain path on hardware).
+
+PLANNED COMMIT: fixup into 29eba03c0d75 "drm/asahi: g15: m3: run the PB reclaim check after the
+idle time without new work" (the commit that claims the reclaim runs after idle time without new
+work; reclaim_delay_ns() is introduced there, and every piece used exists by then). Per-commit
+build and host tests over the rewritten range after the squash. Message changes:
+- replace "Nothing is armed while busy, while a re-initialization or a recovery is pending, or
+  when nothing can become due." with:
+  "Nothing is armed while busy, while a recovery or its re-initialization is pending, or when
+  nothing can become due. While a reclaim's re-initialization is pending (a client-boundary
+  one keeps the backing), the check still frees the backing above the kept chunks once the
+  engine has been idle for g15_pb_idle_ms, and the poll is armed for the rest of that idle,
+  not for the expired 50 ms: a heavy client that exits with no render after it otherwise kept
+  its backing until the next render."
+- add a paragraph after the growth.rs host-test paragraph:
+  "The growth harness also runs reclaim_check(), free_backing(), reclaim_delay_ns() and
+  note_idle(), driven as the idle poll work arms them: a heavy client that exits with nothing
+  rendered after it is re-initialized after 50 ms and its kept backing freed after the long
+  idle, with two wakes and nothing armed after; at level 1 the backing stays; a recovery's
+  pending re-initialization frees nothing."
+
+============================================================================================
+revision 2 (after CHANGES)
+
+Applied as asked: the fix is split across the commits that own each half, plus the optional
+nit (free_backing() extraction one commit earlier) and the module-doc wording nit. Because a
+split can only be shown as history, the rewritten series is committed LOCALLY on
+t6031/stack-on-177-review (head f4d644d5e50d), NOT pushed to origin; origin still has a2e8b5d1.
+On CHANGES I rewrite again; on APPROVED I push. The full single-diff WIP that revision 1
+reviewed is parked on the local branch t6031/item3-full-wip (71304b60) for comparison.
+item3.diff now holds, per rewritten commit, `diff` of `git show` old vs new (message + diff),
+then the full range-diff.
+
+Series a2e8b5d1 -> f4d644d5 (commits 1-5, 8, 9, 11 unchanged in content):
+6. 048a5ccc -> 9b999a24 "reclaim the parameter buffer when the engine is idle": behaviour-
+   neutral extraction of Firmware::free_backing() (the keep/free_chunks/stats.freed/VM unmap
+   block moved verbatim into a helper; reclaim_check() calls it). Message unchanged.
+7. 8eb156d1 -> b375d3d2 "re-initialize the parameter buffer at a client boundary" (part a):
+   Pools::reclaim_pending (field, new(), init()), Ledger::pending_free_due(), reclaim_check()
+   guard `reinit && !reclaim_pending` and its pending-free branch, module-doc clause ("with
+   g15_pb_reclaim 2"), growth.rs unit test pending_reinit_frees_kept_backing (due assertions);
+   harness: extraction of note_idle(), reclaim_check(), free_backing(), free_chunks() and the
+   three params, the model additions, the LEDGER_RESET line; tests driving reclaim_check()
+   directly over the clock (helper check_at(f, t): set NOW, note_idle(), reclaim_check()):
+   client_boundary_reinit_frees_without_a_render (idle at t0; at +50 ms re-init with the
+   backing kept; at +999.999999 ms nothing freed; at +1 s 2 chunks left, posted unchanged,
+   freed = chunks-2, unmaps and frees counted; at +100 s nothing), ..._at_level_1_keeps_the_
+   backing, recovery_reinit_frees_nothing; mutations pending-reinit-stops-free ("kept backing
+   not freed"), reclaim-pending-not-set, free-on-recovery-reinit, pending-free-at-level-1.
+   Message: one sentence in the reclaim paragraph and the harness sentence (see item3.diff).
+10. 29eba03c -> 049e1d7b "run the PB reclaim check after the idle time without new work"
+   (part b): Ledger::pending_free_delay(), reclaim_delay_ns() guard + pending branch, the delay
+   assertions in the growth.rs unit test; harness: reclaim_delay_ns() extraction, idle_polls
+   model, client_boundary_reinit_arms_the_long_idle (the wake test, renamed so a's direct test
+   keeps its name; wakes [54, 1004] ms, nothing armed after), idle_reclaim_arms_nothing_after,
+   and "nothing armed" assertions added to the level-1 and recovery cases; mutations
+   old-reinit-guards, pending-reinit-arms-nothing, pending-delay-from-drain;
+   pending-reinit-stops-free re-pointed to the wake test, "poll woke in a loop". Message as
+   planned in revision 1 (plus the harness paragraph).
+Head tree vs revision 1's WIP: pools.rs differs only in two doc-comment wordings; the harness
+differs by the direct-check tests (a) next to the wake tests (b).
+
+VALIDATION (M3 chroot; GIT_NO_LAZY_FETCH=1 now set in my scripts: the harness's optional
+`git show dba2a110:...` reference check was triggering slow lazy fetches in the blobless clone;
+it reports old_reference_checked_against_git=false either way, as in every earlier run)
+- at commit 7 with part a applied (output ~/Projects/build-out/kernel-stack177/i3a/):
+  pb-growth --mutations 29 passed, 28/28 mutations caught with their intended message,
+  control passes; pending-reinit-stops-free (the pre-fix guard at this commit) fails
+  "kept backing not freed: 18 chunks"; selftest 68 passed (2 ignored); zero-words pass;
+  asahi build OK, 0 warnings.
+- at commit 10 with part b applied (i3b/): 31 passed, 31/31 caught, control passes;
+  old-reinit-guards (pre-fix) fails "kept backing not freed: 18 chunks, wakes [54] ms";
+  pending-reinit-stops-free and pending-delay-from-drain "poll woke in a loop: 8 wakes";
+  selftest 71 passed (2 ignored); zero-words pass; build OK, 0 warnings.
+- head f4d644d5: the three files are identical to commit 10's validated tree.
+- rustfmt (Air, 1.93.1): no drift in the changed files.
+- RUNNING: per-commit build (asahi + apple W=1) and per-commit host tests (selftest,
+  pb-growth, zero-words, dcp14-panel; mutations at the head) over 4481c2d1..f4d644d5:
+  M3 ~/aurora-test/silicon/r3-bisect.log, r3-ht.log. I will append the result here.
+
+APPENDED AFTER APPROVAL (revision 2 conditions)
+- Per-commit build over 4481c2d1..f4d644d5 (M3 ~/aurora-test/silicon/r3-bisect.log): all 7
+  rewritten commits OK, apple W=1 0 warnings.
+- Per-commit host tests (r3-ht.log): every commit self=0 pbg=0 zw=0 dcp14=0; selftest
+  63/65/68/70/70/71/71 passed (2 ignored); pb-growth 25/26/29/29/29/31/31 passed. Head with
+  --mutations: 31 passed, 31/31 caught, control passes.
+- 049e1d7b's body rewrapped (the 88-character line); now d02f912a; tree unchanged. Series head
+  562e77978df4. check-commits: 11 signed off, checkpatch the same 2 warnings (EDID, loader
+  commits), 0 errors; keyword scan clean; trailers on all 11.

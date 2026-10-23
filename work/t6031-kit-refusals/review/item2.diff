@@ -1,0 +1,124 @@
+diff --git a/drivers/gpu/drm/asahi/g15/pools.rs b/drivers/gpu/drm/asahi/g15/pools.rs
+index 58df4bef589f..1bc931405fb1 100644
+--- a/drivers/gpu/drm/asahi/g15/pools.rs
++++ b/drivers/gpu/drm/asahi/g15/pools.rs
+@@ -633,8 +633,11 @@ pub(crate) fn map_pb(&mut self, vm: &VmState) -> Result {
+     /// maps it at its next publication ([`Self::map_pb`]). A failure is logged and leaves the
+     /// reserve short: requests then wait, and the next pass tries again.
+     pub(crate) fn refill_backing(&mut self) {
+-        // A pending re-initialization is about to drop the posted count: nothing to back for.
+-        if self.recovery.reinit {
++        // A pending re-initialization is about to drop the posted count: nothing to back for,
++        // unless a render published before it still runs (the flights behind a fragment kill
++        // keep asking for growth until they retire).
++        let render = (0..self.engine.flights.len()).any(|i| self.receipts(i).renders != 0);
++        if self.recovery.reinit && !render {
+             return;
+         }
+         while self.pools.ledger.refill_due() {
+diff --git a/tools/asahi/g15-pb-growth-tests.py b/tools/asahi/g15-pb-growth-tests.py
+index 56729e3c7986..5c3c2ac7452d 100644
+--- a/tools/asahi/g15-pb-growth-tests.py
++++ b/tools/asahi/g15-pb-growth-tests.py
+@@ -33,8 +33,9 @@ What it shows:
+   reserve chunk remain, mapped into the VM of the flights before any record or producer names
+   their blocks, never past the heap; with the reserve dry a request waits at the head of the
+   queue, keeps its counter and is answered once a chunk is backed; a chunk that cannot be mapped
+-  into the running VM is dropped again; a pending re-initialization backs nothing; a failed
+-  reply keeps everything;
++  into the running VM is dropped again; a pending re-initialization backs nothing while no
++  render is published, and still backs for a render published before it; a failed reply keeps
++  everything;
+ - a VM's aliases are the chunks, contiguous from the heap's start; a VM that runs after another
+   grew the backing maps it first (at publication); a partial catch-up keeps the aliases made; a
+   chunk freed and backed again (an idle reclaim) is unmapped and mapped again at publication;
+@@ -158,7 +159,12 @@ MUTATIONS = {
+     # Keep a chunk that the running VM could not map.
+     'refill-failure-keeps-chunk': (POOLS, '                        self.pools.chunks.truncate(backed);\n', ''),
+     # Back chunks while a re-initialization is pending.
+-    'refill-during-reinit': (POOLS, '        if self.recovery.reinit {\n            return;\n        }\n', ''),
++    'refill-during-reinit': (POOLS, '        if self.recovery.reinit && !render {\n            return;\n        }\n', ''),
++    # Skip the refill on any pending re-initialization, also with a live render (a stall).
++    'refill-skip-with-live-render': (POOLS, 'if self.recovery.reinit && !render {', 'if self.recovery.reinit {'),
++    # Refill for any live flight, also compute-only ones that cannot ask for growth.
++    'refill-for-any-flight': (POOLS, 'if self.recovery.reinit && !render {',
++                              'if self.recovery.reinit && self.engine.flights.is_empty() {'),
+     # Keep a VM's alias of a chunk that was freed and backed again.
+     'map-without-identity': (VM, '                if core::ptr::eq(&*have.gem, &*gem) {', '                if true {'),
+     # Catch up without the one-VM check.
+@@ -192,7 +198,9 @@ INTENDED = {
+     'refill-maps-no-flight': ('growth_backs_before_posting', 'record of block'),
+     'no-wait-requeue': ('dry_reserve_waits_and_keeps_order', 'waiting request lost'),
+     'refill-failure-keeps-chunk': ('refill_map_failure_drops_the_chunk', 'chunk kept after a failed map'),
+-    'refill-during-reinit': ('pending_reinit_backs_nothing', 'backed during a pending re-initialization'),
++    'refill-during-reinit': ('pending_reinit_without_flights_backs_nothing', 'backed during a pending re-initialization'),
++    'refill-skip-with-live-render': ('pending_reinit_with_a_live_render_refills', 'growth request stranded'),
++    'refill-for-any-flight': ('pending_reinit_with_compute_only_backs_nothing', 'backed for a compute-only flight'),
+     'map-without-identity': ('freed_chunks_are_mapped_again', 'alias of another object'),
+     'no-activation-guard': ('catch_up_refuses_flights_of_another_vm', 'catch-up with a flight of another VM'),
+     'initial-backs-whole-heap': ('startup_backs_the_initial_blocks', 'startup allocation'),
+@@ -1251,9 +1259,11 @@ mod pb_growth_tests {
+         assert_cursor(&f, &f.engine.flights[0].job.vm, chunks + 1);
+     }
+ 
++    /// A pending re-initialization with nothing published (a reclaim, or a recovery that
++    /// failed the flights): the posted count is about to drop, so nothing is backed.
+     #[test]
+-    fn pending_reinit_backs_nothing() {
+-        let mut f = Firmware::new();
++    fn pending_reinit_without_flights_backs_nothing() {
++        let mut f = Firmware::without_flights();
+         f.pools.ledger.posted = f.pools.ledger.backed - growth_reserve() + 1;
+         f.recovery.reinit = true;
+         take();
+@@ -1264,6 +1274,50 @@ mod pb_growth_tests {
+         assert_eq!(f.pools.stats.refills, 1);
+     }
+ 
++    /// A pending re-initialization with only compute published (no render can ask for
++    /// growth): nothing is backed.
++    #[test]
++    fn pending_reinit_with_compute_only_backs_nothing() {
++        let mut f = Firmware::new();
++        f.renders[0] = 0;
++        f.pools.ledger.posted = f.pools.ledger.backed;
++        f.recovery.reinit = true;
++        take();
++        for _ in 0..4 {
++            f.pass();
++        }
++        assert_eq!(count(&take(), is_backing), 0, "backed for a compute-only flight");
++        assert_eq!(f.pools.stats.refills, 0);
++    }
++
++    /// A render published before the re-initialization was set (the flights behind a fragment
++    /// kill) still asks for growth: with its reserve used up, the refill must still back
++    /// chunks, or the request waits until the deadline.
++    #[test]
++    fn pending_reinit_with_a_live_render_refills() {
++        let mut f = Firmware::new(); // one live render
++        let start = f.pools.ledger.backed as u64;
++        f.pools.ledger.posted = f.pools.ledger.backed;
++        f.recovery.reinit = true;
++        f.queue();
++        take();
++        for _ in 0..4 {
++            f.pass();
++        }
++        let s = &f.pools.stats;
++        assert!(
++            f.events.grow.is_empty(),
++            "growth request stranded: posted={} backed={} waits={} refills={}",
++            f.pools.ledger.posted,
++            f.pools.ledger.backed,
++            s.waits,
++            s.refills
++        );
++        // The request waits one pass for the chunk; the grant's pass tops the reserve up.
++        assert_eq!((s.waits, s.refills, s.requests), (1, 2, 1));
++        assert_posted_backed(&take(), 5, start);
++    }
++
+     #[test]
+     fn transport_failure_keeps_everything() {
+         let mut f = Firmware::new();

@@ -1,0 +1,92 @@
+Item 4: re-initializations when nothing grew (Marcelo)
+
+Uncommitted on top of 562e77978df4 (series head, pushed); item4.diff = `git diff`.
+
+FINDING
+reclaim_due() and drain_reinit_due() (pools/growth.rs) look only at the posted count, not at
+whether anything grew since the initialization: with g15_pb_reclaim_blocks below g15_pb_blocks
+(e.g. 32 with 64) or g15_pb_blocks above 2047 (half the 4095 maximum), every qualifying idle
+re-initializes a PB that would post the same blocks again; reclaim_delay() mirrors them and
+arms the poll for it.
+
+VALIDATION OF THE FINDING: real; test-first.
+Tests added first and run against the unfixed code (M3 ~/Projects/build-out/kernel-stack177/
+i4pre/):
+- growth.rs unit tests (asahi-g15 selftest): "test result: FAILED. 68 passed; 3 failed":
+  reclaim: "re-initialization with nothing grown" (Ledger::new(true, 64, 4095),
+    reclaim_due(32, 5 s, 1 s));
+  back_to_back_heavy_scenes: "drain with nothing grown" (Ledger::new(true, 3000, 4095),
+    drain_reinit_due(50 ms));
+  reclaim_delay_matches_the_checks: "armed with nothing grown" (initial 3000, backing for it,
+    reclaim_delay(2, 1024, 0, 1 s) == None; and initial 64, floor 32).
+- growth harness: "FAILED. 31 passed; 2 failed":
+  nothing_grown_reinitializes_nothing: "re-initialization with nothing grown (3000 blocks,
+    floor 1024)" (actual reclaim_check() over the clock at 0, 50 ms, 1 s, 5 s);
+  nothing_grown_arms_nothing: "armed with nothing grown (3000 blocks, floor 1024): 1 wakes"
+    (the idle poll model).
+
+FIX (growth.rs)
+- reclaim_due(): `self.posted > self.initial && self.posted > floor && idle_ns >= min_idle_ns`
+  (doc: with nothing grown a re-initialization posts the same blocks again).
+- drain_reinit_due(): `self.posted > self.initial && self.posted > self.max / 2 && ...`.
+- reclaim_delay(): `let grown = self.posted > self.initial;` gating both the drain arm and the
+  floor arm (`(grown && posted > floor) || free`), so the delay still equals the first idle
+  time a check acts (reclaim_delay_matches_the_checks's loop over posted 64..4095 with initial
+  64 covers posted == initial).
+Harness: the two cases above (the parameter pairs (64, 32) then (3000, 1024), so each mutant
+fails on its own pair) and three mutations: reclaim-due-nothing-grown
+(nothing_grown_reinitializes_nothing, "(64 blocks, floor 32)"), drain-due-nothing-grown (same
+test, "(3000 blocks"), delay-nothing-grown (nothing_grown_arms_nothing, "poll woke in a loop":
+with the delay ungated but the checks gated, the poll re-arms for 0 ns forever, i.e. the wake
+loop a half-fix would cause); docstring bullet.
+
+FIX VALIDATION (M3 chroot, ~/Projects/build-out/kernel-stack177/i4/)
+- pb-growth --mutations: 33 passed, 34/34 mutations caught by their intended test and
+  message, control passes.
+- asahi-g15 selftest: 71 passed, 0 failed, 2 ignored. zero-words --mutations: pass.
+- make drivers/gpu/drm/asahi/ (LLVM=1): OK, 0 warnings.
+- rustfmt (Air, toolchain 1.93.1, kernel .rustfmt.toml): growth.rs clean.
+- No hardware run (host logic; parameter values off the defaults).
+
+OBSERVATION, NOT CHANGED (your call): at level 2 reclaim_check() also sets a re-initialization
+when only free_due() holds, also with posted == initial (e.g. kept backing after a client
+boundary whose next client grew nothing). There the posted blocks are not touched by the free
+(free_backing() keeps keep_chunks() = chunks_for(initial) = chunks_for(posted)), so the re-init
+is not needed; a free without the re-init would be the stricter fix. I kept the item to what
+Marcelo asked (reclaim_due, drain_reinit_due, reclaim_delay) because changing the free path
+changes when the PB is re-initialized after a free, which item 6 tests on hardware. Say if you
+want it here.
+
+PLANNED COMMITS (split by owner, as in item 3; per-commit build and host tests after):
+- 9b999a24 "reclaim the parameter buffer when the engine is idle" (introduces reclaim_due()):
+  the reclaim_due() change and its unit-test assertion in `reclaim`. The harness has no
+  reclaim bodies at that commit. Message: add "Nothing is re-initialized when nothing grew
+  since the initialization (posted == initial), whatever g15_pb_reclaim_blocks is."
+- b375d3d2 "re-initialize the parameter buffer at a client boundary" (introduces
+  drain_reinit_due()): the drain_reinit_due() change, its unit assertion in
+  back_to_back_heavy_scenes, harness case nothing_grown_reinitializes_nothing and mutations
+  reclaim-due-nothing-grown and drain-due-nothing-grown. Message: "...with more than half the
+  maximum posted and grown since the initialization (an initial posting above half the
+  maximum is not drained)."
+- d02f912a "run the PB reclaim check after the idle time without new work" (introduces
+  reclaim_delay()): the reclaim_delay() change, its unit assertions, harness case
+  nothing_grown_arms_nothing, mutation delay-nothing-grown, the docstring bullet. Message: "The
+  delay mirrors the checks, also in requiring growth since the initialization."
+
+APPENDED AFTER APPROVAL
+- Split done as planned: reclaim_due() + its unit assertion -> 4296961b (reclaim commit;
+  message bullet "nothing is re-initialized when nothing grew ..."); drain_reinit_due() + unit
+  assertion + harness case nothing_grown_reinitializes_nothing + mutations reclaim-due-/drain-
+  due-nothing-grown -> 38f9a931 (client boundary; message "...and grown since the
+  initialization (an initial posting above half the maximum is not drained)", paragraph
+  rewrapped); reclaim_delay() + unit assertions + nothing_grown_arms_nothing +
+  delay-nothing-grown + docstring -> 34653844 (delay; message "The delay mirrors the checks,
+  also in requiring growth since the initialization."). Head 9e30961c; its tree is identical
+  to the approved WIP (0d9ec534). No message line above 72 except the existing subject.
+- Per-commit build over b9334a4d..9e30961c (M3 ~/aurora-test/silicon/r4-bisect.log): all 6
+  OK, apple W=1 0 warnings.
+- Per-commit host tests (r4-ht.log): self 65/68/70/70/71/71 passed (2 ignored), pb-growth
+  26/30/30/30/33/33 passed, zero-words and dcp14-panel pass at every commit. Head with
+  --mutations: 33 passed, 34/34 caught, control passes.
+- check-commits: 11 signed off, checkpatch the same 2 warnings, 0 errors; keyword scan clean;
+  rustfmt (Air, 1.93.1) no drift.

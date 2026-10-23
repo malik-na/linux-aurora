@@ -1,0 +1,1218 @@
+################ drm/asahi: g15: m3: reclaim the parameter buffer when the engine is idle: 048a5ccc980e -> 9b999a2442f4 (interdiff of the commit's own diff)
+142c142
+< index 50f8501e7dfc..18e5d132d3e0 100644
+---
+> index 50f8501e7dfc..2882db81f149 100644
+235c235
+< @@ -660,6 +683,77 @@ pub(crate) fn refill_backing(&mut self) {
+---
+> @@ -660,6 +683,85 @@ pub(crate) fn refill_backing(&mut self) {
+282,297c282
+< +            let keep = self.pools.ledger.keep_chunks() as usize;
+< +            freed = self.pools.free_chunks(keep);
+< +            self.pools.stats.freed += freed as u64;
+< +            // The mappings hold the chunks' pages: drop them in every VM that could publish.
+< +            match self.vms.open() {
+< +                Ok(states) => {
+< +                    for state in states.iter() {
+< +                        state.unmap_heap_above(keep);
+< +                    }
+< +                }
+< +                Err(e) => dev_warn!(
+< +                    self.dev(),
+< +                    "PB heap: reclaim could not walk the VMs: {}\n",
+< +                    e.to_errno()
+< +                ),
+< +            }
+---
+> +            freed = self.free_backing();
+307a293,315
+> +    }
+> +
+> +    /// Frees the backing chunks above those a re-initialized heap keeps
+> +    /// ([`growth::Ledger::keep_chunks`]) and drops their mappings in every VM that could
+> +    /// publish; returns the chunks freed.
+> +    fn free_backing(&mut self) -> usize {
+> +        let keep = self.pools.ledger.keep_chunks() as usize;
+> +        let freed = self.pools.free_chunks(keep);
+> +        self.pools.stats.freed += freed as u64;
+> +        // The mappings hold the chunks' pages: drop them in every VM that could publish.
+> +        match self.vms.open() {
+> +            Ok(states) => {
+> +                for state in states.iter() {
+> +                    state.unmap_heap_above(keep);
+> +                }
+> +            }
+> +            Err(e) => dev_warn!(
+> +                self.dev(),
+> +                "PB heap: reclaim could not walk the VMs: {}\n",
+> +                e.to_errno()
+> +            ),
+> +        }
+> +        freed
+################ drm/asahi: g15: m3: re-initialize the parameter buffer at a client boundary: 8eb156d1ce59 -> b375d3d2a922 (interdiff of the commit's own diff)
+17c17,21
+< if the next client posts below g15_pb_reclaim_blocks. This applies to
+---
+> if the next client posts below g15_pb_reclaim_blocks. With no render
+> after the client boundary, the re-initialization stays pending, and
+> with g15_pb_reclaim 2 the check frees the backing above the kept
+> chunks once the engine has been idle for g15_pb_idle_ms (a recovery's
+> pending re-initialization still stops the check). This applies to
+23c27,33
+< their backing, and kept backing is freed at the next long idle.
+---
+> their backing, and kept backing is freed at the next long idle. The
+> growth harness also runs reclaim_check(), free_backing() and
+> note_idle() over a clock: a heavy client that exits with nothing
+> rendered after it is re-initialized after 50 ms and its kept backing
+> freed after the long idle, its posted count kept until the InitBM; at
+> level 1 the backing stays; a recovery's pending re-initialization
+> frees nothing.
+30c40
+< index 18e5d132d3e0..a750f437d86b 100644
+---
+> index 2882db81f149..fffd81625612 100644
+33c43
+< @@ -26,7 +26,9 @@
+---
+> @@ -26,7 +26,10 @@
+40c50,51
+< +//!   re-initializes it the same way but keeps the backing.
+---
+> +//!   re-initializes it the same way but keeps the backing; if no render follows, with
+> +//!   `g15_pb_reclaim` 2 the backing above the kept chunks is freed after `g15_pb_idle_ms`.
+44c55,81
+< @@ -693,13 +695,15 @@ pub(crate) fn note_idle(&mut self) {
+---
+> @@ -196,6 +199,9 @@ pub(crate) struct Pools {
+>      exhausted_logged: bool,
+>      /// The engine's idle clock (nothing published, nothing pending), for the reclaim.
+>      idle: IdleClock,
+> +    /// The pending re-initialization was set by a reclaim ([`Firmware::reclaim_check`]), not by
+> +    /// a recovery; cleared by [`Self::init`].
+> +    reclaim_pending: bool,
+>      pub(crate) stats: PbStats,
+>  }
+>  
+> @@ -415,6 +421,7 @@ pub(crate) fn new(dev: &AsahiDevice, objects: &mut Objects) -> Result<Self> {
+>              c1_written: false,
+>              exhausted_logged: false,
+>              idle: IdleClock::default(),
+> +            reclaim_pending: false,
+>              stats: PbStats::default(),
+>          })
+>      }
+> @@ -476,6 +483,7 @@ fn init(&mut self) -> Result {
+>          // capacity.
+>          self.ledger.reinit();
+>          self.exhausted_logged = false;
+> +        self.reclaim_pending = false;
+>          if tuning::PB_GROW {
+>              // C1 names the initial pages again.
+>              self.c1_written = false;
+> @@ -693,19 +701,24 @@ pub(crate) fn note_idle(&mut self) {
+62,63c99,103
+< +    /// its stale mappings at [`VmState::map_heap`]). Called under the device lock when a job
+< +    /// arrives at an idle engine and in idle poll passes.
+---
+> +    /// its stale mappings at [`VmState::map_heap`]). While a reclaim's re-initialization is
+> +    /// pending (a client-boundary one kept the backing), `g15_pb_reclaim` 2 frees the backing
+> +    /// above those chunks once the engine has been idle for `g15_pb_idle_ms`
+> +    /// ([`growth::Ledger::pending_free_due`]). Called under the device lock when a job arrives
+> +    /// at an idle engine and in idle poll passes.
+67c107,114
+< @@ -714,18 +718,19 @@ pub(crate) fn reclaim_check(&mut self) {
+---
+>              || !self.engine.flights.is_empty()
+>              || !self.engine.pending.is_empty()
+> -            || self.recovery.reinit
+> +            || (self.recovery.reinit && !self.pools.reclaim_pending)
+>              || self.recovery.armed.is_some()
+>              || self.engine.frozen
+>              || self.recovery.failed().is_some()
+> @@ -714,18 +727,35 @@ pub(crate) fn reclaim_check(&mut self) {
+77a125,139
+> +        if self.recovery.reinit {
+> +            if level >= 2 && ledger.pending_free_due(idle_ns, min_idle) {
+> +                let posted = ledger.posted;
+> +                let freed = self.free_backing();
+> +                dev_info!(
+> +                    self.dev(),
+> +                    "PB heap: idle {} ms with {} blocks posted and the re-initialization pending: {} chunks freed, {} backed\n",
+> +                    idle_ns / 1_000_000,
+> +                    posted,
+> +                    freed,
+> +                    self.pools.chunks.len()
+> +                );
+> +            }
+> +            return;
+> +        }
+83a146
+> +        self.pools.reclaim_pending = true;
+90,92c153,155
+<              let keep = self.pools.ledger.keep_chunks() as usize;
+<              freed = self.pools.free_chunks(keep);
+<              self.pools.stats.freed += freed as u64;
+---
+>              freed = self.free_backing();
+>          }
+>          dev_info!(
+94c157
+< index 09656c879bde..89bd3cd3fe96 100644
+---
+> index 09656c879bde..013d0a6dbc75 100644
+108c171
+< @@ -159,6 +163,22 @@ pub(crate) const fn reclaim_due(&self, floor: u32, idle_ns: u64, min_idle_ns: u6
+---
+> @@ -159,6 +163,30 @@ pub(crate) const fn reclaim_due(&self, floor: u32, idle_ns: u64, min_idle_ns: u6
+118a182,189
+> +    /// While a reclaim's re-initialization is pending (the posted count returns to the initial
+> +    /// size at the next render): whether the backing above [`Self::keep_chunks`] is to be
+> +    /// freed, idle for `min_idle_ns`. A client-boundary re-initialization keeps the backing;
+> +    /// with no render after it, this frees it.
+> +    pub(crate) const fn pending_free_due(&self, idle_ns: u64, min_idle_ns: u64) -> bool {
+> +        idle_ns >= min_idle_ns && self.backed > self.keep_chunks() * CHUNK_BLOCKS
+> +    }
+> +
+131c202
+< @@ -566,6 +586,71 @@ fn reclaim() {
+---
+> @@ -566,6 +594,71 @@ fn reclaim() {
+202a274,634
+> @@ -615,6 +708,21 @@ fn reclaim_after_free_then_refill() {
+>          assert!(l.reclaim_due(floor, clock.idle_ns(t), min_idle));
+>      }
+>  
+> +    /// A client-boundary re-initialization with 23 chunks backed and no render after it: the
+> +    /// kept backing is due to be freed after the long idle, and once freed nothing more is due.
+> +    #[test]
+> +    fn pending_reinit_frees_kept_backing() {
+> +        let s = 1_000_000_000;
+> +        let mut l = Ledger::new(true, 64, 4095);
+> +        l.unback_to(23);
+> +        l.posted = 2800;
+> +        assert!(l.drain_reinit_due(DRAIN_IDLE_NS));
+> +        assert!(!l.pending_free_due(s - 1, s));
+> +        assert!(l.pending_free_due(s, s));
+> +        l.unback_to(l.keep_chunks());
+> +        assert!(!l.pending_free_due(100 * s, s));
+> +    }
+> +
+>      #[test]
+>      fn grants_only_backed_blocks() {
+>          let mut l = Ledger::new(true, 64, 4095);
+> diff --git a/tools/asahi/g15-pb-growth-tests.py b/tools/asahi/g15-pb-growth-tests.py
+> index 5c3c2ac7452d..3f4cf0b2a012 100644
+> --- a/tools/asahi/g15-pb-growth-tests.py
+> +++ b/tools/asahi/g15-pb-growth-tests.py
+> @@ -3,10 +3,11 @@
+>  """Run the G15 PB growth answer and its on-demand backing, actual bodies, against a model.
+>  
+>  The harness extracts from drivers/gpu/drm/asahi/g15/pools.rs Firmware::answer_growth(),
+> -answer_request(), map_pb() and refill_backing(), Pools::soft_max(), map_heap() and
+> -back_chunk(), PbChunk, chunk_gva(), CHUNK_BYTES and Pools::new's PB backing statements; from
+> -vm.rs VmState::map_one(), map_heap(), map_chunk() and unmap_heap_above(); pb_max_blocks() and
+> -pb_blocks() from params.rs; the PB sizes, tuning and PB leaf word from hw.rs; Prot::from_pte() and
+> +answer_request(), map_pb(), refill_backing(), note_idle(), reclaim_check() and free_backing(),
+> +Pools::soft_max(), map_heap(), free_chunks() and back_chunk(), PbChunk,
+> +chunk_gva(), CHUNK_BYTES and Pools::new's PB backing statements; from vm.rs
+> +VmState::map_one(), map_heap(), map_chunk() and unmap_heap_above(); pb_max_blocks(),
+> +pb_blocks(), pb_reclaim(), pb_idle_ns() and pb_reclaim_blocks() from params.rs; the PB sizes, tuning and PB leaf word from hw.rs; Prot::from_pte() and
+>  is_cached_noncoherent() from pgtable.rs; and the parameters' defaults from asahi_core.rs. It
+>  includes pools/growth.rs, fw/buffer.rs and fw/channels.rs whole. The bodies run against a model
+>  of the firmware objects, the GEM backing allocation, the shared layer's map_at() and the DEVCTL
+> @@ -41,6 +42,10 @@ What it shows:
+>    chunk freed and backed again (an idle reclaim) is unmapped and mapped again at publication;
+>  - the one-VM rule: a catch-up with a flight of another VM is refused (EPROTO) before anything
+>    is mapped;
+> +- the idle reclaim, actual reclaim_check(), free_backing() and note_idle() over a clock: a heavy
+> +  client that exits with nothing rendered after it is re-initialized after 50 ms with the backing
+> +  kept, and the kept backing is freed after the long idle, its posted count kept until the InitBM;
+> +  at reclaim level 1 the backing stays; a recovery's pending re-initialization frees nothing;
+>  - the ledger reset of Pools::init() re-posts from the backing without allocating;
+>  - the PB leaf decodes as GPU-only, not cached-noncoherent: dropping an alias is a plain unmap;
+>  - Ledger::new() is Ledger::new() as of dba2a110de00 (the carried upstream constructor), capped at
+> @@ -107,7 +112,8 @@ PB_LEAF_ASSERT = 'static_assert!(!mmu::Prot::from_pte(pte::LEAF_CACHED).is_cache
+>  
+>  # The two statements of Pools::init() that reset the ledger.
+>  LEDGER_RESET = ['self.ledger.reinit();',
+> -                'self.exhausted_logged = false;']
+> +                'self.exhausted_logged = false;',
+> +                'self.reclaim_pending = false;']
+>  
+>  MUTATIONS = {
+>      # Answer until the queue is empty, including requests queued by the replies' waits.
+> @@ -167,6 +173,32 @@ MUTATIONS = {
+>                                'if self.recovery.reinit && self.engine.flights.is_empty() {'),
+>      # Keep a VM's alias of a chunk that was freed and backed again.
+>      'map-without-identity': (VM, '                if core::ptr::eq(&*have.gem, &*gem) {', '                if true {'),
+> +    # Stop the reclaim check on a reclaim's pending re-initialization (the kept backing stays).
+> +    'pending-reinit-stops-free': (POOLS, '            || (self.recovery.reinit && !self.pools.reclaim_pending)\n'
+> +                                         '            || self.recovery.armed.is_some()\n'
+> +                                         '            || self.engine.frozen\n'
+> +                                         '            || self.recovery.failed().is_some()\n'
+> +                                         '        {\n            return;\n',
+> +                                  '            || self.recovery.reinit\n'
+> +                                  '            || self.recovery.armed.is_some()\n'
+> +                                  '            || self.engine.frozen\n'
+> +                                  '            || self.recovery.failed().is_some()\n'
+> +                                  '        {\n            return;\n'),
+> +    # Free the kept backing at reclaim level 1.
+> +    'pending-free-at-level-1': (POOLS, 'if level >= 2 && ledger.pending_free_due(idle_ns, min_idle) {',
+> +                                'if ledger.pending_free_due(idle_ns, min_idle) {'),
+> +    # Do not record that the pending re-initialization is a reclaim's.
+> +    'reclaim-pending-not-set': (POOLS, '        self.pools.reclaim_pending = true;\n', ''),
+> +    # Free for any pending re-initialization, also a recovery's.
+> +    'free-on-recovery-reinit': (POOLS, '            || (self.recovery.reinit && !self.pools.reclaim_pending)\n'
+> +                                       '            || self.recovery.armed.is_some()\n'
+> +                                       '            || self.engine.frozen\n'
+> +                                       '            || self.recovery.failed().is_some()\n'
+> +                                       '        {\n            return;\n',
+> +                                '            || self.recovery.armed.is_some()\n'
+> +                                '            || self.engine.frozen\n'
+> +                                '            || self.recovery.failed().is_some()\n'
+> +                                '        {\n            return;\n'),
+>      # Catch up without the one-VM check.
+>      'no-activation-guard': (POOLS, '.filter(|f| !core::ptr::eq(&*f.job.vm, vm))', '.filter(|_| false)'),
+>      # Back the whole heap when the GPU starts.
+> @@ -202,6 +234,10 @@ INTENDED = {
+>      'refill-skip-with-live-render': ('pending_reinit_with_a_live_render_refills', 'growth request stranded'),
+>      'refill-for-any-flight': ('pending_reinit_with_compute_only_backs_nothing', 'backed for a compute-only flight'),
+>      'map-without-identity': ('freed_chunks_are_mapped_again', 'alias of another object'),
+> +    'pending-reinit-stops-free': ('client_boundary_reinit_frees_without_a_render', 'kept backing not freed'),
+> +    'pending-free-at-level-1': ('client_boundary_reinit_at_level_1_keeps_the_backing', 'freed at level 1'),
+> +    'reclaim-pending-not-set': ('client_boundary_reinit_frees_without_a_render', 'kept backing not freed'),
+> +    'free-on-recovery-reinit': ('recovery_reinit_frees_nothing', 'freed for a recovery'),
+>      'no-activation-guard': ('catch_up_refuses_flights_of_another_vm', 'catch-up with a flight of another VM'),
+>      'initial-backs-whole-heap': ('startup_backs_the_initial_blocks', 'startup allocation'),
+>      'chunks-above-16mib': ('growth_backs_before_posting', 'a growth chunk above 16 MiB'),
+> @@ -339,6 +375,14 @@ thread_local! {
+>      pub static LOG: RefCell<Vec<Ev>> = RefCell::new(Vec::new());
+>      pub static PARAM: Cell<u32> = Cell::new(PARAM_DEFAULT);
+>      pub static PARAM_BLOCKS: Cell<u32> = Cell::new(PB_BLOCKS_DEFAULT);
+> +    /// The reclaim parameters (g15_pb_reclaim, g15_pb_idle_ms, g15_pb_reclaim_blocks).
+> +    pub static PARAM_RECLAIM: Cell<u32> = Cell::new(PB_RECLAIM_DEFAULT);
+> +    pub static PARAM_IDLE_MS: Cell<u32> = Cell::new(PB_IDLE_MS_DEFAULT);
+> +    pub static PARAM_RECLAIM_BLOCKS: Cell<u32> = Cell::new(PB_RECLAIM_BLOCKS_DEFAULT);
+> +    /// The monotonic clock (engine::now_ns()).
+> +    pub static NOW: Cell<u64> = Cell::new(1_000_000_000);
+> +    /// The VM registry walk (vms.open()) fails this many times.
+> +    pub static FAIL_OPEN: Cell<u32> = Cell::new(0);
+>      /// Failures to inject: the next this many allocations or alias maps fail.
+>      pub static FAIL_ALLOC: Cell<u32> = Cell::new(0);
+>      pub static FAIL_MAP: Cell<u32> = Cell::new(0);
+> @@ -394,6 +438,15 @@ pub mod module_parameters {
+>          }
+>      }
+>      pub static g15_pb_blocks: Blocks = Blocks;
+> +    pub struct Cellp(pub &'static std::thread::LocalKey<std::cell::Cell<u32>>);
+> +    impl Cellp {
+> +        pub fn value(&self) -> &'static u32 {
+> +            Box::leak(Box::new(self.0.with(|p| p.get())))
+> +        }
+> +    }
+> +    pub static g15_pb_reclaim: Cellp = Cellp(&crate::PARAM_RECLAIM);
+> +    pub static g15_pb_idle_ms: Cellp = Cellp(&crate::PARAM_IDLE_MS);
+> +    pub static g15_pb_reclaim_blocks: Cellp = Cellp(&crate::PARAM_RECLAIM_BLOCKS);
+>  }
+>  
+>  pub mod driver {
+> @@ -518,9 +571,31 @@ MODEL = r'''
+>          }
+>          pub struct Engine {
+>              pub flights: Vec<Flight>,
+> +            /// Jobs accepted and not fully published.
+> +            pub pending: Vec<u32>,
+> +            pub frozen: bool,
+>          }
+>          pub struct Recovery {
+>              pub reinit: bool,
+> +            pub armed: Option<(usize, u64)>,
+> +            pub failed: Option<Error>,
+> +        }
+> +        impl Recovery {
+> +            pub fn failed(&self) -> Option<Error> {
+> +                self.failed
+> +            }
+> +        }
+> +        /// vm.rs's Registry: the VMs whose client handle may still be open.
+> +        pub struct Registry {
+> +            pub vms: Vec<Arc<VmState>>,
+> +        }
+> +        impl Registry {
+> +            pub fn open(&self) -> Result<KVec<Arc<VmState>>> {
+> +                if crate::fail(&crate::FAIL_OPEN) {
+> +                    return Err(ENOMEM);
+> +                }
+> +                Ok(KVec(self.vms.clone()))
+> +            }
+>          }
+>          pub struct Receipts {
+>              pub renders: u32,
+> @@ -560,6 +635,8 @@ MODEL = r'''
+>              pub bad: u64,
+>              pub waits: u64,
+>              pub refills: u64,
+> +            pub reclaims: u64,
+> +            pub freed: u64,
+>          }
+>          pub struct Live {
+>              pub block_ctl: FwObject,
+> @@ -572,6 +649,8 @@ MODEL = r'''
+>              pub live: Live,
+>              pub drm: ARef<AsahiDevice>,
+>              pub chunks: KVec<PbChunk>,
+> +            pub idle: growth::IdleClock,
+> +            pub reclaim_pending: bool,
+>          }
+>          impl Pools {
+>              pub fn chunk_count(&self) -> usize {
+> @@ -641,6 +720,7 @@ MODEL = r'''
+>              pub init: Init,
+>              pub engine: Engine,
+>              pub recovery: Recovery,
+> +            pub vms: Registry,
+>              pub renders: Vec<u32>,
+>              pub fw: FwModel,
+>          }
+> @@ -652,6 +732,7 @@ MODEL = r'''
+>                  let vm = VmState::new(5);
+>                  let mut f = Self::without_flights();
+>                  f.engine.flights.push(Flight { job: Job { vm: vm.clone() } });
+> +                f.vms.vms.push(vm.clone());
+>                  f.map_pb(&vm).unwrap();
+>                  crate::take();
+>                  f
+> @@ -665,6 +746,8 @@ MODEL = r'''
+>                      pools: Pools {
+>                          ledger,
+>                          exhausted_logged: false,
+> +                        idle: growth::IdleClock::default(),
+> +                        reclaim_pending: false,
+>                          stats: PbStats::default(),
+>                          drm,
+>                          chunks,
+> @@ -678,8 +761,9 @@ MODEL = r'''
+>                          },
+>                      },
+>                      init: Init { control: Some(std::sync::Arc::new(Ctl { epoch: 0x1_0000_0003 })) },
+> -                    engine: Engine { flights: Vec::new() },
+> -                    recovery: Recovery { reinit: false },
+> +                    engine: Engine { flights: Vec::new(), pending: Vec::new(), frozen: false },
+> +                    recovery: Recovery { reinit: false, armed: None, failed: None },
+> +                    vms: Registry { vms: Vec::new() },
+>                      renders: vec![1],
+>                      fw: FwModel {
+>                          ctx: 5,
+> @@ -1444,6 +1528,85 @@ mod pb_growth_tests {
+>          assert_cursor(&f, &a, 2);
+>      }
+>  
+> +
+> +    fn now() -> u64 {
+> +        crate::NOW.with(|n| n.get())
+> +    }
+> +
+> +    /// The idle clock at `t` and the reclaim check at that time, as a job arrival or an idle
+> +    /// poll pass runs it.
+> +    fn check_at(f: &mut Firmware, t: u64) {
+> +        crate::NOW.with(|n| n.set(t));
+> +        f.note_idle();
+> +        f.reclaim_check();
+> +    }
+> +
+> +    /// A heavy client (more than half the maximum posted) exits and nothing renders after it:
+> +    /// the 50 ms client-boundary re-initialization keeps the backing, and a check after the
+> +    /// long idle frees the backing above the kept chunks. The posted count stays until the next
+> +    /// render's InitBM.
+> +    #[test]
+> +    fn client_boundary_reinit_frees_without_a_render() {
+> +        let mut f = Firmware::new();
+> +        grow_to(&mut f, 2100);
+> +        let (posted, chunks) = (f.pools.ledger.posted, f.pools.chunk_count());
+> +        assert!(posted > 2047 && chunks > 2);
+> +        // The pass that retires the last flight notes the idle.
+> +        f.engine.flights.clear();
+> +        let t0 = now();
+> +        check_at(&mut f, t0);
+> +        take();
+> +        check_at(&mut f, t0 + 50_000_000);
+> +        assert!(f.recovery.reinit && f.pools.chunk_count() == chunks, "client-boundary re-initialization");
+> +        check_at(&mut f, t0 + 999_999_999);
+> +        assert_eq!(f.pools.chunk_count(), chunks, "freed before the long idle");
+> +        check_at(&mut f, t0 + 1_000_000_000);
+> +        let log = take();
+> +        assert_eq!(f.pools.chunk_count(), 2, "kept backing not freed: {} chunks", f.pools.chunk_count());
+> +        assert!(f.recovery.reinit && f.pools.reclaim_pending);
+> +        assert_eq!(f.pools.stats.reclaims, 1);
+> +        assert_eq!(f.pools.ledger.backed, 2 * CHUNK_BLOCKS);
+> +        assert_eq!(f.pools.stats.freed, (chunks - 2) as u64);
+> +        assert_eq!(f.pools.ledger.posted, posted, "posted count reset before the InitBM");
+> +        assert_eq!(count(&log, |e| matches!(e, Ev::Unmap(5, _))), chunks - 2);
+> +        assert_eq!(count(&log, |e| matches!(e, Ev::Free(_))), chunks - 2);
+> +        // Later checks find nothing more to do.
+> +        check_at(&mut f, t0 + 100_000_000_000);
+> +        assert!(take().is_empty());
+> +    }
+> +
+> +    /// With g15_pb_reclaim 1 the client-boundary re-initialization keeps the backing for good.
+> +    #[test]
+> +    fn client_boundary_reinit_at_level_1_keeps_the_backing() {
+> +        crate::PARAM_RECLAIM.with(|r| r.set(1));
+> +        let mut f = Firmware::new();
+> +        grow_to(&mut f, 2100);
+> +        let chunks = f.pools.chunk_count();
+> +        f.engine.flights.clear();
+> +        let t0 = now();
+> +        check_at(&mut f, t0);
+> +        check_at(&mut f, t0 + 50_000_000);
+> +        assert!(f.recovery.reinit);
+> +        check_at(&mut f, t0 + 5_000_000_000);
+> +        assert_eq!(f.pools.chunk_count(), chunks, "freed at level 1");
+> +        assert_eq!(f.pools.stats.freed, 0);
+> +    }
+> +
+> +    /// A recovery's re-initialization (not a reclaim's) is left alone: nothing freed.
+> +    #[test]
+> +    fn recovery_reinit_frees_nothing() {
+> +        let mut f = Firmware::new();
+> +        grow_to(&mut f, 2100);
+> +        let chunks = f.pools.chunk_count();
+> +        f.engine.flights.clear();
+> +        f.recovery.reinit = true;
+> +        let t0 = now();
+> +        check_at(&mut f, t0);
+> +        check_at(&mut f, t0 + 5_000_000_000);
+> +        assert_eq!(f.pools.chunk_count(), chunks, "freed for a recovery's re-initialization");
+> +        assert_eq!(f.pools.stats.reclaims, 0);
+> +    }
+> +
+>      #[test]
+>      fn catch_up_refuses_flights_of_another_vm() {
+>          let mut f = Firmware::new();
+> @@ -1533,9 +1696,13 @@ def main():
+>          bodies = [item(pools, s) for s in ('    pub(crate) fn answer_growth(&mut self) -> Result {',
+>                                             '    fn answer_request(&mut self, request: &[u32; 14]) -> Result<bool> {',
+>                                             '    pub(crate) fn map_pb(&mut self, vm: &VmState) -> Result {',
+> -                                           '    pub(crate) fn refill_backing(&mut self) {')]
+> +                                           '    pub(crate) fn refill_backing(&mut self) {',
+> +                                           '    pub(crate) fn note_idle(&mut self) {',
+> +                                           '    pub(crate) fn reclaim_check(&mut self) {',
+> +                                           '    fn free_backing(&mut self) -> usize {')]
+>          soft_max = item(pools, '    pub(crate) fn soft_max(&self) -> u32 {')
+>          pools_methods = (item(pools, '    fn map_heap(&self, vm: &VmState) -> Result {') + '\n' +
+> +                         item(pools, '    fn free_chunks(&mut self, keep: usize) -> usize {') + '\n' +
+>                           item(pools, '    fn back_chunk(&mut self) -> Result<ARef<gem::Object>> {'))
+>          chunk = item(pools, 'struct PbChunk {') + '\n' + item(pools, 'impl PbChunk {')
+>          chunk_geometry = (re.search(r'^pub\(crate\) const CHUNK_BYTES: usize = [^;]+;', pools, re.M).group(0) + '\n' +
+> @@ -1569,8 +1736,16 @@ def main():
+>              if init.count(line) != 1:
+>                  raise SystemExit('Pools::init() does not hold: ' + line)
+>          reset = '\n'.join('p.' + line[len('self.'):] for line in LEDGER_RESET)
+> -        pb_max_blocks = (item(src[PARAMS], 'pub(crate) fn pb_max_blocks() -> u32 {') + '\n' +
+> -                         item(src[PARAMS], 'pub(crate) fn pb_blocks() -> u32 {'))
+> +        pb_max_blocks = '\n'.join(item(src[PARAMS], f'pub(crate) fn {name}() -> ')
+> +                                   for name in ('pb_max_blocks', 'pb_blocks', 'pb_reclaim', 'pb_idle_ns',
+> +                                                'pb_reclaim_blocks'))
+> +        reclaim_defaults = {}
+> +        for param, const in (('g15_pb_reclaim', 'PB_RECLAIM_DEFAULT'), ('g15_pb_idle_ms', 'PB_IDLE_MS_DEFAULT'),
+> +                             ('g15_pb_reclaim_blocks', 'PB_RECLAIM_BLOCKS_DEFAULT')):
+> +            m = re.search(rf'{param}: u32 \{{\s*default: (\d+),', src[CORE])
+> +            if not m:
+> +                raise SystemExit(f'{param} default not found')
+> +            reclaim_defaults[const] = int(m.group(1))
+>          m = re.search(r'g15_pb_max_blocks: u32 \{\s*default: (\d+),', src[CORE])
+>          if not m:
+>              raise SystemExit('g15_pb_max_blocks default not found')
+> @@ -1595,6 +1770,7 @@ def main():
+>              (dir / Path(path).name).write_text(src[path])
+>          code = (PREFIX + f'pub const PARAM_DEFAULT: u32 = {param_default};\n' +
+>                  f'pub const PB_BLOCKS_DEFAULT: u32 = {blocks_default};\n' +
+> +                ''.join(f'pub const {k}: u32 = {v};\n' for k, v in reclaim_defaults.items()) +
+>                  'pub mod g15 {\n'
+>                  '    pub mod fw {\n'
+>                  f'        #[path = "{dir / "channels.rs"}"] pub mod channels;\n'
+> @@ -1611,6 +1787,7 @@ def main():
+>                  '    }\n'
+>                  '    pub mod pgtable {\n' + pg_consts + '\n' + prot + '\n    }\n'
+>                  '    pub mod boot {\n        pub fn eproto() -> crate::Error { crate::EPROTO }\n    }\n'
+> +                '    pub mod engine {\n        pub fn now_ns() -> u64 { crate::NOW.with(|n| n.get()) }\n    }\n'
+>                  '    /// The checked backing allocation, failing where a test injects it.\n'
+>                  '    pub mod object {\n'
+>                  '        use crate::prelude::*;\n'
+################ drm/asahi: g15: m3: run the PB reclaim check after the idle time without new work: 29eba03c0d75 -> 049e1d7b9a7b (interdiff of the commit's own diff)
+17,18c17,22
+< while a re-initialization or a recovery is pending, or when nothing
+< can become due. A job's arrival re-arms the poll work for its
+---
+> while a recovery or its re-initialization is pending, or when nothing
+> can become due. While a reclaim's re-initialization is pending (a
+> client-boundary one keeps the backing), the poll is armed for the rest
+> of g15_pb_idle_ms at level 2 (Ledger::pending_free_delay()), not for
+> the expired 50 ms, so the check frees the kept backing of a heavy
+> client that exits with no render after it. A job's arrival re-arms the poll work for its
+31a36,42
+> The growth harness also runs reclaim_delay_ns() and drives the idle
+> poll work as poll.rs arms it: a heavy client that exits with nothing
+> rendered after it wakes the poll at 54 ms (the re-initialization) and
+> at 1004 ms (the free), and nothing is armed after; an idle reclaim
+> arms nothing once its re-initialization is pending; nothing is armed
+> at level 1 or for a recovery's re-initialization.
+> 
+67c78
+< index a750f437d86b..1bc931405fb1 100644
+---
+> index fffd81625612..6c450b1015b2 100644
+70c81
+< @@ -832,6 +832,29 @@ pub(crate) fn answer_growth(&mut self) -> Result {
+---
+> @@ -865,6 +865,37 @@ pub(crate) fn answer_growth(&mut self) -> Result {
+75,77c86,89
+< +    /// act without new work ([`growth::Ledger::reclaim_delay`]); `None` while busy, while a
+< +    /// re-initialization or recovery is pending, or when nothing would become due. An idle
+< +    /// engine runs no poll pass by itself, so the poll work is armed for this delay.
+---
+> +    /// act without new work ([`growth::Ledger::reclaim_delay`], or with a reclaim's
+> +    /// re-initialization pending [`growth::Ledger::pending_free_delay`]); `None` while busy,
+> +    /// while a recovery or its re-initialization is pending, or when nothing would become due.
+> +    /// An idle engine runs no poll pass by itself, so the poll work is armed for this delay.
+81c93
+< +            || self.recovery.reinit
+---
+> +            || (self.recovery.reinit && !self.pools.reclaim_pending)
+88a101,107
+> +        if self.recovery.reinit {
+> +            return self.pools.ledger.pending_free_delay(
+> +                super::params::pb_reclaim(),
+> +                idle_ns,
+> +                super::params::pb_idle_ns(),
+> +            );
+> +        }
+101c120
+< index 89bd3cd3fe96..bdaf90a0315f 100644
+---
+> index 013d0a6dbc75..31ddbcfc1392 100644
+104c123,146
+< @@ -179,6 +179,35 @@ pub(crate) const fn drain_reinit_due(&self, idle_ns: u64) -> bool {
+---
+> @@ -178,6 +178,22 @@ pub(crate) const fn pending_free_due(&self, idle_ns: u64, min_idle_ns: u64) -> b
+>          idle_ns >= min_idle_ns && self.backed > self.keep_chunks() * CHUNK_BLOCKS
+>      }
+>  
+> +    /// How much longer the engine must stay idle, from `idle_ns`, before
+> +    /// [`Self::pending_free_due`] with `level`; `None` when it cannot become due (level below
+> +    /// 2, or nothing above the kept chunks). 0 when it is due now.
+> +    pub(crate) const fn pending_free_delay(
+> +        &self,
+> +        level: u32,
+> +        idle_ns: u64,
+> +        min_idle_ns: u64,
+> +    ) -> Option<u64> {
+> +        if level >= 2 && self.backed > self.keep_chunks() * CHUNK_BLOCKS {
+> +            Some(min_idle_ns.saturating_sub(idle_ns))
+> +        } else {
+> +            None
+> +        }
+> +    }
+> +
+>      /// Whether a short idle re-initializes the heap: more than half the maximum posted and
+>      /// idle for [`DRAIN_IDLE_NS`]. Back-to-back heavy scenes (a new client every few hundred
+>      /// ms) never reach `g15_pb_idle_ms`, and posted blocks never come back while a PB lives, so
+> @@ -187,6 +203,35 @@ pub(crate) const fn drain_reinit_due(&self, idle_ns: u64) -> bool {
+140c182
+< @@ -700,6 +729,65 @@ fn reclaim_after_free_then_refill() {
+---
+> @@ -708,8 +753,68 @@ fn reclaim_after_free_then_refill() {
+202a245,443
+>      /// A client-boundary re-initialization with 23 chunks backed and no render after it: the
+> -    /// kept backing is due to be freed after the long idle, and once freed nothing more is due.
+> +    /// kept backing is due to be freed after the long idle, measured from the start of the idle,
+> +    /// and once freed nothing more is due.
+>      #[test]
+>      fn pending_reinit_frees_kept_backing() {
+>          let s = 1_000_000_000;
+> @@ -717,10 +822,19 @@ fn pending_reinit_frees_kept_backing() {
+>          l.unback_to(23);
+>          l.posted = 2800;
+>          assert!(l.drain_reinit_due(DRAIN_IDLE_NS));
+> +        // The poll after the 50 ms re-initialization waits for the rest of the long idle.
+> +        assert_eq!(
+> +            l.pending_free_delay(2, DRAIN_IDLE_NS, s),
+> +            Some(s - DRAIN_IDLE_NS)
+> +        );
+>          assert!(!l.pending_free_due(s - 1, s));
+>          assert!(l.pending_free_due(s, s));
+> +        assert_eq!(l.pending_free_delay(2, s + 1, s), Some(0));
+> +        assert_eq!(l.pending_free_delay(1, 0, s), None);
+> +        assert_eq!(l.pending_free_delay(0, 0, s), None);
+>          l.unback_to(l.keep_chunks());
+>          assert!(!l.pending_free_due(100 * s, s));
+> +        assert_eq!(l.pending_free_delay(2, 0, s), None);
+>      }
+>  
+>      #[test]
+> diff --git a/tools/asahi/g15-pb-growth-tests.py b/tools/asahi/g15-pb-growth-tests.py
+> index 3f4cf0b2a012..2f9d39d91c28 100644
+> --- a/tools/asahi/g15-pb-growth-tests.py
+> +++ b/tools/asahi/g15-pb-growth-tests.py
+> @@ -3,8 +3,8 @@
+>  """Run the G15 PB growth answer and its on-demand backing, actual bodies, against a model.
+>  
+>  The harness extracts from drivers/gpu/drm/asahi/g15/pools.rs Firmware::answer_growth(),
+> -answer_request(), map_pb(), refill_backing(), note_idle(), reclaim_check() and free_backing(),
+> -Pools::soft_max(), map_heap(), free_chunks() and back_chunk(), PbChunk,
+> +answer_request(), map_pb(), refill_backing(), note_idle(), reclaim_check(), free_backing() and
+> +reclaim_delay_ns(), Pools::soft_max(), map_heap(), free_chunks() and back_chunk(), PbChunk,
+>  chunk_gva(), CHUNK_BYTES and Pools::new's PB backing statements; from vm.rs
+>  VmState::map_one(), map_heap(), map_chunk() and unmap_heap_above(); pb_max_blocks(),
+>  pb_blocks(), pb_reclaim(), pb_idle_ns() and pb_reclaim_blocks() from params.rs; the PB sizes, tuning and PB leaf word from hw.rs; Prot::from_pte() and
+> @@ -46,6 +46,9 @@ What it shows:
+>    client that exits with nothing rendered after it is re-initialized after 50 ms with the backing
+>    kept, and the kept backing is freed after the long idle, its posted count kept until the InitBM;
+>    at reclaim level 1 the backing stays; a recovery's pending re-initialization frees nothing;
+> +  driven as the idle poll work arms it (reclaim_delay_ns()), the same exit wakes at 50 ms and at
+> +  the long idle and arms nothing after; an idle reclaim arms nothing once its re-initialization
+> +  is pending;
+>  - the ledger reset of Pools::init() re-posts from the backing without allocating;
+>  - the PB leaf decodes as GPU-only, not cached-noncoherent: dropping an alias is a plain unmap;
+>  - Ledger::new() is Ledger::new() as of dba2a110de00 (the carried upstream constructor), capped at
+> @@ -199,6 +202,41 @@ MUTATIONS = {
+>                                  '            || self.engine.frozen\n'
+>                                  '            || self.recovery.failed().is_some()\n'
+>                                  '        {\n            return;\n'),
+> +    # Both checks stop on any pending re-initialization: the code before the kept-backing free.
+> +    'old-reinit-guards': [(POOLS, '            || (self.recovery.reinit && !self.pools.reclaim_pending)\n'
+> +                                  '            || self.recovery.armed.is_some()\n'
+> +                                  '            || self.engine.frozen\n'
+> +                                  '            || self.recovery.failed().is_some()\n'
+> +                                  '        {\n            return;\n',
+> +                           '            || self.recovery.reinit\n'
+> +                           '            || self.recovery.armed.is_some()\n'
+> +                           '            || self.engine.frozen\n'
+> +                           '            || self.recovery.failed().is_some()\n'
+> +                           '        {\n            return;\n'),
+> +                          (POOLS, '            || (self.recovery.reinit && !self.pools.reclaim_pending)\n'
+> +                                  '            || self.recovery.armed.is_some()\n'
+> +                                  '            || self.engine.frozen\n'
+> +                                  '            || self.recovery.failed().is_some()\n'
+> +                                  '        {\n            return None;\n',
+> +                           '            || self.recovery.reinit\n'
+> +                           '            || self.recovery.armed.is_some()\n'
+> +                           '            || self.engine.frozen\n'
+> +                           '            || self.recovery.failed().is_some()\n'
+> +                           '        {\n            return None;\n')],
+> +    # Arm nothing while a reclaim's re-initialization is pending.
+> +    'pending-reinit-arms-nothing': (POOLS, '            || (self.recovery.reinit && !self.pools.reclaim_pending)\n'
+> +                                           '            || self.recovery.armed.is_some()\n'
+> +                                           '            || self.engine.frozen\n'
+> +                                           '            || self.recovery.failed().is_some()\n'
+> +                                           '        {\n            return None;\n',
+> +                                    '            || self.recovery.reinit\n'
+> +                                    '            || self.recovery.armed.is_some()\n'
+> +                                    '            || self.engine.frozen\n'
+> +                                    '            || self.recovery.failed().is_some()\n'
+> +                                    '        {\n            return None;\n'),
+> +    # Arm the poll for the expired 50 ms instead of the rest of the long idle.
+> +    'pending-delay-from-drain': (GROWTH, 'Some(min_idle_ns.saturating_sub(idle_ns))',
+> +                                 'Some(DRAIN_IDLE_NS.saturating_sub(idle_ns))'),
+>      # Catch up without the one-VM check.
+>      'no-activation-guard': (POOLS, '.filter(|f| !core::ptr::eq(&*f.job.vm, vm))', '.filter(|_| false)'),
+>      # Back the whole heap when the GPU starts.
+> @@ -234,7 +272,10 @@ INTENDED = {
+>      'refill-skip-with-live-render': ('pending_reinit_with_a_live_render_refills', 'growth request stranded'),
+>      'refill-for-any-flight': ('pending_reinit_with_compute_only_backs_nothing', 'backed for a compute-only flight'),
+>      'map-without-identity': ('freed_chunks_are_mapped_again', 'alias of another object'),
+> -    'pending-reinit-stops-free': ('client_boundary_reinit_frees_without_a_render', 'kept backing not freed'),
+> +    'pending-reinit-stops-free': ('client_boundary_reinit_arms_the_long_idle', 'poll woke in a loop'),
+> +    'old-reinit-guards': ('client_boundary_reinit_arms_the_long_idle', 'kept backing not freed'),
+> +    'pending-reinit-arms-nothing': ('client_boundary_reinit_arms_the_long_idle', 'kept backing not freed'),
+> +    'pending-delay-from-drain': ('client_boundary_reinit_arms_the_long_idle', 'poll woke in a loop'),
+>      'pending-free-at-level-1': ('client_boundary_reinit_at_level_1_keeps_the_backing', 'freed at level 1'),
+>      'reclaim-pending-not-set': ('client_boundary_reinit_frees_without_a_render', 'kept backing not freed'),
+>      'free-on-recovery-reinit': ('recovery_reinit_frees_nothing', 'freed for a recovery'),
+> @@ -1587,6 +1628,7 @@ mod pb_growth_tests {
+>          check_at(&mut f, t0);
+>          check_at(&mut f, t0 + 50_000_000);
+>          assert!(f.recovery.reinit);
+> +        assert_eq!(f.reclaim_delay_ns(), None, "armed at level 1");
+>          check_at(&mut f, t0 + 5_000_000_000);
+>          assert_eq!(f.pools.chunk_count(), chunks, "freed at level 1");
+>          assert_eq!(f.pools.stats.freed, 0);
+> @@ -1602,11 +1644,87 @@ mod pb_growth_tests {
+>          f.recovery.reinit = true;
+>          let t0 = now();
+>          check_at(&mut f, t0);
+> +        assert_eq!(f.reclaim_delay_ns(), None, "armed for a recovery's re-initialization");
+>          check_at(&mut f, t0 + 5_000_000_000);
+>          assert_eq!(f.pools.chunk_count(), chunks, "freed for a recovery's re-initialization");
+>          assert_eq!(f.pools.stats.reclaims, 0);
+>      }
+>  
+> +    /// The idle poll work as poll.rs drives it: a pass with nothing published notes the idle
+> +    /// and runs the reclaim check; an idle pass is re-armed only for reclaim_delay_ns(),
+> +    /// rounded up to whole ms, plus one 4 ms jiffy. Returns the wake times.
+> +    fn idle_polls(f: &mut Firmware, limit: usize) -> Vec<u64> {
+> +        let mut wakes = Vec::new();
+> +        loop {
+> +            f.note_idle();
+> +            f.reclaim_check();
+> +            let Some(ns) = f.reclaim_delay_ns() else {
+> +                return wakes;
+> +            };
+> +            assert!(wakes.len() < limit, "poll woke in a loop: {} wakes, next in {ns} ns", wakes.len());
+> +            let t = now() + ns.div_ceil(1_000_000) * 1_000_000 + 4_000_000;
+> +            crate::NOW.with(|n| n.set(t));
+> +            wakes.push(t);
+> +        }
+> +    }
+> +
+> +    /// The same exit with the idle poll work: the poll is armed for the 50 ms
+> +    /// re-initialization, then for the rest of the long idle (not the expired 50 ms), where the
+> +    /// kept backing is freed; then nothing is armed.
+> +    #[test]
+> +    fn client_boundary_reinit_arms_the_long_idle() {
+> +        let mut f = Firmware::new();
+> +        grow_to(&mut f, 2100);
+> +        let (posted, chunks) = (f.pools.ledger.posted, f.pools.chunk_count());
+> +        assert!(posted > 2047 && chunks > 2);
+> +        // The pass that retires the last flight notes the idle.
+> +        f.engine.flights.clear();
+> +        f.note_idle();
+> +        let t0 = now();
+> +        take();
+> +        let wakes = idle_polls(&mut f, 8);
+> +        let log = take();
+> +        assert_eq!(
+> +            f.pools.chunk_count(),
+> +            2,
+> +            "kept backing not freed: {} chunks, wakes {:?} ms",
+> +            f.pools.chunk_count(),
+> +            wakes.iter().map(|t| (t - t0) / 1_000_000).collect::<Vec<_>>()
+> +        );
+> +        assert!(f.recovery.reinit && f.pools.reclaim_pending);
+> +        assert_eq!(f.pools.stats.reclaims, 1);
+> +        assert_eq!(f.pools.ledger.backed, 2 * CHUNK_BLOCKS);
+> +        assert_eq!(f.pools.stats.freed, (chunks - 2) as u64);
+> +        assert_eq!(f.pools.ledger.posted, posted, "posted count reset before the InitBM");
+> +        // Two wakes: the re-initialization after 50 ms, the free after the long idle.
+> +        let ms: Vec<u64> = wakes.iter().map(|t| (t - t0) / 1_000_000).collect();
+> +        assert_eq!(ms, vec![54, 1004], "wakes (ms after the idle began)");
+> +        assert_eq!(count(&log, |e| matches!(e, Ev::Unmap(5, _))), chunks - 2);
+> +        assert_eq!(count(&log, |e| matches!(e, Ev::Free(_))), chunks - 2);
+> +        // Idle much longer, or a job arriving: nothing more is due.
+> +        crate::NOW.with(|n| n.set(t0 + 100_000_000_000));
+> +        f.reclaim_check();
+> +        assert_eq!(f.reclaim_delay_ns(), None);
+> +        assert!(take().is_empty());
+> +    }
+> +
+> +    /// An idle reclaim below half the maximum frees at the long idle; with its re-initialization
+> +    /// pending nothing more is armed.
+> +    #[test]
+> +    fn idle_reclaim_arms_nothing_after() {
+> +        let mut f = Firmware::new();
+> +        grow_to(&mut f, 1500);
+> +        let chunks = f.pools.chunk_count();
+> +        f.engine.flights.clear();
+> +        f.note_idle();
+> +        let t0 = now();
+> +        let wakes = idle_polls(&mut f, 8);
+> +        let ms: Vec<u64> = wakes.iter().map(|t| (t - t0) / 1_000_000).collect();
+> +        assert_eq!(ms, vec![1004]);
+> +        assert_eq!((f.pools.chunk_count(), f.pools.stats.freed), (2, (chunks - 2) as u64));
+> +        assert!(f.recovery.reinit && f.pools.reclaim_pending);
+> +    }
+> +
+204,205c445,456
+<      fn grants_only_backed_blocks() {
+<          let mut l = Ledger::new(true, 64, 4095);
+---
+>      fn catch_up_refuses_flights_of_another_vm() {
+>          let mut f = Firmware::new();
+> @@ -1699,7 +1817,8 @@ def main():
+>                                             '    pub(crate) fn refill_backing(&mut self) {',
+>                                             '    pub(crate) fn note_idle(&mut self) {',
+>                                             '    pub(crate) fn reclaim_check(&mut self) {',
+> -                                           '    fn free_backing(&mut self) -> usize {')]
+> +                                           '    fn free_backing(&mut self) -> usize {',
+> +                                           '    pub(crate) fn reclaim_delay_ns(&self) -> Option<u64> {')]
+>          soft_max = item(pools, '    pub(crate) fn soft_max(&self) -> u32 {')
+>          pools_methods = (item(pools, '    fn map_heap(&self, vm: &VmState) -> Result {') + '\n' +
+>                           item(pools, '    fn free_chunks(&mut self, keep: usize) -> usize {') + '\n' +
+
+################ git range-diff d60121ff..a2e8b5d1 d60121ff..f4d644d5
+ 1:  4b32d3e624bf =  1:  4b32d3e624bf drm/apple: give the J516C panel a base EDID
+ 2:  c52639cb75a8 =  2:  c52639cb75a8 drm/apple: stamp the J516C panel's 14.7 swaps
+ 3:  36d2356704bf =  3:  36d2356704bf drm/asahi: g15: m3: account PB backing and re-initialization in the growth ledger
+ 4:  4481c2d1172f =  4:  4481c2d1172f drm/asahi: g15: m3: back the PB in 16 MiB chunks after the reply, with a reserve
+ 5:  b9334a4d1d99 =  5:  b9334a4d1d99 drm/asahi: g15: m3: start the parameter buffer at 64 blocks
+ 6:  048a5ccc980e !  6:  9b999a2442f4 drm/asahi: g15: m3: reclaim the parameter buffer when the engine is idle
+    @@ drivers/gpu/drm/asahi/g15/pools.rs: pub(crate) fn refill_backing(&mut self) {
+     +        let posted = self.pools.ledger.posted;
+     +        let mut freed = 0;
+     +        if level >= 2 {
+    -+            let keep = self.pools.ledger.keep_chunks() as usize;
+    -+            freed = self.pools.free_chunks(keep);
+    -+            self.pools.stats.freed += freed as u64;
+    -+            // The mappings hold the chunks' pages: drop them in every VM that could publish.
+    -+            match self.vms.open() {
+    -+                Ok(states) => {
+    -+                    for state in states.iter() {
+    -+                        state.unmap_heap_above(keep);
+    -+                    }
+    -+                }
+    -+                Err(e) => dev_warn!(
+    -+                    self.dev(),
+    -+                    "PB heap: reclaim could not walk the VMs: {}\n",
+    -+                    e.to_errno()
+    -+                ),
+    -+            }
+    ++            freed = self.free_backing();
+     +        }
+     +        dev_info!(
+     +            self.dev(),
+    @@ drivers/gpu/drm/asahi/g15/pools.rs: pub(crate) fn refill_backing(&mut self) {
+     +            self.pools.chunks.len()
+     +        );
+     +    }
+    ++
+    ++    /// Frees the backing chunks above those a re-initialized heap keeps
+    ++    /// ([`growth::Ledger::keep_chunks`]) and drops their mappings in every VM that could
+    ++    /// publish; returns the chunks freed.
+    ++    fn free_backing(&mut self) -> usize {
+    ++        let keep = self.pools.ledger.keep_chunks() as usize;
+    ++        let freed = self.pools.free_chunks(keep);
+    ++        self.pools.stats.freed += freed as u64;
+    ++        // The mappings hold the chunks' pages: drop them in every VM that could publish.
+    ++        match self.vms.open() {
+    ++            Ok(states) => {
+    ++                for state in states.iter() {
+    ++                    state.unmap_heap_above(keep);
+    ++                }
+    ++            }
+    ++            Err(e) => dev_warn!(
+    ++                self.dev(),
+    ++                "PB heap: reclaim could not walk the VMs: {}\n",
+    ++                e.to_errno()
+    ++            ),
+    ++        }
+    ++        freed
+    ++    }
+     +
+          /// (Re)initializes the render UMA managers, PB lists and PB manager. `rebuild`: the priming
+          /// prefix after a recovered abort: the first one moves to the uncached spare set, later
+ 7:  8eb156d1ce59 <  -:  ------------ drm/asahi: g15: m3: re-initialize the parameter buffer at a client boundary
+ -:  ------------ >  7:  b375d3d2a922 drm/asahi: g15: m3: re-initialize the parameter buffer at a client boundary
+ 8:  4220c8da6a5f =  8:  e2f774d46a50 drm/asahi: g15: m3: bound the CDM stream walk by bytes, not by 8192 records
+ 9:  cfb24945ef01 =  9:  98472ee72fb9 drm/asahi: g15: select the Rust firmware loader abstractions
+10:  29eba03c0d75 ! 10:  049e1d7b9a7b drm/asahi: g15: m3: run the PB reclaim check after the idle time without new work
+    @@ Commit message
+         re-initialization). Then queue the poll work for that delay. The
+         pass it runs takes the device lock and runs the idle path:
+         note_idle(), then reclaim_check(). Nothing is armed while busy,
+    -    while a re-initialization or a recovery is pending, or when nothing
+    -    can become due. A job's arrival re-arms the poll work for its
+    +    while a recovery or its re-initialization is pending, or when nothing
+    +    can become due. While a reclaim's re-initialization is pending (a
+    +    client-boundary one keeps the backing), the poll is armed for the rest
+    +    of g15_pb_idle_ms at level 2 (Ledger::pending_free_delay()), not for
+    +    the expired 50 ms, so the check frees the kept backing of a heavy
+    +    client that exits with no render after it. A job's arrival re-arms the poll work for its
+         publication, which replaces the expiry.
+     
+         This applies to the T6030 and the T6031, which share this code; it is
+    @@ Commit message
+         delay. The J516C case gives g15_pb_idle_ms at level 2 and nothing at
+         levels 0 and 1.
+     
+    +    The growth harness also runs reclaim_delay_ns() and drives the idle
+    +    poll work as poll.rs arms it: a heavy client that exits with nothing
+    +    rendered after it wakes the poll at 54 ms (the re-initialization) and
+    +    at 1004 ms (the free), and nothing is armed after; an idle reclaim
+    +    arms nothing once its re-initialization is pending; nothing is armed
+    +    at level 1 or for a recovery's re-initialization.
+    +
+         Assisted-by: Claude:claude-opus-5-5
+         Signed-off-by: Naeem Malik <malik2015naeem@gmail.com>
+     
+    @@ drivers/gpu/drm/asahi/g15/pools.rs: pub(crate) fn answer_growth(&mut self) -> Re
+          }
+      
+     +    /// How long the idle engine must stay idle before [`Self::reclaim_check`] acts, if it can
+    -+    /// act without new work ([`growth::Ledger::reclaim_delay`]); `None` while busy, while a
+    -+    /// re-initialization or recovery is pending, or when nothing would become due. An idle
+    -+    /// engine runs no poll pass by itself, so the poll work is armed for this delay.
+    ++    /// act without new work ([`growth::Ledger::reclaim_delay`], or with a reclaim's
+    ++    /// re-initialization pending [`growth::Ledger::pending_free_delay`]); `None` while busy,
+    ++    /// while a recovery or its re-initialization is pending, or when nothing would become due.
+    ++    /// An idle engine runs no poll pass by itself, so the poll work is armed for this delay.
+     +    pub(crate) fn reclaim_delay_ns(&self) -> Option<u64> {
+     +        if !self.engine.flights.is_empty()
+     +            || !self.engine.pending.is_empty()
+    -+            || self.recovery.reinit
+    ++            || (self.recovery.reinit && !self.pools.reclaim_pending)
+     +            || self.recovery.armed.is_some()
+     +            || self.engine.frozen
+     +            || self.recovery.failed().is_some()
+    @@ drivers/gpu/drm/asahi/g15/pools.rs: pub(crate) fn answer_growth(&mut self) -> Re
+     +            return None;
+     +        }
+     +        let idle_ns = self.pools.idle.idle_ns(super::engine::now_ns());
+    ++        if self.recovery.reinit {
+    ++            return self.pools.ledger.pending_free_delay(
+    ++                super::params::pb_reclaim(),
+    ++                idle_ns,
+    ++                super::params::pb_idle_ns(),
+    ++            );
+    ++        }
+     +        self.pools.ledger.reclaim_delay(
+     +            super::params::pb_reclaim(),
+     +            super::params::pb_reclaim_blocks(),
+    @@ drivers/gpu/drm/asahi/g15/pools.rs: pub(crate) fn answer_growth(&mut self) -> Re
+              let ctl = self.init.control.clone().ok_or(ENODEV)?;
+     
+      ## drivers/gpu/drm/asahi/g15/pools/growth.rs ##
+    +@@ drivers/gpu/drm/asahi/g15/pools/growth.rs: pub(crate) const fn pending_free_due(&self, idle_ns: u64, min_idle_ns: u64) -> b
+    +         idle_ns >= min_idle_ns && self.backed > self.keep_chunks() * CHUNK_BLOCKS
+    +     }
+    + 
+    ++    /// How much longer the engine must stay idle, from `idle_ns`, before
+    ++    /// [`Self::pending_free_due`] with `level`; `None` when it cannot become due (level below
+    ++    /// 2, or nothing above the kept chunks). 0 when it is due now.
+    ++    pub(crate) const fn pending_free_delay(
+    ++        &self,
+    ++        level: u32,
+    ++        idle_ns: u64,
+    ++        min_idle_ns: u64,
+    ++    ) -> Option<u64> {
+    ++        if level >= 2 && self.backed > self.keep_chunks() * CHUNK_BLOCKS {
+    ++            Some(min_idle_ns.saturating_sub(idle_ns))
+    ++        } else {
+    ++            None
+    ++        }
+    ++    }
+    ++
+    +     /// Whether a short idle re-initializes the heap: more than half the maximum posted and
+    +     /// idle for [`DRAIN_IDLE_NS`]. Back-to-back heavy scenes (a new client every few hundred
+    +     /// ms) never reach `g15_pb_idle_ms`, and posted blocks never come back while a PB lives, so
+     @@ drivers/gpu/drm/asahi/g15/pools/growth.rs: pub(crate) const fn drain_reinit_due(&self, idle_ns: u64) -> bool {
+              self.posted > self.max / 2 && idle_ns >= DRAIN_IDLE_NS
+          }
+    @@ drivers/gpu/drm/asahi/g15/pools/growth.rs: fn reclaim_after_free_then_refill() {
+     +        assert_eq!(l.reclaim_delay(2, 1024, 0, s), None);
+     +    }
+     +
+    +     /// A client-boundary re-initialization with 23 chunks backed and no render after it: the
+    +-    /// kept backing is due to be freed after the long idle, and once freed nothing more is due.
+    ++    /// kept backing is due to be freed after the long idle, measured from the start of the idle,
+    ++    /// and once freed nothing more is due.
+          #[test]
+    -     fn grants_only_backed_blocks() {
+    -         let mut l = Ledger::new(true, 64, 4095);
+    +     fn pending_reinit_frees_kept_backing() {
+    +         let s = 1_000_000_000;
+    +@@ drivers/gpu/drm/asahi/g15/pools/growth.rs: fn pending_reinit_frees_kept_backing() {
+    +         l.unback_to(23);
+    +         l.posted = 2800;
+    +         assert!(l.drain_reinit_due(DRAIN_IDLE_NS));
+    ++        // The poll after the 50 ms re-initialization waits for the rest of the long idle.
+    ++        assert_eq!(
+    ++            l.pending_free_delay(2, DRAIN_IDLE_NS, s),
+    ++            Some(s - DRAIN_IDLE_NS)
+    ++        );
+    +         assert!(!l.pending_free_due(s - 1, s));
+    +         assert!(l.pending_free_due(s, s));
+    ++        assert_eq!(l.pending_free_delay(2, s + 1, s), Some(0));
+    ++        assert_eq!(l.pending_free_delay(1, 0, s), None);
+    ++        assert_eq!(l.pending_free_delay(0, 0, s), None);
+    +         l.unback_to(l.keep_chunks());
+    +         assert!(!l.pending_free_due(100 * s, s));
+    ++        assert_eq!(l.pending_free_delay(2, 0, s), None);
+    +     }
+    + 
+    +     #[test]
+    +
+    + ## tools/asahi/g15-pb-growth-tests.py ##
+    +@@
+    + """Run the G15 PB growth answer and its on-demand backing, actual bodies, against a model.
+    + 
+    + The harness extracts from drivers/gpu/drm/asahi/g15/pools.rs Firmware::answer_growth(),
+    +-answer_request(), map_pb(), refill_backing(), note_idle(), reclaim_check() and free_backing(),
+    +-Pools::soft_max(), map_heap(), free_chunks() and back_chunk(), PbChunk,
+    ++answer_request(), map_pb(), refill_backing(), note_idle(), reclaim_check(), free_backing() and
+    ++reclaim_delay_ns(), Pools::soft_max(), map_heap(), free_chunks() and back_chunk(), PbChunk,
+    + chunk_gva(), CHUNK_BYTES and Pools::new's PB backing statements; from vm.rs
+    + VmState::map_one(), map_heap(), map_chunk() and unmap_heap_above(); pb_max_blocks(),
+    + pb_blocks(), pb_reclaim(), pb_idle_ns() and pb_reclaim_blocks() from params.rs; the PB sizes, tuning and PB leaf word from hw.rs; Prot::from_pte() and
+    +@@ tools/asahi/g15-pb-growth-tests.py: What it shows:
+    +   client that exits with nothing rendered after it is re-initialized after 50 ms with the backing
+    +   kept, and the kept backing is freed after the long idle, its posted count kept until the InitBM;
+    +   at reclaim level 1 the backing stays; a recovery's pending re-initialization frees nothing;
+    ++  driven as the idle poll work arms it (reclaim_delay_ns()), the same exit wakes at 50 ms and at
+    ++  the long idle and arms nothing after; an idle reclaim arms nothing once its re-initialization
+    ++  is pending;
+    + - the ledger reset of Pools::init() re-posts from the backing without allocating;
+    + - the PB leaf decodes as GPU-only, not cached-noncoherent: dropping an alias is a plain unmap;
+    + - Ledger::new() is Ledger::new() as of dba2a110de00 (the carried upstream constructor), capped at
+    +@@ tools/asahi/g15-pb-growth-tests.py: MUTATIONS = {
+    +                                 '            || self.engine.frozen\n'
+    +                                 '            || self.recovery.failed().is_some()\n'
+    +                                 '        {\n            return;\n'),
+    ++    # Both checks stop on any pending re-initialization: the code before the kept-backing free.
+    ++    'old-reinit-guards': [(POOLS, '            || (self.recovery.reinit && !self.pools.reclaim_pending)\n'
+    ++                                  '            || self.recovery.armed.is_some()\n'
+    ++                                  '            || self.engine.frozen\n'
+    ++                                  '            || self.recovery.failed().is_some()\n'
+    ++                                  '        {\n            return;\n',
+    ++                           '            || self.recovery.reinit\n'
+    ++                           '            || self.recovery.armed.is_some()\n'
+    ++                           '            || self.engine.frozen\n'
+    ++                           '            || self.recovery.failed().is_some()\n'
+    ++                           '        {\n            return;\n'),
+    ++                          (POOLS, '            || (self.recovery.reinit && !self.pools.reclaim_pending)\n'
+    ++                                  '            || self.recovery.armed.is_some()\n'
+    ++                                  '            || self.engine.frozen\n'
+    ++                                  '            || self.recovery.failed().is_some()\n'
+    ++                                  '        {\n            return None;\n',
+    ++                           '            || self.recovery.reinit\n'
+    ++                           '            || self.recovery.armed.is_some()\n'
+    ++                           '            || self.engine.frozen\n'
+    ++                           '            || self.recovery.failed().is_some()\n'
+    ++                           '        {\n            return None;\n')],
+    ++    # Arm nothing while a reclaim's re-initialization is pending.
+    ++    'pending-reinit-arms-nothing': (POOLS, '            || (self.recovery.reinit && !self.pools.reclaim_pending)\n'
+    ++                                           '            || self.recovery.armed.is_some()\n'
+    ++                                           '            || self.engine.frozen\n'
+    ++                                           '            || self.recovery.failed().is_some()\n'
+    ++                                           '        {\n            return None;\n',
+    ++                                    '            || self.recovery.reinit\n'
+    ++                                    '            || self.recovery.armed.is_some()\n'
+    ++                                    '            || self.engine.frozen\n'
+    ++                                    '            || self.recovery.failed().is_some()\n'
+    ++                                    '        {\n            return None;\n'),
+    ++    # Arm the poll for the expired 50 ms instead of the rest of the long idle.
+    ++    'pending-delay-from-drain': (GROWTH, 'Some(min_idle_ns.saturating_sub(idle_ns))',
+    ++                                 'Some(DRAIN_IDLE_NS.saturating_sub(idle_ns))'),
+    +     # Catch up without the one-VM check.
+    +     'no-activation-guard': (POOLS, '.filter(|f| !core::ptr::eq(&*f.job.vm, vm))', '.filter(|_| false)'),
+    +     # Back the whole heap when the GPU starts.
+    +@@ tools/asahi/g15-pb-growth-tests.py: INTENDED = {
+    +     'refill-skip-with-live-render': ('pending_reinit_with_a_live_render_refills', 'growth request stranded'),
+    +     'refill-for-any-flight': ('pending_reinit_with_compute_only_backs_nothing', 'backed for a compute-only flight'),
+    +     'map-without-identity': ('freed_chunks_are_mapped_again', 'alias of another object'),
+    +-    'pending-reinit-stops-free': ('client_boundary_reinit_frees_without_a_render', 'kept backing not freed'),
+    ++    'pending-reinit-stops-free': ('client_boundary_reinit_arms_the_long_idle', 'poll woke in a loop'),
+    ++    'old-reinit-guards': ('client_boundary_reinit_arms_the_long_idle', 'kept backing not freed'),
+    ++    'pending-reinit-arms-nothing': ('client_boundary_reinit_arms_the_long_idle', 'kept backing not freed'),
+    ++    'pending-delay-from-drain': ('client_boundary_reinit_arms_the_long_idle', 'poll woke in a loop'),
+    +     'pending-free-at-level-1': ('client_boundary_reinit_at_level_1_keeps_the_backing', 'freed at level 1'),
+    +     'reclaim-pending-not-set': ('client_boundary_reinit_frees_without_a_render', 'kept backing not freed'),
+    +     'free-on-recovery-reinit': ('recovery_reinit_frees_nothing', 'freed for a recovery'),
+    +@@ tools/asahi/g15-pb-growth-tests.py: mod pb_growth_tests {
+    +         check_at(&mut f, t0);
+    +         check_at(&mut f, t0 + 50_000_000);
+    +         assert!(f.recovery.reinit);
+    ++        assert_eq!(f.reclaim_delay_ns(), None, "armed at level 1");
+    +         check_at(&mut f, t0 + 5_000_000_000);
+    +         assert_eq!(f.pools.chunk_count(), chunks, "freed at level 1");
+    +         assert_eq!(f.pools.stats.freed, 0);
+    +@@ tools/asahi/g15-pb-growth-tests.py: mod pb_growth_tests {
+    +         f.recovery.reinit = true;
+    +         let t0 = now();
+    +         check_at(&mut f, t0);
+    ++        assert_eq!(f.reclaim_delay_ns(), None, "armed for a recovery's re-initialization");
+    +         check_at(&mut f, t0 + 5_000_000_000);
+    +         assert_eq!(f.pools.chunk_count(), chunks, "freed for a recovery's re-initialization");
+    +         assert_eq!(f.pools.stats.reclaims, 0);
+    +     }
+    + 
+    ++    /// The idle poll work as poll.rs drives it: a pass with nothing published notes the idle
+    ++    /// and runs the reclaim check; an idle pass is re-armed only for reclaim_delay_ns(),
+    ++    /// rounded up to whole ms, plus one 4 ms jiffy. Returns the wake times.
+    ++    fn idle_polls(f: &mut Firmware, limit: usize) -> Vec<u64> {
+    ++        let mut wakes = Vec::new();
+    ++        loop {
+    ++            f.note_idle();
+    ++            f.reclaim_check();
+    ++            let Some(ns) = f.reclaim_delay_ns() else {
+    ++                return wakes;
+    ++            };
+    ++            assert!(wakes.len() < limit, "poll woke in a loop: {} wakes, next in {ns} ns", wakes.len());
+    ++            let t = now() + ns.div_ceil(1_000_000) * 1_000_000 + 4_000_000;
+    ++            crate::NOW.with(|n| n.set(t));
+    ++            wakes.push(t);
+    ++        }
+    ++    }
+    ++
+    ++    /// The same exit with the idle poll work: the poll is armed for the 50 ms
+    ++    /// re-initialization, then for the rest of the long idle (not the expired 50 ms), where the
+    ++    /// kept backing is freed; then nothing is armed.
+    ++    #[test]
+    ++    fn client_boundary_reinit_arms_the_long_idle() {
+    ++        let mut f = Firmware::new();
+    ++        grow_to(&mut f, 2100);
+    ++        let (posted, chunks) = (f.pools.ledger.posted, f.pools.chunk_count());
+    ++        assert!(posted > 2047 && chunks > 2);
+    ++        // The pass that retires the last flight notes the idle.
+    ++        f.engine.flights.clear();
+    ++        f.note_idle();
+    ++        let t0 = now();
+    ++        take();
+    ++        let wakes = idle_polls(&mut f, 8);
+    ++        let log = take();
+    ++        assert_eq!(
+    ++            f.pools.chunk_count(),
+    ++            2,
+    ++            "kept backing not freed: {} chunks, wakes {:?} ms",
+    ++            f.pools.chunk_count(),
+    ++            wakes.iter().map(|t| (t - t0) / 1_000_000).collect::<Vec<_>>()
+    ++        );
+    ++        assert!(f.recovery.reinit && f.pools.reclaim_pending);
+    ++        assert_eq!(f.pools.stats.reclaims, 1);
+    ++        assert_eq!(f.pools.ledger.backed, 2 * CHUNK_BLOCKS);
+    ++        assert_eq!(f.pools.stats.freed, (chunks - 2) as u64);
+    ++        assert_eq!(f.pools.ledger.posted, posted, "posted count reset before the InitBM");
+    ++        // Two wakes: the re-initialization after 50 ms, the free after the long idle.
+    ++        let ms: Vec<u64> = wakes.iter().map(|t| (t - t0) / 1_000_000).collect();
+    ++        assert_eq!(ms, vec![54, 1004], "wakes (ms after the idle began)");
+    ++        assert_eq!(count(&log, |e| matches!(e, Ev::Unmap(5, _))), chunks - 2);
+    ++        assert_eq!(count(&log, |e| matches!(e, Ev::Free(_))), chunks - 2);
+    ++        // Idle much longer, or a job arriving: nothing more is due.
+    ++        crate::NOW.with(|n| n.set(t0 + 100_000_000_000));
+    ++        f.reclaim_check();
+    ++        assert_eq!(f.reclaim_delay_ns(), None);
+    ++        assert!(take().is_empty());
+    ++    }
+    ++
+    ++    /// An idle reclaim below half the maximum frees at the long idle; with its re-initialization
+    ++    /// pending nothing more is armed.
+    ++    #[test]
+    ++    fn idle_reclaim_arms_nothing_after() {
+    ++        let mut f = Firmware::new();
+    ++        grow_to(&mut f, 1500);
+    ++        let chunks = f.pools.chunk_count();
+    ++        f.engine.flights.clear();
+    ++        f.note_idle();
+    ++        let t0 = now();
+    ++        let wakes = idle_polls(&mut f, 8);
+    ++        let ms: Vec<u64> = wakes.iter().map(|t| (t - t0) / 1_000_000).collect();
+    ++        assert_eq!(ms, vec![1004]);
+    ++        assert_eq!((f.pools.chunk_count(), f.pools.stats.freed), (2, (chunks - 2) as u64));
+    ++        assert!(f.recovery.reinit && f.pools.reclaim_pending);
+    ++    }
+    ++
+    +     #[test]
+    +     fn catch_up_refuses_flights_of_another_vm() {
+    +         let mut f = Firmware::new();
+    +@@ tools/asahi/g15-pb-growth-tests.py: def main():
+    +                                            '    pub(crate) fn refill_backing(&mut self) {',
+    +                                            '    pub(crate) fn note_idle(&mut self) {',
+    +                                            '    pub(crate) fn reclaim_check(&mut self) {',
+    +-                                           '    fn free_backing(&mut self) -> usize {')]
+    ++                                           '    fn free_backing(&mut self) -> usize {',
+    ++                                           '    pub(crate) fn reclaim_delay_ns(&self) -> Option<u64> {')]
+    +         soft_max = item(pools, '    pub(crate) fn soft_max(&self) -> u32 {')
+    +         pools_methods = (item(pools, '    fn map_heap(&self, vm: &VmState) -> Result {') + '\n' +
+    +                          item(pools, '    fn free_chunks(&mut self, keep: usize) -> usize {') + '\n' +
+11:  a2e8b5d193b6 = 11:  f4d644d5e50d drm/asahi: g15: say when the boot loader left the GPU node disabled

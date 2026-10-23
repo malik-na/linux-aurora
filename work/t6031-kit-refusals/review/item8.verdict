@@ -1,0 +1,44 @@
+APPROVED
+
+Item 8 (EDID), revision 2 = D4 as Naeem decided. Checked:
+- Encodings against the DRM headers and the DisplayID 2.0 layouts: base DTD (52106 x 10 kHz,
+  3456/80, 2234/222, hfp 8, hsw 32, vfp 63 clamped from 118, vsw 8, 346x216 mm, byte 17 0x1e),
+  features preferred-timing bit clear, P3/D65 10-bit packing, name in descriptor 1, dummies
+  0x10, extensions 1; DisplayID section 0x20/length 55/use case 2/ext count 0, Display
+  Parameters 0x21 (29 bytes, 0.1 mm size, native pixels, no speakers, 12-bit P3/D65, LCD, gamma
+  120), Type VII 0x22 (20 bytes, kHz - 1, preferred, aspect undefined, fields minus one, positive
+  syncs), section checksum over 5 + length bytes and the block checksum. All correct.
+- Size source: the DTD mm, the Display Parameters 0.1 mm and the base cm all come from the same
+  width/height arguments, which dcp_get_modes() takes from dcp_update_connector_dimensions()
+  (firmware 346x216 first); the KUnit fixture now uses 216 too.
+- KUnit: DTD fields, chromaticity (696/328, 320/337), both checksums, the section layout, every
+  Type VII field, 256-byte blob, probed_modes empty; connector funcs = atomic helpers. M3 d4/:
+  no drm_connector.c:236, suite 6/6, 1541 pass 0 splats.
+- Decoders, re-run on the Air from a copy of d4.bin: edid-decode "EDID conformity: PASS" (DTD 1
+  59.999 Hz 521.06 MHz 346x216 mm; Type VII 120.000009 Hz 1042.13 MHz preferred, porches
+  8/32/40 and 118/8/96); di-edid-decode no failure. Identical to the live sysfs EDID per the
+  request.
+- J516C D4 boot: dmesg timing line unchanged ("3456x2160": 120 1042130 3456 3464 3496 3536 2160
+  2278 2360 2456, 346x216 mm), no "panel EDID publication failed", no GPU fault/recovery line;
+  acceptance record: edid_bytes 256, kmscube 120.028 fps, FAIL only on crtc_file/presents as
+  before.
+- The planned message states the 60 Hz / 120 Hz reason plainly (16-bit clock field, 6-bit front
+  porch, extension carries the real timing, DRM modes stay the firmware's). Use the corrected
+  arithmetic everywhere (3536 x 2456 x 120 = 1,042,129,920 Hz; 60 Hz 521,064,960 Hz), including
+  the PR body and the reply drafts in item 11.
+
+Conditions before the push:
+1. Save the modetest before/after output you cite (the single "3456x2160 120.00 ... type:
+   preferred, driver" mode, 346x216 mm, on the 40b47534 and the D4 boots) into
+   results/20261023-131907-r182-item8-d4-accept/ (a modetest.txt or a README section); the
+   request quotes it but no file holds it.
+2. Per-commit build, apple-dcp run.sh and KUnit at the head after the squash into 4b32d3e6,
+   appended to item8.request with the log paths.
+3. Carried over from item 1: cite ~/aurora-test/silicon/r1-ht-base.log in the item 1 log entry
+   for the "same six run.sh cases fail on d60121ff alone" sentence.
+
+Optional (nits):
+- timing_valid() does not bound hdisplay/vdisplay (< 4096, 12-bit DTD fields) nor the 60 Hz
+  clock (<= 65535 x 10 kHz); the table is static, so a one-line check is enough if you touch it.
+- DisplayID luminance bytes left 0 decode as 0.000031 cd/m^2 in edid-decode; harmless, and the
+  file comment already says the luminance is not known.

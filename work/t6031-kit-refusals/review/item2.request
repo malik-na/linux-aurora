@@ -1,0 +1,102 @@
+Item 2: recovery can strand a growth request (Marcelo; Chris reproduced it)
+
+Status note: this fix was already squashed locally (before the handshake rule arrived) into
+5ea7b0daa447 "drm/asahi: g15: m3: back the PB in 16 MiB chunks after the reply, with a reserve"
+on t6031/stack-on-177-review. It is NOT pushed to origin. item2.diff is the tree diff
+61d68d9f8bd7 (item 1 head) -> dff6cb9e28a6 (local head), i.e. exactly the fixup. If CHANGES,
+I rewrite it; if APPROVED, I apply the message rewording below, push, and log.
+
+FINDING
+refill_backing() (g15/pools.rs) returns early whenever recovery.reinit is set. A fragment kill
+(recovery.rs retire_outcome) sets reinit while the later same-VM flights are only marked
+doomed and can still run and ask for growth. When their reserve is used up, accept() returns
+Wait and nothing refills: the request strands until the deadline (and a failed recovery there
+fail-stops).
+
+VALIDATION OF THE FINDING: real.
+Chris's reproducer, added as harness case pending_reinit_with_a_live_render_refills (one live
+render, posted = backed, reinit = true, one request, four passes, assert the queue drained).
+Against the old guard (`if self.recovery.reinit {`, run as harness mutation
+refill-skip-with-live-render, which restores exactly the old line):
+  FAILED pending_reinit_with_a_live_render_refills:
+  "growth request stranded: posted=256 backed=256 waits=4 refills=0"
+(the same numbers Chris posted). Output on the M3: ~/Projects/build-out/kernel-stack177/i2/old/.
+
+FIX (pools.rs refill_backing)
+-        // A pending re-initialization is about to drop the posted count: nothing to back for.
+-        if self.recovery.reinit {
++        // A pending re-initialization is about to drop the posted count: nothing to back for,
++        // unless a render published before it still runs (the flights behind a fragment kill
++        // keep asking for growth until they retire).
++        let render = (0..self.engine.flights.len()).any(|i| self.receipts(i).renders != 0);
++        if self.recovery.reinit && !render {
+             return;
+         }
+
+Deviation from the review's wording ("reinit pending AND no flights live"), deliberately:
+the skip is lifted only for a live RENDER flight, not for any flight. Reason: after a level-2
+reclaim the posted count stays high until the next render's InitBM while the backing is cut
+to keep_chunks(); a compute-only flight published in that window (publish() allows it) would,
+with "any flight", make refill_due() true every pass and re-back everything the reclaim just
+freed. A compute flight cannot ask for growth (answer_request requires a live render), so it
+needs no refill. A render flight cannot be published while reinit is pending without clearing
+it (its publication does the InitBM and clears reinit), so a live render with reinit pending
+is always one published before the re-init was set: the kill case.
+
+Tests (tools/asahi/g15-pb-growth-tests.py):
+- pending_reinit_backs_nothing (had a live flight, required the stalling behaviour) is split:
+  - pending_reinit_without_flights_backs_nothing: no flights, posted at the reserve line,
+    reinit -> nothing backed; reinit cleared -> one refill;
+  - pending_reinit_with_compute_only_backs_nothing: one compute-only flight, posted = backed,
+    reinit, 4 passes -> nothing backed;
+  - pending_reinit_with_a_live_render_refills: Chris's reproducer; expects
+    (waits, refills, requests) = (1, 2, 1), the queue empty, and every record/producer only
+    after the running VM mapped its chunk (assert_posted_backed).
+- mutations: refill-during-reinit re-anchored (removes the guard -> fails
+  ..._without_flights_backs_nothing); new refill-skip-with-live-render (old guard -> fails
+  ..._live_render_refills, "growth request stranded"); new refill-for-any-flight
+  (`reinit && flights.is_empty()` -> fails ..._compute_only_backs_nothing, "backed for a
+  compute-only flight").
+- docstring line updated.
+
+FIX VALIDATION (M3 chroot)
+- g15-pb-growth-tests.py --mutations: "26 passed; 0 failed"; 24 mutations, 24 caught by their
+  intended test; control tuning-whole-heap passes. (Before: 24 passed, 22/22.)
+  Output: ~/Projects/build-out/kernel-stack177/i2/new/result.json.
+- asahi-g15 selftest: 70 passed, 0 failed, 2 ignored.
+- make drivers/gpu/drm/asahi/ (LLVM=1): OK, 0 warnings.
+- Running now: per-commit build (asahi + apple W=1) and per-commit host tests
+  (selftest, pb-growth, zero-words, dcp14-panel; mutations at head) over the rewritten
+  commits 5ea7b0da..dff6cb9e, because the autosquash had harness conflicts in 5ea7b0da and
+  fcba3fcf (resolved: MUTATIONS/INTENDED keep the new item 2 entries plus
+  map-without-identity from the reclaim commit). The local head tree is byte-identical to the
+  tested tree (git diff f8ec920d dff6cb9e empty). Logs: ~/aurora-test/silicon/r2-bisect.log,
+  r2-ht.log on the M3. I will append the result to this request when done.
+- No hardware run for this item (host-reproducible logic; the J516C regression at the end
+  covers it).
+
+PLANNED COMMIT MESSAGE CHANGE (5ea7b0da; reword, same subject)
+In the list:
+-  - a pending re-initialization backs nothing.
++  - a pending re-initialization backs nothing while no render is
++    published; a render published before it (the flights behind a
++    fragment kill) is still backed, or its requests would wait until
++    the deadline.
+In the harness case list:
+-  - a pending re-initialization;
++  - a pending re-initialization with no flight, with a compute-only
++    flight, and with a render published before it;
+
+APPENDED AFTER APPROVAL (conditions 1 and 2)
+- Per-commit build (asahi + apple W=1) over 5ea7b0da..dff6cb9e: all 8 OK, 0 apple warnings
+  (M3 ~/aurora-test/silicon/r2-bisect.log).
+- Per-commit host tests (M3 ~/aurora-test/silicon/r2-ht.log): every commit self=0, pbg=0,
+  zw=0, dcp14=0; selftest 63/63/65/67/69/69/70/70 passed (2 ignored), pb-growth 25-26 passed.
+  Head with --mutations: pb-growth 26 passed, 24/24 mutations caught, control passes;
+  zero-words 15 passed (2 ignored).
+- Commit message reworded as planned (without the forward reference to the idle reclaim, which
+  does not exist yet at that commit; the compute-only reason is one clause: "A compute-only
+  flight gets none: it cannot ask for growth."). Trees per commit unchanged (verified).
+- New series: d60121ff..a2e8b5d193b6; the item 2 commit is now 4481c2d1172f.
+- check-commits.py: 11 signed off, checkpatch same two warnings, 0 errors; keyword scan clean;
+  rustfmt drift 0 on every changed .rs file.

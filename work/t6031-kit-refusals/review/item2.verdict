@@ -1,0 +1,27 @@
+APPROVED
+
+Item 2 (refill skip strands a live render's growth request), fixup 5ea7b0daa447 into "back the
+PB in 16 MiB chunks after the reply, with a reserve". Checked: finding real (old guard
+reproduced on the M3, i2/old: `posted=256 backed=256 waits=4 refills=0`, Chris's numbers); fix
+minimal and correct (`receipts(i).renders` is filled at publication, recovery/seams.rs:39-45,
+and a render prefix publication clears `reinit` at engine.rs:971, so a live render with reinit
+pending is always one published before the kill); the render-only condition is better than the
+reviewers' `flights.is_empty()` because a compute-only flight after a level-2 reclaim would
+otherwise re-back the freed chunks every pass, and the `refill-for-any-flight` mutant pins that;
+the strand test fails on the old line by construction (`refill-skip-with-live-render`); i2/new:
+26 passed, 24/24 mutants caught, control passes; trailers, keyword scan, fixup target OK;
+`map-without-identity` is absent at commit 4 and present at commit 6, as it should be.
+
+Conditions already in your plan, restated so they are not skipped:
+1. Apply the planned commit-message reword of 5ea7b0da (the "backs nothing" bullet and the
+   harness case list) before pushing.
+2. Wait for the running per-commit build and per-commit host tests over 5ea7b0da..dff6cb9e to
+   finish green, and append the result (log paths) to item2.request before pushing and logging.
+
+Optional (nits):
+- In the reworded bullet, add the one-sentence reason the skip is lifted for a render flight and
+  not for any flight (the compute-only flight after a level-2 reclaim would re-back the freed
+  chunks); the reviewers asked for `flights.is_empty()` and will look for why the code differs.
+  Carry the same sentence into the item-11 reply draft for Marcelo and Chris.
+- `pending_reinit_with_a_live_render_refills` could also assert `f.pools.ledger.posted ==
+  start + 10` to pin the grant size; not required, `assert_posted_backed` covers the ordering.

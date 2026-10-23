@@ -1,0 +1,17 @@
+APPROVED
+
+Item 9 (33922ce9's message, now 0c52e79e). Checked: every fact in the new paragraph traces to a
+file: kmscube_fps 120.0287 (results/20261023-093208-r182-item6-accept) and 120.028006
+(results/20261023-131907-r182-item8-d4-accept) on this branch with #177's device tree; the DCP
+timing line "3456x2160": 120 ... with 74 notch rows hidden (both boots' dmesg); the first swaps'
+completion times 6163/8104/5225 us (item 6 boot) and 5112/8060/2887 us (item 8 boot), i.e. 2.9
+to 8.1 ms (~/m3-private/r182-item6-dmesg.txt, r182-item8-d4-dmesg.txt). Message-only, lines at
+most 72 columns, the old "not yet on this one" and the wrong 3456x2234 mode are gone.
+
+Conditions before the push:
+1. After the reword, verify tree identity for all 11 commits against 98dc5a9c (as you plan),
+   run check-commits.py and the keyword scan, and append the result with the new head.
+
+Optional (nits):
+- "instead of 16.7 ms" is the zero-timestamp behaviour from the first paragraph; fine as is.
+- The same two numbers (120.03 fps, 2.9-8.1 ms) belong in the PR body line of item 11.

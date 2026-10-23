@@ -1,0 +1,28 @@
+APPROVED
+
+Item 5 (harness fidelity, Chris). Checked: `publish()` models engine.rs correctly (map_pb()
+before the flight is added; the InitBM ledger reset and `reinit` cleared only for a render
+prefix, as engine.rs:824/:971; a compute prefix admitted with no tail flight, engine.rs:559);
+the compute case's growth request is refused as not `live` and counted bad once, as
+answer_request() does; the 60 ms case can allocate nothing (18 chunks kept, spare 204 >= 128
+after regrowth); the 1.1 s case covers both the plain idle reclaim (1500) and the client
+boundary plus free (2100); `freed_chunks_are_mapped_again` now runs the real reclaim with the
+posted count kept and A outside the registry. Finding shown: the `reinit-at-idle-reclaim`
+mutant survives the old harness (M3 i5pre: 33 passed, failed []); after the fix i5: 36 passed,
+36/36 mutants caught, the two new mutants fail the intended tests with the intended messages,
+`refill-for-any-flight` additionally fails `compute_between_reclaim_and_initbm` with the
+re-backing trace (good evidence for the item 2 wording in the reviewer reply). selftest 71.
+`defaults()` closes the item 4 nit. Fixup placement (38f9a931 for all but the one `defaults();`
+line in 34653844) is right: the harness first runs reclaim_check() at 38f9a931, so the
+`drop_chunks()` model stays only in 4296961b's own harness, replaced one commit later.
+
+Conditions before the push:
+1. Per-commit build and host tests over the rewritten range (mutations at the head), result
+   appended to item5.request with the log paths.
+
+Optional (nits):
+- In the item 11 reply to Chris, cite `compute_between_reclaim_and_initbm` and the
+  `refill-for-any-flight` trace when explaining why item 2 uses a render-only condition.
+- The harness module docstring has a line well above 100 columns ("pb_blocks(), pb_reclaim(),
+  pb_idle_ns() and pb_reclaim_blocks() from params.rs; the PB sizes, ..."); rewrap when you
+  next touch that paragraph.

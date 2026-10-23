@@ -1,0 +1,49 @@
+Item 7: stats.freed counted before vms.open() can fail (Marcelo)
+
+Uncommitted on top of b1f6bbb71072 (series head, pushed); item7.diff = `git diff`.
+
+FINDING
+free_backing() (pools.rs, extracted in item 3 from reclaim_check()) adds the dropped chunks to
+stats.freed before vms.open(). If the walk fails, the VMs' aliases still hold the pages: the
+stat (and the info log's "N chunks freed") overstate what was freed.
+
+VALIDATION OF THE FINDING: real, test-first.
+New harness case failed_vm_walk_counts_nothing_freed (1500 posted, the idle reclaim at 1 s with
+the registry walk failing once, FAIL_OPEN): on the unfixed code "FAILED. 36 passed; 1 failed":
+"freed counted with the VM walk failed" (M3 ~/Projects/build-out/kernel-stack177/i7pre/).
+
+FIX (pools.rs free_backing())
+The dropped chunk count is added to stats.freed and returned only if the VMs were walked and
+their aliases above keep_chunks() unmapped; on a failed walk it warns as before and returns 0,
+so the info line says "0 chunks freed, 2 backed". The doc says why. The ledger and the chunk
+list still drop the chunks (as before): every VM drops its stale aliases at its next
+publication (VmState::map_heap()), which is when the pages go.
+Harness: the case checks freed 0, the warning, the info line " 0 chunks freed", no Free event,
+A still holding all its aliases; then A's next publication frees chunks-2 objects and leaves
+2 aliases. Mutation freed-without-walk (returns `dropped` on the failure path) is caught by it.
+Docstring bullet.
+
+FIX VALIDATION (M3 chroot, ~/Projects/build-out/kernel-stack177/i7/)
+- pb-growth --mutations: 37 passed; 37/37 mutations caught by their intended test; control
+  passes.
+- asahi-g15 selftest 71 passed (2 ignored); zero-words pass; make drivers/gpu/drm/asahi/ OK,
+  0 warnings; rustfmt (Air, 1.93.1) clean.
+- No hardware run (a registry-walk failure means a KVec allocation failure; not inducible on
+  hardware; host logic).
+
+PLANNED COMMITS
+- free_backing() change: fixup into 4296961b "reclaim the parameter buffer when the engine is
+  idle" (the reclaim commit, where free_backing() lives since item 3). Message: add to the
+  level-2 bullet "...; a chunk counts as freed only once every VM's alias of it is unmapped".
+- Harness case + mutation + docstring bullet: fixup into the client-boundary commit 873d95fb,
+  where the harness first runs the reclaim bodies (as in item 5).
+- Per-commit build and host tests after the squash; appended here.
+
+APPENDED AFTER APPROVAL
+- Squashed: free_backing() change into the reclaim commit (now a6438e26, message bullet added:
+  "a chunk counts as freed only once every VM's alias of it is unmapped"); harness case,
+  mutation and docstring into the client-boundary commit (now 9e151cd1). Head 575a3484, pushed.
+- Per-commit build over b9334a4d..575a3484 (M3 r7-bisect.log): all OK, apple W=1 0 warnings.
+  Per-commit host tests (r7-ht.log): self 65/68/70/70/71/71, pb-growth 26/34/34/34/37/37, zw
+  and dcp14 pass; head --mutations 37 passed, 37/37 caught, control passes.
+- check-commits unchanged (2 warnings, 0 errors); keyword scan clean.

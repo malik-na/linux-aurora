@@ -1,0 +1,38 @@
+APPROVED
+
+Item 6 (J516C hardware safety). Checked against the files, read-only:
+- run.txt: 8 sequences, each "faults: 0"; k: lines give 15 re-inits at 51 ms, 5 pending frees
+  (idle 1027-1058 ms, 20 chunks each), 2 level-2 idle reclaims (11 chunks); final counters
+  "requests 5932 grown 59320 refused 0 bad 0 waits 0 refills 264 reclaims 24 freed 244". The
+  "before" lines show the design state between sequences (posted 2614 with backed 256: posted
+  count kept, backing freed).
+- ~/m3-private/r182-item6-dmesg.txt: no G15 fault, recovery, hang, fail-stop or unanswered-request
+  line in the whole boot (word-bounded grep); the only pattern match is "raid6: using neon
+  recovery algorithm", which is the "total faults this boot: 1" at the end of run.txt. Boot-wide
+  the dmesg holds 17 re-inits at 51 ms, 11 pending frees, 4 level-2 reclaims and 24 InitBMs: the
+  extra ones are the acceptance run and the calibration, not the eight sequences.
+- ~/m3-private/r2c-bench-dmesg.txt: re-init idle times 3131/3115/3124/3123 then six at 0 ms;
+  faults in ctx 46, 55 and 2, each about 0.4 ms after its InitBM (217.4916 -> 217.4921), fault
+  banks 0/1 units 0x15/0x25 writing unmapped at 0x1000000100/0x500/0x700, event type 4, then
+  "recovered: ctx N submission failed with -5"; the no-fault no-idle re-inits (215.8, 219.4,
+  223.0) each precede a faulting one. The table and the "second in a row" reading hold.
+- The doc-comment correction and the planned 14cc13d9 message text state only what those logs
+  show. Not implementing the different-VM keying is right: the review made it conditional on a
+  fault in (a), and r2c's faults were all at client switches anyway.
+- Acceptance record: FAIL only on crtc_file/presents (#177 display), native checks ran, kmscube
+  120.03 fps, EDID 128 bytes.
+
+Conditions before the commits/push:
+1. agent-docs: `tools/pb-idle-check/build.sh` line 5 hardcodes `/home/naeem/Projects/build-root-mesa`.
+   Replace it with `$HOME/...` or a `BUILD_ROOT` variable with that default before the agent-docs
+   commit (public fork, private-path rule). pb-idle-run.sh's `~/m3-private` is fine.
+2. In the README (or run.txt's footer), say that "total faults this boot: 1" is the raid6 line
+   matching `recovery` in the script's pattern, or tighten the pattern (e.g. `G15: recovery`)
+   so the footer reads 0; otherwise a reviewer reading run.txt sees "1".
+3. Per-commit build and host tests after the squash into 14cc13d9 (comment only), appended as
+   before.
+
+Optional (nits):
+- Add one line to the README that the boot-wide dmesg counts exceed the table's totals because
+  of the acceptance run and calibration, with the numbers above, so nobody counts differently.
+- The `PMP halted` line at 0.78 s is the boot-time pmp_report, unrelated; no action.

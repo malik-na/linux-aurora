@@ -1,0 +1,40 @@
+APPROVED
+
+Item 10 (CDM page-check cache and budget, P1 + P2, cap 16384 as Naeem decided), revision 4.
+Checked:
+- Code: `check()` counts only uncached checks; the last proven program page and the last proven
+  arguments page are not re-checked; page-crossing arguments are checked each time; ENOSPC at
+  the 16385th check is mapped to reject("CDM page check budget") for both launch kinds, and
+  `reject()` returns EINVAL. The constant's doc gives the measured reason (about 8100 checks at
+  the link budget, twice that leaves room).
+- Tests: the three new selftest cases fail on the old gate (i10pre.log 17:28: 71 passed, 3
+  failed, exactly those three) and pass with the 16384 boundary (i10self.log 18:04: 74 passed,
+  `page_check_budget_bounds_the_walk` ok); the boundary case pins "16384 checks admitted, the
+  16385th not made, EINVAL"; the 170000-launch valid stream is admitted with 17 checks.
+- Evidence files, all present and consistent with the README: hw-before-silicon10.txt (D40000
+  229 ms), hw-after-silicon12.txt / -large.txt (8192 era), hw-after-silicon14-large.txt
+  (D40000/44000/46000/47000 validate 94.0/103.0/106.5/106.8 ms, cr 6848/7533/7876/8047, ru up
+  to 15818; D48000/49000/52000 refused by the link budget, 2 reject lines each, "page budget:
+  0" on every run), deqp-multidraw-maxdraws-tess-silicon14.txt (608/608, 0 CDM rejections, 0
+  fault/recovery lines) and the silicon-12 twin; host-bench.txt; acceptance
+  results/20261023-180650-r182-item10b-accept (kmscube 120.037, EDID 256). Private-path scan
+  clean. The "-4" in the refused rows is Vulkan's VK_ERROR_DEVICE_LOST from the submit's EINVAL,
+  worth one clause in the README so nobody reads it as EINTR.
+- The planned message carries the lock facts, the per-check and per-read costs, and the
+  before/after worst cases (0.8 s / 51 s -> ~149 ms / ~9.5 s), the 40000-dispatch numbers, the
+  8047-check valid maximum and the dEQP result. Says "the last page it found good". Good.
+
+Conditions before the push:
+1. Squash into the byte-budget commit (1f6f3310's successor), then the per-commit build and host
+   tests over the rewritten range with the asahi-g15 selftest at the head (74 passed), appended
+   to item10.request with the log paths; check-commits, checkpatch --strict, keyword scan,
+   rustfmt as before.
+2. Commit the agent-docs side (results/20261023-r182-item10-cdm-walk, both acceptance records,
+   tools/cdm-gate-bench, the gatetime.sh and D-step changes to tools/pb-idle-check) with the
+   item 10 log entry.
+
+Optional (nits):
+- README: say once that the tool's "submit -4" is VK_ERROR_DEVICE_LOST (the kernel returned
+  EINVAL and logged "rejecting CDM link budget record").
+- In the item 11 reply to Marcelo, quote the measured numbers and the lock facts, and name the
+  new refusal string so he can grep for it.

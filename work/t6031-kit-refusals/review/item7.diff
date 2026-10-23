@@ -1,0 +1,113 @@
+diff --git i/drivers/gpu/drm/asahi/g15/pools.rs w/drivers/gpu/drm/asahi/g15/pools.rs
+index 6c450b1015b2..3364b136b928 100644
+--- i/drivers/gpu/drm/asahi/g15/pools.rs
++++ w/drivers/gpu/drm/asahi/g15/pools.rs
+@@ -771,24 +771,30 @@ pub(crate) fn reclaim_check(&mut self) {
+ 
+     /// Frees the backing chunks above those a re-initialized heap keeps
+     /// ([`growth::Ledger::keep_chunks`]) and drops their mappings in every VM that could
+-    /// publish; returns the chunks freed.
++    /// publish; returns the chunks freed. If the VMs cannot be walked, their mappings keep the
++    /// pages until each VM drops its stale aliases ([`VmState::map_heap`]): nothing is counted
++    /// freed.
+     fn free_backing(&mut self) -> usize {
+         let keep = self.pools.ledger.keep_chunks() as usize;
+-        let freed = self.pools.free_chunks(keep);
+-        self.pools.stats.freed += freed as u64;
++        let dropped = self.pools.free_chunks(keep);
+         // The mappings hold the chunks' pages: drop them in every VM that could publish.
+-        match self.vms.open() {
++        let freed = match self.vms.open() {
+             Ok(states) => {
+                 for state in states.iter() {
+                     state.unmap_heap_above(keep);
+                 }
++                dropped
+             }
+-            Err(e) => dev_warn!(
+-                self.dev(),
+-                "PB heap: reclaim could not walk the VMs: {}\n",
+-                e.to_errno()
+-            ),
+-        }
++            Err(e) => {
++                dev_warn!(
++                    self.dev(),
++                    "PB heap: reclaim could not walk the VMs: {}\n",
++                    e.to_errno()
++                );
++                0
++            }
++        };
++        self.pools.stats.freed += freed as u64;
+         freed
+     }
+ 
+diff --git i/tools/asahi/g15-pb-growth-tests.py w/tools/asahi/g15-pb-growth-tests.py
+index 5e46369bb2d0..e7f350d5c7f8 100644
+--- i/tools/asahi/g15-pb-growth-tests.py
++++ w/tools/asahi/g15-pb-growth-tests.py
+@@ -57,6 +57,8 @@ What it shows:
+   initial blocks and grows again from the kept backing with nothing allocated; after 1.1 s it
+   grows again over freshly backed chunks, each mapped before it is posted; a compute-only
+   submission between the reclaim and the InitBM maps, backs and posts nothing;
++- a reclaim whose walk of the VMs fails counts nothing freed; the VM's next publication drops
++  its stale aliases and releases the pages;
+ - the ledger reset of Pools::init() re-posts from the backing without allocating;
+ - the PB leaf decodes as GPU-only, not cached-noncoherent: dropping an alias is a plain unmap;
+ - Ledger::new() is Ledger::new() as of dba2a110de00 (the carried upstream constructor), capped at
+@@ -259,6 +261,9 @@ MUTATIONS = {
+     # Reset the posted count at any reclaim instead of at the next render's InitBM.
+     'reinit-at-any-reclaim': (POOLS, '        self.pools.reclaim_pending = true;\n',
+                               '        self.pools.reclaim_pending = true;\n        self.pools.ledger.reinit();\n'),
++    # Count the chunks freed although the VMs could not be walked.
++    'freed-without-walk': (POOLS, '                );\n                0\n            }\n        };\n',
++                           '                );\n                dropped\n            }\n        };\n'),
+     # Catch up without the one-VM check.
+     'no-activation-guard': (POOLS, '.filter(|f| !core::ptr::eq(&*f.job.vm, vm))', '.filter(|_| false)'),
+     # Back the whole heap when the GPU starts.
+@@ -306,6 +311,7 @@ INTENDED = {
+     'delay-nothing-grown': ('nothing_grown_arms_nothing', 'poll woke in a loop'),
+     'reinit-at-idle-reclaim': ('same_client_render_after_1_1s', 'posted count reset before the InitBM (1500)'),
+     'reinit-at-any-reclaim': ('same_client_render_after_60ms', 'posted count reset before the InitBM'),
++    'freed-without-walk': ('failed_vm_walk_counts_nothing_freed', 'freed counted with the VM walk failed'),
+     'no-activation-guard': ('catch_up_refuses_flights_of_another_vm', 'catch-up with a flight of another VM'),
+     'initial-backs-whole-heap': ('startup_backs_the_initial_blocks', 'startup allocation'),
+     'chunks-above-16mib': ('growth_backs_before_posting', 'a growth chunk above 16 MiB'),
+@@ -1637,6 +1643,36 @@ mod pb_growth_tests {
+         assert_cursor(&f, &a, 2);
+     }
+ 
++    /// A reclaim whose walk of the VM registry fails: the chunks leave the backing, but a VM's
++    /// aliases still hold their pages, so nothing is counted freed; the VM drops its stale
++    /// aliases at its next publication, and only then are the pages released.
++    #[test]
++    fn failed_vm_walk_counts_nothing_freed() {
++        defaults();
++        let mut f = Firmware::new();
++        let a = f.engine.flights[0].job.vm.clone();
++        grow_to(&mut f, 1500);
++        let chunks = f.pools.chunk_count();
++        f.engine.flights.clear();
++        let t0 = now();
++        check_at(&mut f, t0);
++        take();
++        crate::FAIL_OPEN.with(|c| c.set(1));
++        check_at(&mut f, t0 + 1_000_000_000);
++        let log = take();
++        assert_eq!(f.pools.chunk_count(), 2);
++        assert_eq!(f.pools.stats.freed, 0, "freed counted with the VM walk failed");
++        assert!(log.iter().any(|e| matches!(e, Ev::Log("warn", m) if m.contains("could not walk the VMs"))));
++        assert!(log.iter().any(|e| matches!(e, Ev::Log("info", m) if m.contains(" 0 chunks freed"))));
++        assert_eq!(count(&log, |e| matches!(e, Ev::Free(_))), 0, "pages released while aliases hold them");
++        assert_eq!(a.heap.list.lock().len(), chunks);
++        // A's next publication drops the stale aliases: the pages go.
++        publish(&mut f, &a, true);
++        let log = take();
++        assert_eq!(count(&log, |e| matches!(e, Ev::Free(_))), chunks - 2);
++        assert_cursor(&f, &a, 2);
++    }
++
+     /// One client idles 60 ms after a heavy scene (more than half the maximum posted) and
+     /// renders again: the client-boundary re-initialization was set at 50 ms with the backing
+     /// kept, the posted count stays until the render's InitBM, which posts the initial blocks

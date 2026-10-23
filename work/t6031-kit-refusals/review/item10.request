@@ -1,0 +1,213 @@
+Item 10: the CDM byte budget (Marcelo). Measurement done; DECISION NEEDED on tightening.
+
+No code change yet. Branch head d465423f (pushed). The M3 runs the item 8 D4 package
+(silicon-10), which has the same gate.rs as the head.
+
+QUESTION
+The byte budget lets one compute command's CDM walk cover up to 65 x 64 KiB = 4,259,840
+bytes (1,064,960 four-byte barrier records), about 130x the old 8192-record cap. How long does a
+worst-case walk take, and how long does it hold its lock?
+
+WHAT THE WALK HOLDS (code reading)
+- gate::cdm() runs in Queue::submit_job() -> command::prepare(..).validate() -> check_compute(),
+  for each compute command of a SUBMIT (up to MAX_COMMANDS_PER_SUBMISSION = 64). The caller
+  holds the queue's mutex (file.rs: `queue.lock().submit(..)`) for the whole SUBMIT. The device
+  lock (Shared::state) is NOT held, so the engine, the poll work and other clients' queues keep
+  running.
+- Each mmu::Vm::read_user() (one per 256-byte window) and each command::cover() ->
+  Vm::covers_range() takes and drops that VM's GPUVM exec lock (lock_vm). The VM lock is
+  therefore held per call, for microseconds, not across the walk.
+- Per record: barriers and links cost only the window reads (one read per 256 bytes). A direct
+  launch adds a program check that is cached per page. An indirect launch (24 or 36 bytes) adds
+  an UNCACHED cover() of its 12-byte arguments, one VM lock and page walk per record.
+- The walk does not check for signals.
+
+MEASUREMENTS
+1. Host benchmark (tools/cdm-gate-bench/bench.rs, kept with the results). It runs the actual
+   gate.rs with modelled read_user/cover (a mutex, a 3-level lookup, dc civac per line, dsb,
+   copy), on the M3's CPU. Per command: barriers 2.0-2.4 ms (7.3 ms on one unpinned run);
+   indirect launches 1.9-4.3 ms. The model's per-call cost is 16-28 ns, so it understates the
+   kernel badly (see 2).
+2. Hardware (J516C, silicon-10 kernel). pb-idle-check gains a step "D<n>": one command buffer of
+   n vkCmdDispatchIndirect calls (Honeykrisp encodes one CDM indirect launch per dispatch, about
+   86 stream bytes each), with vkQueueSubmit timed in userspace and Prepared::validate() timed
+   with kprobe/kretprobe:
+     n         submit (ms)   validate (ms)
+     1           0.09-0.19      0.034
+     1000        7.7-9.0        7.67
+     8000       51.8-54.1      51.76
+     20000      110.8-113.2   110.74
+     40000      224.1-240     224.01
+     80000      refused at the 64-link budget ("rejecting CDM link budget record")
+   kprobe counts for n=40000: read_user 13464, cover 41410, covers_range 41410. Per-call times
+   with entry/return probes (n=8000): covers_range median 4.0 us (8283 calls, 36.0 ms total),
+   read_user median 5.0 us (2695 calls, 13.0 ms). So validate() is almost entirely these calls:
+   about 5.6 us per indirect dispatch.
+3. Worst case derived from 2:
+   - barriers only: 16,640 reads x 5 us = about 83 ms per command;
+   - 24-byte indirect launches, arguments on distinct pages: 177,450 covers x 4 us + 16,640
+     reads x 5 us = about 0.8 s per command;
+   - one SUBMIT of 64 such compute commands: about 51 s in one ioctl (about 5.3 s with barrier
+     streams);
+   - the old 8192-record cap, worst (indirect): 8192 x 4 us + about 770 reads x 5 us = about
+     37 ms per command, about 2.4 s per SUBMIT.
+   - A legitimate Mesa stream at the budget (about 49,500 dispatches) takes about 280 ms per
+     command today, because Mesa's dispatches point at the same arguments page and the cover()
+     result is not cached.
+
+ASSESSMENT
+Not a device-wide stall: the device lock is not held, so the GPU and other clients run. But one
+process can make a single uninterruptible SUBMIT ioctl take tens of seconds, roughly 20x the old
+cap's worst case, holding its queue mutex, and with millions of lock/unlock cycles on its VM's
+exec lock. I consider this unreasonable, so the budget should be tightened. A legitimate heavy
+stream also spends nearly all of its 280 ms on repeated page checks of the same page.
+
+PROPOSAL (needs your call; the trade-off is legitimate workloads against the worst case)
+P1 (no behaviour change for valid streams): cache the indirect-arguments page check in the walk,
+   as program() already does (`checked`). One cover() per distinct arguments page; the same page
+   later in the walk reuses the result (the same point-in-time semantics as the program cache).
+   Mesa's D40000 drops from about 224 ms to about 70 ms (13464 reads x 5 us), and the worst case
+   for distinct pages is unchanged.
+P2 (bound the expensive checks): per walk, at most 8192 uncached page checks (program and
+   arguments pages, the old record cap's count). One more is refused as "CDM page budget". Valid
+   Mesa streams use a handful of distinct pages. Worst per command = 83 ms reads + 8192 x 4 us =
+   about 116 ms.
+P3 (bound the SUBMIT): a budget for all CDM walks of one SUBMIT: at most CDM_MAX_BYTES walked and
+   8192 page checks in total. Worst per ioctl = about 116 ms. Risk: a SUBMIT with several large
+   compute commands that each fit alone could be refused (none seen in dEQP; the
+   multi_draw.mosaic stream that motivated the byte budget is one command of about 10k records).
+   The alternative is per-SUBMIT 4x, worst about 0.5 s.
+My recommendation: P1 + P2 now; P3 only with your agreement. With P1 + P2 the worst case is
+about 116 ms per command and about 7.4 s per SUBMIT (from 0.8 s / 51 s), below the old cap's
+2.4 s per SUBMIT only if P3 is added. Without P3, 64 maximal barrier streams still take about
+5.3 s, which comes from walking 64 x 4 MiB of user memory and which the byte budget allows by
+design. Tests (asahi-g15 selftest gate cases): same-page indirect launches make one cover()
+(counted by the mock), distinct pages up to the budget are admitted, one past it is refused,
+and the existing budget/link cases are unchanged. Then a J516C D40000 timing before and after,
+plus the dEQP multi_draw.mosaic cases (pass).
+
+============================================================================================
+revision 2: user decision P1 + P2 (8192 page checks per walk). Implemented, tested, measured.
+One point needs your call: the 8192 margin (see MARGIN).
+
+CODE (item10.diff; uncommitted on d465423f)
+gate.rs:
+- struct Checked { program, args: Option<page>, count }.
+- check(): one cover() under the budget; ENOSPC once CDM_MAX_PAGE_CHECKS (8192) checks have been
+  made.
+- program(): its page cache moves into Checked; the check is counted.
+- arguments(): new; the 12 argument bytes of an indirect launch are checked once per page and
+  cached like the program page. Arguments that cross a page are checked each time and not cached.
+- Both launch kinds map ENOSPC to reject("CDM page check budget", va, w), the refusal reason in
+  the reject log. The module doc and the constant's doc say why.
+asahi-g15 selftest (run.py): the mock cover() counts calls (COVERS) and treats addresses from
+1 << 40 on as mapped. New cases:
+- repeated_argument_pages_are_checked_once: 1000 launches in one argument page -> 2 checks
+  (program page + argument page); alternating between 2 pages -> 11; arguments crossing a page ->
+  checked each time.
+- page_check_budget_bounds_the_walk: program + 8191 argument pages = 8192 checks, admitted; one
+  more page -> refused (EINVAL), and the 8193rd check is not made.
+- a_large_stream_of_reused_pages_is_admitted: 170000 launches (4.08 MB, inside the byte budget)
+  over 16 pages -> admitted with 17 checks.
+
+VALIDATION
+- Fail before: the same tests on the old gate.rs: "FAILED. 71 passed; 3 failed" (1001 instead of
+  2; 8193 instead of a refusal at 8192; 170001 instead of 17). After: "ok. 74 passed; 0 failed;
+  2 ignored".
+- rustfmt (Air, 1.93.1) applied, clean. checkpatch --strict on the diff: 0/0/0. The package
+  builds (silicon-12, BUILD-OK); the vmlinux holds "page check budget".
+- J516C silicon-12 acceptance (results/20261023-173535-r182-item10-accept): FAIL only on
+  crtc_file/presents, as always; kmscube 120.035 fps, EDID 256 bytes, native checks ran.
+- Re-measured (results/20261023-r182-item10-cdm-walk/README.md, with the raw before and after
+  files, the host benchmark, and gatetime.sh in tools/pb-idle-check):
+  - 40000 dispatches: validate 224-229 ms -> 91.6 ms; page checks 41410 -> 6848; reads 13464
+    (unchanged).
+  - worst case: the P2 bound is analytic (8192 x 4 us + 16640 x 5 us = about 116 ms per
+    command, from about 0.8 s). The largest stream the link budget admits through Mesa,
+    D47000 at 8047 checks, measured 113.6 ms. D48000 and above are refused by the existing
+    64-link budget, not by the page budget (cr 8101 < 8192).
+  - dEQP-VK.draw.*multi_draw.mosaic.*.max_draws.*.with_tess.*: 608/608 pass (a superset of the
+    3); no CDM rejection or GPU fault lines.
+
+MARGIN (needs your call)
+Honeykrisp's indirect-dispatch arguments live in its own upload memory, which moves to a new
+16 KiB page about every 7 dispatches. A kprobe on cover() at n=2000 saw 271 argument checks,
+71 program checks and 316 distinct pages. So a valid stream's page checks grow with its length,
+and the largest stream the link budget admits makes 8050-8100 checks: within about 1% of 8192.
+Today the link budget still trips first, but a small change in Mesa's encoding (denser stream
+bytes per dispatch, or another pattern) could make a valid stream hit the page budget first. My
+recommendation is CDM_MAX_PAGE_CHECKS = 16384 (2x the measured valid maximum). The worst case
+becomes 83 ms + 16384 x 4 us = about 149 ms per command and about 9.5 s per 64-command SUBMIT,
+against 116 ms and 7.4 s at 8192 and 0.8 s and 51 s before. If you agree, I change the constant
+and its test (program + 16383 pages admitted, one more refused) and rerun the selftest and the
+D47000 timing. If you keep 8192, I add the measured margin to the commit message and to the
+reply to Marcelo.
+
+PLANNED COMMIT: fixup into 1f6f3310 "drm/asahi: g15: m3: bound the CDM stream walk by bytes, not
+by 8192 records" (the commit that introduced the walk's current shape). Message: add a paragraph
+saying that a page found good (a program's or an indirect launch's arguments) is not checked
+again in the walk, and that a walk makes at most N page checks (refused as "CDM page check
+budget"). Give the worst cases measured on the J516C: the walk holds no device lock (the queue's
+mutex for the SUBMIT, the VM lock per check); page checks about 4 us and window reads about
+5 us; a stream of distinct argument pages took about 0.8 s per command before and at most about
+116 ms (N=8192) or 149 ms (N=16384) after; 40000 Mesa dispatches 224 -> 92 ms. Add the host-test
+lines for the new cases. The subject stays.
+
+============================================================================================
+revision 3 (after CHANGES)
+1. Raw output for the large rows: results/20261023-r182-item10-cdm-walk/hw-after-silicon12-large.txt
+   (re-run on the same silicon-12 boot: timing-only validate 95.8 / 103.9 / 105.6 ms for 44000 /
+   46000 / 47000; cr 7533 / 7876 / 8047, ru 14809 / 15483 / 15818; 48000 / 49000 / 52000 refused
+   after 113.1 / 110.9 / 112.3 ms with cr 8101 ru 15927 and a new "rejecting CDM link budget
+   record" line each). The README table now quotes these timing-only values (the earlier rows
+   were submit times with counting probes), so D47000 is 105.6 ms.
+2. dEQP output: results/20261023-r182-item10-cdm-walk/deqp-multidraw-maxdraws-tess-silicon12.txt
+   (608 test cases, "Passed: 608/608"), cited in the README.
+3. CDM_MAX_PAGE_CHECKS stays 8192 pending the decision. If 16384 is chosen, only the constant,
+   the boundary test (program + 16383 pages admitted, one more refused) and the message numbers
+   change.
+Nits taken: the message will say "the last proven page", and it carries both bounds and the lock
+facts.
+
+============================================================================================
+revision 4: user decision, cap 16384
+- gate.rs: CDM_MAX_PAGE_CHECKS = 16384. The doc says the last page found good is not checked
+  again, that Mesa's arguments move to a new page every few launches so a stream at the link
+  budget makes about 8100 checks, and that twice that leaves room. Boundary test: program +
+  16383 pages admitted with 16384 checks; one more page refused at 16384, and the 16385th
+  check is not made. selftest: 74 passed, 0 failed, 2 ignored. rustfmt (Air) clean.
+- Package silicon-14 (BUILD-OK), installed and booted (acceptance
+  results/20261023-180650-r182-item10b-accept: kmscube 120.037 fps, EDID 256 bytes, FAIL only
+  on crtc_file/presents).
+- Re-measured and saved on silicon-14 (results/20261023-r182-item10-cdm-walk/):
+  - hw-after-silicon14-large.txt: D40000 / 44000 / 46000 / 47000 timing-only validate 94.0 /
+    103.0 / 106.5 / 106.8 ms (D47000 re-timed: 106.8 ms), with cr 6848 / 7533 / 7876 / 8047.
+    48000 / 49000 / 52000 were refused by the link budget after 108-110 ms (cr 8101), with 2 new
+    "rejecting CDM link budget record" lines each and "page check budget" never logged.
+  - deqp-multidraw-maxdraws-tess-silicon14.txt: 608/608 pass; during the run, 0 "rejecting
+    CDM" and 0 fault/recovery lines.
+  - The silicon-12 (8192) files are kept: hw-after-silicon12.txt, hw-after-silicon12-large.txt,
+    deqp-multidraw-maxdraws-tess-silicon12.txt. Before: hw-before-silicon10.txt. Host bench:
+    host-bench.txt. The README tables are updated (final rows = silicon-14; worst case after =
+    about 149 ms per command and about 9.5 s per 64-command SUBMIT, against about 0.8 s and
+    about 51 s before).
+PLANNED COMMIT: fixup into 1f6f3310 (CDM byte-budget commit). Message paragraph to add:
+  "A walk does not check again the last page it found good, for a program or for an indirect
+  launch's 12 argument bytes, and it makes at most 16384 page checks; one more is refused as
+  'CDM page check budget'. The walk holds no device lock: the queue's mutex covers the SUBMIT,
+  and the VM's lock is taken per check (about 4 us on the J516C) and per 256-byte read (about
+  5 us). Before this, a stream of 24-byte indirect launches with distinct argument pages made
+  one check per launch, about 0.8 s per compute command and about 51 s per 64-command SUBMIT;
+  now it is at most about 149 ms per command and about 9.5 s per SUBMIT. Mesa's indirect
+  arguments move to a new page every few dispatches: 40000 dispatches made 41410 checks in
+  224 ms before and 6848 in 94 ms after, and the largest stream the link budget admits (47000
+  dispatches) makes 8047. The 608 dEQP-VK multi_draw.mosaic max_draws with_tess cases pass."
+  Plus the host-test lines for the three new cases.
+
+APPENDED AFTER APPROVAL
+Squashed into the CDM byte-budget commit (now ae93621a; message as planned, all lines <= 72).
+Head a089fd06, pushed. Per-commit build ae93621a..a089fd06 (M3): all OK, apple W=1 0 warnings.
+Per-commit host tests (M3 ~/aurora-test/silicon/r10-ht.log): self 73/73/74/74 passed (2
+ignored), pb-growth 34/34/37/37, zw and dcp14 pass; head pb-growth --mutations 37/37 caught.
+check-commits: 11 signed off, the same 2 warnings. checkpatch --strict on the CDM commit: 0/0/0.
+rustfmt (Air) no drift. Keyword scan clean. README: the "-4" clause was added.

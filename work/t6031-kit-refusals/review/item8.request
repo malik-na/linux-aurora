@@ -1,0 +1,221 @@
+Item 8: EDID fixes (Marcelo, Chris). revision 1. ONE DECISION NEEDED (the detailed timing).
+
+Uncommitted on top of 575a3484204f (series head, pushed). item8.diff = `git diff`, covering
+dcp-panel-edid.{c,h}, dcp-panel-edid-test.c, iomfb.c and apple-dcp/rate.py.
+
+FINDINGS AND VALIDATION
+Evidence: the panel's live EDID from the running branch kernel (/sys/class/drm/card2-eDP-1/
+edid), decoded with edid-decode 1.32.0 and di-edid-decode (libdisplay-info 0.3.0) on the M3. A
+host dump of dcp_panel_edid_block() reproduces it byte for byte. The dumper is a scratch tool:
+the .c file is built with stub headers and struct edid is taken from include/drm/drm_edid.h.
+1. gamma byte 0x17 = 0 decodes as "Gamma: 1.00". Real.
+2. year: "Made in: 1990" (byte 0x11 = 0), and libdisplay-info reports "Year set to reserved
+   value". Real.
+3. no detailed timing first: edid-decode fails with "Standard Timings: Missing preferred timing";
+   libdisplay-info fails 4x with "The first byte descriptor must contain the preferred timing".
+   Real. libdisplay-info also fails "White-point coordinates are unset" (Marcelo's point that
+   libdisplay-info would flag the block).
+4. dcp_panel_edid_update() wrote the DT panel size into display_info, while
+   dcp_update_connector_dimensions() prefers the firmware's dcp->width_mm/height_mm. Real (code
+   reading: dcp.c:585-598 against dcp-panel-edid.c). On the J516C the two differ: the firmware
+   gives 346x216 mm (notch rows hidden), the node 346x223.
+5. the new dcp_get_modes() branch leaves drm_edid_firmware_derived as it was. Real (code
+   reading): after an earlier firmware-derived publication the flag stays true.
+6. KUnit fixture WARNING. Real. KUnit baseline at 575a3484 on the M3 (kunit.py --arch=arm64 in
+   QEMU/KVM, chroot LLVM, aurora.kunitconfig, then run-kunit.py --check-only):
+   "1541 pass, 0 fail, 3 skip; 1 kernel splats", with the difference "kernel splat
+   drivers/gpu/drm/drm_connector.c:drm_connector_init_only in
+   apple-dcp-panel-edid.panel_edid_update_keeps_the_size_in_mm: 1 seen, 0 expected" (test.log:
+   WARNING drm_connector.c:236). Output: ~/Projects/build-out/kunit-stack177/base575/.
+
+FIX (done)
+- Gamma: byte 0x17 = 0x78, nominal 2.2. Why 2.2: these panels are P3 wide-colour panels (public
+  spec), and Display P3 uses the sRGB transfer function, which a gamma of 2.2 approximates. The
+  EDID gamma byte is nominal; 0xff would point at an extension, as Marcelo noted.
+- Model year: week 0xff (the year byte is the model year), year 2023 - 1990 = 33. The year
+  comes from a table keyed on the panel model ({ "J516", 2023 }: the 16-inch MacBook Pro with
+  M3 Pro or M3 Max came out in 2023), filled into struct dcp_panel_id.model_year by
+  dcp_panel_id_from_compatible(). dcp_panel_edid_block() refuses a year EDID 1.4 reserves
+  (< 2006) or cannot hold, so a model with no known year gets no block (the dcp_get_modes()
+  path then warns once, as for any update failure). Only the J516C reaches this path
+  (iomfb_v14_7_base_edid()).
+- dimensions: dcp_panel_edid_update() no longer touches display_info (the EDID update sets it
+  from the block's whole centimetres). The dcp_get_modes() branch calls the existing
+  dcp_update_connector_dimensions() before the update, so the block is sized from the same
+  source (firmware first, then the node), and again after it, to give the connector back its
+  millimetres. The firmware width/height stay the single source of truth.
+- drm_edid_firmware_derived = false in that branch.
+- KUnit fixture: connector funcs .reset/.atomic_duplicate_state/.atomic_destroy_state = the
+  drm_atomic_helper_connector_* helpers (the KUnit DRM device is atomic). Test asserts:
+  gamma 0x78, mfg_week 0xff, mfg_year 33, id.model_year 2023, a model without a year gets 0,
+  a block with model_year 2005 is refused. The update case is renamed
+  panel_edid_update_publishes_the_block and asserts 350x220 after the update (the block's cm;
+  the mm restore is now the caller's).
+- apple-dcp/rate.py (publication-hpd harness): stub dcp_update_connector_dimensions() (asserts,
+  since the H17P scenarios never reach the branch) and display_info width_mm/height_mm in the
+  mock connector.
+
+FIX VALIDATION (M3)
+- KUnit (output ~/Projects/build-out/kunit-stack177/wip8/): "110 suites, 1544 cases: 1541 pass,
+  0 fail, 3 skip, 0 error; 0 kernel splats". run-kunit.py --check-only shows no differences
+  from kunit-expected.json; no drm_connector.c:236 in test.log. apple-dcp-panel-edid 6/6 ok.
+- make W=1 drivers/gpu/drm/apple/: OK, 0 warnings.
+- apple-dcp run.sh: 50 ok; the same 6 pre-existing not-ok as on d60121ff (clang 23);
+  publication-hpd ok. dcp14-panel-tests.py: pass.
+- edid-decode on the new block: "Gamma: 2.20", "Model year: 2023". The remaining failure is
+  the missing preferred timing. libdisplay-info: the year failure is gone; the white point and
+  the first-descriptor failures remain.
+
+DECISION NEEDED: THE DETAILED TIMING (and, tied to it, the colour characteristics)
+The task asks for a DTD of 3456x2234@120 with the timing 3456 3464 3496 3536 / 2234 2352 2360
+2456 and the pixel clock from 120 Hz. That timing CANNOT be encoded in an EDID detailed timing
+descriptor, for two independent reasons:
+- pixel clock: 3536 x 2456 x 120 = 1,042,145,280 Hz. The DTD clock field is 16 bits in 10 kHz
+  units, at most 655.35 MHz. Any native-resolution timing at 120 Hz is at least
+  3456 x 2234 x 120 = 926 MHz, so this holds even with reduced blanking.
+- vertical front porch: 2352 - 2234 = 118 lines. The DTD field is 6 bits, at most 63.
+(The DCP mode line on this boot is "3456x2160": 120 1042130 3456 3464 3496 3536 2160 2278 2360
+2456, the same porches with 74 notch rows hidden.)
+Prototypes (raw bytes from the new block, decoded on the M3; ~/aurora-test/edid-dump/proto/):
+  (a) + P3 primaries and D65 white only: edid-decode FAIL (missing preferred timing);
+      libdisplay-info FAIL (first descriptor), with the white-point failure gone.
+  (b) (a) + a DisplayID 2.0 extension with a Type VII timing holding the exact 120 Hz timing
+      (extensions = 1): still FAIL in both decoders; both require the preferred timing in the
+      base block's first descriptor (edid-decode adds "Missing DisplayID Display Parameters
+      Data Block").
+  (c) (a) + a first-descriptor DTD of 3456x2234 at 60 Hz: htotal 3536 and the horizontal
+      porches exact, vtotal 2456 and vsync width 8 exact, vertical front porch 48 instead of 118,
+      clock 521.07 MHz (3536 x 2456 x 60); the monitor name moved to descriptor 1: edid-decode
+      "EDID conformity: PASS" (one warning, no native resolution); libdisplay-info no
+      failures.
+So a conformant base block needs (c)-like content: a DTD at a rate whose clock fits (at most
+75 Hz with these totals) and a vertical front porch of at most 63, i.e. a timing that is NOT
+the firmware's. On this platform it is descriptive only: dcp_get_modes() publishes the
+firmware's modes and never adds modes from this EDID (it calls drm_edid_connector_update(),
+not drm_edid_connector_add_modes()). A fixed 60 Hz refresh at full resolution is a published
+option of this panel; 60 Hz with these exact porches is not known.
+Options:
+  D1: (c). A 60 Hz DTD, porches as close to the firmware's as the DTD holds (vfp 63, vback
+      151, or 48/166 as prototyped), features bit 1 left clear (the DTD does not carry the
+      preferred refresh rate), plus P3/D65 chromaticity, with a comment saying it is the base
+      block's encodable timing, not the firmware's. Both decoders pass.
+  D2: no DTD. Keep gamma and model year (and optionally the P3/D65 chromaticity), and reply to
+      Marcelo with the two encoding limits above. Both decoders keep the first-descriptor
+      failure.
+  D3: D1 or D2 plus a DisplayID extension carrying the true 120 Hz timing. This adds an
+      extension block for information nothing here reads; not recommended.
+My recommendation: D1 with vfp 63 / vback 151 (the least-changed vertical timing) and the
+chromaticity. It meets what Marcelo asked for (a timing in the first descriptor, a block that
+libdisplay-info accepts), without claiming the 120 Hz native timing, and the comment and the
+commit message say so. If you choose D2, I drop the chromaticity unless you want it: it is a
+P3 claim from the public spec, not a measurement.
+
+PLANNED COMMIT (after the decision): one fixup into 4b32d3e6 "drm/apple: give the J516C panel
+a base EDID" (the commit that adds the builder, the test, the dcp_get_modes() branch and the
+rate.py stubs). Message: replace "no manufacture date, no colour primaries, no timings"
+wording to match the chosen option; state gamma 2.2 with the P3 reason, and the model year.
+Then the per-commit build, apple-dcp run.sh and KUnit at the head.
+
+============================================================================================
+revision 2: user decision D4 (60 Hz base-block DTD + DisplayID extension with the 120 Hz
+timing; D1 as fallback). D4 PASSES both decoders, so D4 is used.
+
+Correction to revision 1: 3536 x 2456 x 120 = 1,042,129,920 Hz (= the DCP's 1042130 kHz), not
+1,042,145,280; at 60 Hz it is 521,064,960 Hz (DTD field 52106). The limits are unchanged.
+
+PROTOTYPING (M3, ~/aurora-test/edid-dump/d4/, both decoders)
+- DisplayID 1.3 Type I timing: edid-decode PASS only with product type 1; libdisplay-info FAIL
+  ("Padding: Contains non-zero bytes"). Rejected.
+- DisplayID 2.0 Type VII alone: edid-decode FAIL ("Base Block has no product type" with 0; with
+  a use case it requires a Display Parameters block). libdisplay-info PASS.
+- DisplayID 2.0, primary use 0x02 "generic display", Display Parameters (0x21) + Type VII:
+  BOTH PASS, with no warnings (even "No Native Video Resolution" is gone). Field encodings were
+  probed against edid-decode's decoding (product type, feature bits, colour/technology byte,
+  gamma position, IEEE half-float luminance).
+
+FIX (item8.diff, revision 2: the revision 1 fixes plus the following)
+dcp-panel-edid.{c,h}:
+- The model table carries the native timing from the DCP mode line with all rows shown:
+  J516 = 1042130 kHz, 3456 3464 3496 3536 / 2234 2352 2360 2456 (dcp_panel_id.timing).
+- dcp_panel_edid_block() is replaced by dcp_panel_edid_build(id, w_mm, h_mm, u8[2 * 128]).
+  A model without a year or a valid timing gets no EDID (-EINVAL).
+- The base block has P3/D65 chromaticity (10-bit), gamma 0x78 and model year 2023. Descriptor 0
+  is a DTD with the panel's geometry at 60 Hz: clock 52106 (521.06 MHz); horizontal 3456/80
+  blank, porch 8, sync 32; vertical 2234/222 blank, porch 63 (the field's maximum; the panel's
+  is 118), sync 8, back porch 151; size 346x216 mm, the connector's (firmware) size, the same
+  source as the cm fields; positive syncs. Descriptor 1 is the monitor name, descriptors 2-3 are
+  dummies. Features bit 1 is clear. extensions = 1.
+- The DisplayID 2.0 extension (tag 0x70): use case 0x02, generic display. Display Parameters:
+  346.0x216.0 mm, 3456x2234 native, left to right and top to bottom, CIE 1931, speakers not
+  integrated, P3/D65 (12-bit), luminance not known (left 0; edid-decode prints 0 as 0.000031
+  cd/m^2), colour depth not given, active-matrix LCD, gamma 2.2. Type VII timing: 1042130 kHz,
+  preferred, aspect from the pixels, the exact DCP porches, positive syncs. Section checksum
+  and block checksum both filled.
+- dcp_panel_edid_update() builds both blocks (256 bytes, kmalloc) and publishes them with
+  drm_edid_connector_update(). It still adds no mode.
+- The file comment says that the base DTD is 60 Hz because the 16-bit pixel-clock field (at most
+  655.35 MHz) and the 6-bit front porch cannot hold the 120 Hz timing, that the extension
+  carries the real 120 Hz timing, and that the DRM modes stay the DCP firmware's.
+KUnit (dcp-panel-edid-test.c; J516_H_MM is now 216, the firmware's height):
+- panel_id_from_compatible: timing clock 1042130 and vtotal 2456; j999 gets no year and no
+  timing.
+- panel_edid_parses_with_make_product_and_size: also P3 red and D65 white (10-bit),
+  extensions == 1, both blocks sum to 0.
+- panel_edid_has_no_serial_and_no_timings is renamed to panel_edid_timings_are_the_panels. It
+  checks every DTD field above, features bit 1 clear, one name and no serial or range
+  descriptors, and the DisplayID header (0x70, 2.0, use case 2, length 55, section checksum),
+  Display Parameters (size in 0.1 mm, native pixels, gamma) and all Type VII fields against the
+  DCP mode line.
+- panel_edid_refuses_a_size_it_cannot_hold: also clock 0 is refused.
+- panel_edid_update_publishes_the_block: the blob is 256 bytes, and probed_modes stays empty
+  after the update (no mode from the EDID).
+
+VALIDATION
+- KUnit on the M3 (~/Projects/build-out/kunit-stack177/d4/): 1541 pass, 0 fail, 3 skip,
+  0 splats; run-kunit.py --check-only shows no differences; apple-dcp-panel-edid 6/6.
+- make W=1 drivers/gpu/drm/apple/: 0 warnings. checkpatch --strict on the diff: 0/0/0.
+- apple-dcp run.sh: 50 ok, the same 6 pre-existing not-ok (publication-hpd ok);
+  dcp14-panel-tests.py pass.
+- The host build of the driver's EDID (~/aurora-test/edid-dump/d4.bin, 256 bytes):
+  edid-decode 1.32.0 "EDID conformity: PASS" with no warnings; di-edid-decode "EDID
+  conformity: PASS". The decoded text is as listed above (DTD 59.999 Hz 521.06 MHz 346x216 mm;
+  DisplayID Type VII 120.000009 Hz 1042.13 MHz, preferred).
+- J516C (package 7.2.11_aurora_dev_silicon-10, built from 575a3484 + this diff; booted with
+  m3-accept r182-item8-d4 --image boot.bin.pr177; record results/20261023-131907-r182-item8-d4-
+  accept/, FAIL only on crtc_file/presents, as before):
+  - kmscube 120.028 fps; native checks ran (compute 8323, vk 5530, gl 6436, zink 4319);
+  - the live /sys/class/drm/card2-eDP-1/edid is 256 bytes and byte-identical to the host build;
+    both decoders PASS on it;
+  - modetest on eDP-1, before (40b47534 boot) and after: the same single mode,
+    "#0 3456x2160 120.00 3456 3464 3496 3536 2160 2278 2360 2456 1042130 type: preferred,
+    driver", size 346x216 mm. No new modes; 120 Hz unchanged; the DCP's timing line is
+    unchanged;
+  - no "panel EDID publication failed" and no GPU fault/recovery lines; dmesg saved privately in
+    ~/m3-private/r182-item8-d4-dmesg.txt.
+
+PLANNED COMMIT: one fixup into 4b32d3e6 "drm/apple: give the J516C panel a base EDID", reworded
+to "drm/apple: give the J516C panel an EDID". The body says: the base block names the panel
+(APP, J516), gives its size from the connector (firmware first, then the node), model year 2023,
+gamma 2.2 and P3/D65 colour; its detailed timing is the panel's geometry at 60 Hz, because the
+EDID detailed timing's 16-bit pixel-clock field (at most 655.35 MHz) and 6-bit vertical front
+porch cannot hold the panel's 3456x2234 120 Hz timing (1042.13 MHz, front porch 118); a DisplayID
+2.0 extension carries the real 120 Hz timing as its preferred timing, with the display
+parameters; DRM modes still come from the DCP firmware, not from this EDID (no mode is added,
+tested); edid-decode and libdisplay-info both report the EDID conformant; the KUnit fixture uses
+the atomic connector state helpers. Then the per-commit build, run.sh and KUnit at the head.
+
+APPENDED AFTER APPROVAL
+- Condition 1: results/20261023-131907-r182-item8-d4-accept/modetest.txt holds the before
+  (silicon-8, 40b47534) and after (silicon-10, D4) eDP-1 listings: the same single mode,
+  346x216 mm; EDID 128 -> 256 bytes.
+- Condition 2: squashed into the EDID commit, renamed "drm/apple: give the J516C panel an EDID"
+  (d77c5566); message as planned with the corrected arithmetic (1,042,129,920 Hz). Head
+  98dc5a9c, pushed. Per-commit build over d60121ff..98dc5a9c (M3 r8-bisect.log): all 11 OK,
+  apple W=1 0 warnings. run.sh at d77c5566 and at the head: 50 ok and the same 6 pre-existing;
+  dcp14-panel passes at both (r8-all.log). KUnit at the head (kunit-stack177/head8/): 1541
+  pass, 0 splats, no differences, panel EDID 6/6. G15 commits: G15 trees unchanged since item 7's
+  per-commit host run. check-commits: 11 signed off, the same 2 warnings (MAINTAINERS for the new
+  files; loader commit); keyword scan clean.
+- Condition 3: the item 1 log entry now cites ~/aurora-test/silicon/r1-ht-base.log.
+- The timing_valid() nit is not taken (static table; KUnit pins every field); noted for the
+  replies.

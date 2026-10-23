@@ -1,0 +1,37 @@
+Item 11: drafts only (nothing posted). File: drafts/pr182-replies.md (copied as item11.diff).
+
+Contents:
+(a) PR-body additions and corrections. New: the compute-only-after-reclaim note (one flight at a
+    time until the next render, with the harness case and the J516C compute runs). Also the
+    long-idle free, no re-init when nothing grew, the EDID and CDM commit rows rewritten with the
+    corrected arithmetic, display row 120.03 fps and 2.9-8.1 ms, and a "re-tested" line.
+(b) Two issue drafts, both for omacom/linux-aurora. The installer is tools/aurora-sep/install-
+    aurora-sep.sh (M3_MAX_SAFE_SWITCHES t6031-gpu=0 at :639-641, the reason at :624-637) and the
+    session hook is tools/aurora-sep/recipes/mesa-m3/mesa-m3-session-env (software fallback only
+    for t6030/t8122, :60 and _mm3_soc_of). I checked omacom/omarchy-mac, omarchy-mac-installer
+    and omarchy-mac-pkgs: none holds these files. Observations cited: the loader-notice line, and
+    the Hyprland spin from results/20261023-0145-stack177-j516c.
+(c) One reply per reviewer point: Marcelo's review of 10-22 (CI, kept backing, mid-client re-init
+    with the r2c analysis and the J516C runs, gamma, nothing-grew, compute note, 33922ce9, issues,
+    T6030); Marcelo's follow-up of 10-23 (strand, compute after reclaim, rebase, stats.freed,
+    EDID size/flag, year/DTD with the 60 Hz reason and the DisplayID 120 Hz timing and "modes
+    stay the firmware's", CDM lock facts and timings, naming "CDM page check budget"); Chris's
+    review (reproducer, render-only reason citing compute_between_reclaim_and_initbm and
+    refill-for-any-flight, harness model); Chris's M3 Pro comment; Chris's inline KUnit fixture
+    note; Greptile's P1. Every SHA is the branch head a089fd06's. Keyword scan clean, no private
+    paths.
+Nits carried over from earlier verdicts: the corrected arithmetic everywhere (1,042,129,920 Hz),
+the render-only reason in the replies to Marcelo and Chris, the "last page found good" wording,
+both CDM bounds, the lock facts, the stats.freed clause and the nothing-grown follow-up line.
+
+APPENDED AFTER APPROVAL
+1. The per-case base listing exists: M3 ~/Projects/build-out/kernel-stack177/dcp-run-base-d60121ff.log
+   (run on d60121ff alone, cited in the item 1 log entry). Its six "not ok" lines are the same
+   six. The reply now names them, says they are in files this series does not touch, and says
+   five are clang 23 -Wunused-but-set-global.
+2. The whole-series per-commit build (asahi + apple W=1) is running in the final regression:
+   M3 ~/aurora-test/silicon/final-bisect.log. I'll name its result in item10.request and in the
+   final report. The item 10 range build's output went only to my terminal, so I'm not citing it
+   as a file.
+Nits taken: "in every sequence that reached it"; Issue 1 phrasing unified; the agent-docs branch
+named once.

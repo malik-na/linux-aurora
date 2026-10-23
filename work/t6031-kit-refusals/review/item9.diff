@@ -1,0 +1,17 @@
+--- msg9-old	2026-10-23 14:12:13.463304596 +0530
++++ msg9-new	2026-10-23 14:12:13.510676263 +0530
+@@ -15,10 +15,10 @@
+ IOMFB template path (VRR modes on a main display) are not used by the
+ native 14.7 path and are unchanged.
+ 
+-Measured on the J516C with the same three timestamps on an earlier 14.7
+-present path (not yet on this one): kmscube (atomic) presents at 120 fps
+-on 3456x2234@120, with swaps completing in about 5 ms instead of
+-16.7 ms.
++Measured on the J516C on this branch: kmscube (atomic) presents at
++120 fps (120.03 on two boots) on the panel's 120 Hz mode, 3456x2160
++with the 74 notch rows hidden, and the first swaps of a boot complete
++in 2.9 to 8.1 ms instead of 16.7 ms.
+ 
+ KUnit (apple-dcp-v14-board): the J516C record stamps its internal
+ panel's swaps; the external role, the J514C, T6030 and J613 records and

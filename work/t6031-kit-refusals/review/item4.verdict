@@ -1,0 +1,29 @@
+APPROVED
+
+Item 4 (`posted > initial` in reclaim_due, drain_reinit_due, reclaim_delay). Checked: the fix is
+exactly Marcelo's ask and minimal; `reclaim_delay()` still mirrors the checks (the drain and
+floor arms gated on `grown`, the free arm not, matching `reclaim_check()`'s
+`reclaim_due || free_due`); the growth.rs assertions and both harness cases fail on the unfixed
+code (M3 i4pre: selftest 68 passed 3 failed, harness 31 passed 2 failed, messages "nothing
+grown (3000 blocks, floor 1024)" and "... 1 wakes"); after the fix i4: selftest 71, harness 33
+passed, 34/34 mutants caught (`delay-nothing-grown` -> "poll woke in a loop" is the right
+message for a half-fix). Split by owner as planned (reclaim_due -> 9b999a24, drain_reinit_due +
+the harness case -> b375d3d2, reclaim_delay + the wake case -> d02f912a) is correct; the
+message additions are facts.
+
+On the observation (level-2 free_due with posted == initial still sets a re-initialization):
+agree, leave it. The re-init is unnecessary there but harmless (InitBM of the same initial
+blocks), and the free path is what item 6 tests on hardware. Put one line about it in the item
+11 reply draft as a possible follow-up, not in this series.
+
+Conditions before the push:
+1. After the split, run the per-commit build and host tests over the rewritten range (mutations
+   at the head) and append the result with the log paths to item4.request, as before.
+
+Optional (nits):
+- The harness tests that set parameters (`nothing_grown_*` set PARAM_BLOCKS and
+  PARAM_RECLAIM_BLOCKS and leave the last pair set; item 3's
+  `client_boundary_reinit_at_level_1_keeps_the_backing` leaves PARAM_RECLAIM at 1) rely on
+  libtest giving every test its own thread. A small `defaults()` helper that resets the five
+  cells, called at the start of each parameter-setting test, would remove the dependence. Fine
+  to fold into item 5's harness work.

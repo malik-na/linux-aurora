@@ -1,0 +1,179 @@
+diff --git i/drivers/gpu/drm/asahi/g15/pools/growth.rs w/drivers/gpu/drm/asahi/g15/pools/growth.rs
+index 31ddbcfc1392..ddd181e96c25 100644
+--- i/drivers/gpu/drm/asahi/g15/pools/growth.rs
++++ w/drivers/gpu/drm/asahi/g15/pools/growth.rs
+@@ -158,9 +158,10 @@ pub(crate) const fn keep_chunks(&self) -> u32 {
+     }
+ 
+     /// Whether the heap is to be re-initialized: idle for `idle_ns` with more than `floor`
+-    /// blocks posted.
++    /// blocks posted, and grown since the initialization (with nothing grown a
++    /// re-initialization posts the same blocks again).
+     pub(crate) const fn reclaim_due(&self, floor: u32, idle_ns: u64, min_idle_ns: u64) -> bool {
+-        self.posted > floor && idle_ns >= min_idle_ns
++        self.posted > self.initial && self.posted > floor && idle_ns >= min_idle_ns
+     }
+ 
+     /// Whether the backing is to be freed: idle for `idle_ns` with more chunks backed than the
+@@ -200,7 +201,7 @@ pub(crate) const fn pending_free_delay(
+     /// without this they run the heap to the maximum. A re-initialization with no idle time,
+     /// between two renders of one client, faulted at the heap base.
+     pub(crate) const fn drain_reinit_due(&self, idle_ns: u64) -> bool {
+-        self.posted > self.max / 2 && idle_ns >= DRAIN_IDLE_NS
++        self.posted > self.initial && self.posted > self.max / 2 && idle_ns >= DRAIN_IDLE_NS
+     }
+ 
+     /// How much longer the engine must stay idle, from `idle_ns`, before a reclaim with
+@@ -217,12 +218,13 @@ pub(crate) const fn reclaim_delay(
+         if level == 0 {
+             return None;
+         }
++        let grown = self.posted > self.initial;
+         let mut due = u64::MAX;
+-        if self.posted > self.max / 2 {
++        if grown && self.posted > self.max / 2 {
+             due = DRAIN_IDLE_NS;
+         }
+         let free = level >= 2 && self.backed > Self::chunks_for(self.posted) * CHUNK_BLOCKS;
+-        if (self.posted > floor || free) && min_idle_ns < due {
++        if ((grown && self.posted > floor) || free) && min_idle_ns < due {
+             due = min_idle_ns;
+         }
+         if due == u64::MAX {
+@@ -637,6 +639,12 @@ fn reclaim() {
+         // A clock started at 0 ns still counts as idle.
+         c.note(true, 0);
+         assert_eq!(c.idle_ns(s), s - 1);
++        // Nothing grown since the initialization: no re-initialization, whatever the floor.
++        let l = Ledger::new(true, 64, 4095);
++        assert!(
++            !l.reclaim_due(32, 5 * s, s),
++            "re-initialization with nothing grown"
++        );
+     }
+ 
+     /// Heavy scenes of ~1420 blocks each, new clients back to
+@@ -677,6 +685,12 @@ fn back_to_back_heavy_scenes() {
+         // Not between two renders of one client.
+         assert!(!l.drain_reinit_due(DRAIN_IDLE_NS - 1));
+         assert!(!l.drain_reinit_due(0));
++        // An initial posting above half the maximum: nothing grew, nothing to drain.
++        let l = Ledger::new(true, 3000, 4095);
++        assert!(
++            !l.drain_reinit_due(DRAIN_IDLE_NS),
++            "drain with nothing grown"
++        );
+     }
+ 
+     /// A client-boundary re-initialization keeps the backing
+@@ -810,6 +824,22 @@ fn reclaim_delay_matches_the_checks() {
+         l.unback_to(l.keep_chunks());
+         l.posted = 64;
+         assert_eq!(l.reclaim_delay(2, 1024, 0, s), None);
++        // Nothing grown, with an initial posting above half the maximum or above the floor:
++        // nothing armed.
++        let mut l = Ledger::new(true, 3000, 4095);
++        l.unback_to(Ledger::chunks_for(3000));
++        assert_eq!(
++            l.reclaim_delay(2, 1024, 0, s),
++            None,
++            "armed with nothing grown"
++        );
++        let mut l = Ledger::new(true, 64, 4095);
++        l.unback_to(l.keep_chunks());
++        assert_eq!(
++            l.reclaim_delay(2, 32, 0, s),
++            None,
++            "armed with nothing grown"
++        );
+     }
+ 
+     /// A client-boundary re-initialization with 23 chunks backed and no render after it: the
+diff --git i/tools/asahi/g15-pb-growth-tests.py w/tools/asahi/g15-pb-growth-tests.py
+index 2f9d39d91c28..23f80a06a82b 100644
+--- i/tools/asahi/g15-pb-growth-tests.py
++++ w/tools/asahi/g15-pb-growth-tests.py
+@@ -49,6 +49,8 @@ What it shows:
+   driven as the idle poll work arms it (reclaim_delay_ns()), the same exit wakes at 50 ms and at
+   the long idle and arms nothing after; an idle reclaim arms nothing once its re-initialization
+   is pending;
++- nothing grown since the initialization (an initial posting above half the maximum, or a
++  reclaim floor below it): no re-initialization and nothing armed;
+ - the ledger reset of Pools::init() re-posts from the backing without allocating;
+ - the PB leaf decodes as GPU-only, not cached-noncoherent: dropping an alias is a plain unmap;
+ - Ledger::new() is Ledger::new() as of dba2a110de00 (the carried upstream constructor), capped at
+@@ -237,6 +239,14 @@ MUTATIONS = {
+     # Arm the poll for the expired 50 ms instead of the rest of the long idle.
+     'pending-delay-from-drain': (GROWTH, 'Some(min_idle_ns.saturating_sub(idle_ns))',
+                                  'Some(DRAIN_IDLE_NS.saturating_sub(idle_ns))'),
++    # Re-initialize at an idle with nothing grown (posted above the floor only).
++    'reclaim-due-nothing-grown': (GROWTH, 'self.posted > self.initial && self.posted > floor && idle_ns >= min_idle_ns',
++                                  'self.posted > floor && idle_ns >= min_idle_ns'),
++    # Re-initialize at a client boundary with nothing grown (initial above half the maximum).
++    'drain-due-nothing-grown': (GROWTH, 'self.posted > self.initial && self.posted > self.max / 2 && idle_ns >= DRAIN_IDLE_NS',
++                                'self.posted > self.max / 2 && idle_ns >= DRAIN_IDLE_NS'),
++    # Arm the poll with nothing grown.
++    'delay-nothing-grown': (GROWTH, '        let grown = self.posted > self.initial;\n', '        let grown = true;\n'),
+     # Catch up without the one-VM check.
+     'no-activation-guard': (POOLS, '.filter(|f| !core::ptr::eq(&*f.job.vm, vm))', '.filter(|_| false)'),
+     # Back the whole heap when the GPU starts.
+@@ -279,6 +289,9 @@ INTENDED = {
+     'pending-free-at-level-1': ('client_boundary_reinit_at_level_1_keeps_the_backing', 'freed at level 1'),
+     'reclaim-pending-not-set': ('client_boundary_reinit_frees_without_a_render', 'kept backing not freed'),
+     'free-on-recovery-reinit': ('recovery_reinit_frees_nothing', 'freed for a recovery'),
++    'reclaim-due-nothing-grown': ('nothing_grown_reinitializes_nothing', 're-initialization with nothing grown (64 blocks, floor 32)'),
++    'drain-due-nothing-grown': ('nothing_grown_reinitializes_nothing', 're-initialization with nothing grown (3000 blocks'),
++    'delay-nothing-grown': ('nothing_grown_arms_nothing', 'poll woke in a loop'),
+     'no-activation-guard': ('catch_up_refuses_flights_of_another_vm', 'catch-up with a flight of another VM'),
+     'initial-backs-whole-heap': ('startup_backs_the_initial_blocks', 'startup allocation'),
+     'chunks-above-16mib': ('growth_backs_before_posting', 'a growth chunk above 16 MiB'),
+@@ -1634,6 +1647,28 @@ mod pb_growth_tests {
+         assert_eq!(f.pools.stats.freed, 0);
+     }
+ 
++    /// Nothing grown since the initialization: an initial posting above half the maximum
++    /// (g15_pb_blocks 3000), or a floor below it (g15_pb_reclaim_blocks 32): no
++    /// re-initialization at any idle.
++    #[test]
++    fn nothing_grown_reinitializes_nothing() {
++        for (blocks, floor) in [(64, 32), (3000, 1024)] {
++            crate::PARAM_BLOCKS.with(|b| b.set(blocks));
++            crate::PARAM_RECLAIM_BLOCKS.with(|b| b.set(floor));
++            let mut f = Firmware::new();
++            assert_eq!(f.pools.ledger.posted, blocks);
++            f.engine.flights.clear();
++            let t0 = now();
++            for dt in [0, 50_000_000, 1_000_000_000, 5_000_000_000] {
++                check_at(&mut f, t0 + dt);
++            }
++            assert!(
++                !f.recovery.reinit && f.pools.stats.reclaims == 0,
++                "re-initialization with nothing grown ({blocks} blocks, floor {floor})"
++            );
++        }
++    }
++
+     /// A recovery's re-initialization (not a reclaim's) is left alone: nothing freed.
+     #[test]
+     fn recovery_reinit_frees_nothing() {
+@@ -1708,6 +1743,20 @@ mod pb_growth_tests {
+         assert!(take().is_empty());
+     }
+ 
++    /// Nothing grown: the idle poll work arms nothing.
++    #[test]
++    fn nothing_grown_arms_nothing() {
++        for (blocks, floor) in [(64, 32), (3000, 1024)] {
++            crate::PARAM_BLOCKS.with(|b| b.set(blocks));
++            crate::PARAM_RECLAIM_BLOCKS.with(|b| b.set(floor));
++            let mut f = Firmware::new();
++            f.engine.flights.clear();
++            let wakes = idle_polls(&mut f, 8);
++            assert!(wakes.is_empty(), "armed with nothing grown ({blocks} blocks, floor {floor}): {} wakes", wakes.len());
++            assert!(!f.recovery.reinit);
++        }
++    }
++
+     /// An idle reclaim below half the maximum frees at the long idle; with its re-initialization
+     /// pending nothing more is armed.
+     #[test]

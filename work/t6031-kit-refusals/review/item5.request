@@ -1,0 +1,95 @@
+Item 5: harness fidelity (Chris)
+
+Uncommitted on top of 9e30961cdbe5 (series head, pushed); item5.diff = `git diff` (harness only,
+tools/asahi/g15-pb-growth-tests.py).
+
+FINDING (Chris)
+(1) The harness's Pools::drop_chunks() resets the ledger at once (ledger.reinit()), while
+production reclaim_check() frees the chunks and defers the reset to the next render's InitBM,
+so freed_chunks_are_mapped_again ran from a state production never has. (2) The harness
+extracted neither reclaim_check() nor reclaim_delay_ns(). (3) Wanted: the actual reclaim/free
+and scheduling bodies, the old posted count kept until InitBM, a same-client render after
+60 ms and after 1.1 s, a compute-only submission between the reclaim and the InitBM; mutations
+still caught.
+
+VALIDATION OF THE FINDING
+- (2) is already fixed by item 3 (reclaim_check(), free_backing(), note_idle(),
+  reclaim_delay_ns(), free_chunks() and the reclaim params run actual since b375d3d2/34653844).
+- (1) and (3) real at 9e30961c: a production mutant that resets the posted count at the idle
+  reclaim instead of at the InitBM (`reinit-at-idle-reclaim`: `self.pools.ledger.reinit();`
+  before free_backing() in the idle path) SURVIVES the current harness: "33 passed; 0 failed",
+  failed: [] (M3 ~/Projects/build-out/kernel-stack177/i5pre/). drop_chunks() is still used by
+  freed_chunks_are_mapped_again (twice).
+
+FIX (harness only)
+- Pools::drop_chunks() removed from the model.
+- New helper publish(f, vm, render): as engine.rs: map_pb() first (before the flight is
+  added), then for a render prefix with reinit pending the InitBM (reset_ledger(), i.e. the
+  actual Pools::init() ledger-reset statements the harness already checks) and reinit cleared;
+  then the flight is added with its renders flag and the idle noted.
+- New helper defaults(): resets the five parameter cells; called at the start of every
+  parameter-setting test (supervisor's item 4 nit).
+- freed_chunks_are_mapped_again rewritten on the actual reclaim: A grows to 1100 posted
+  (above the floor, below half the maximum), retires and leaves the registry, the idle reclaim
+  at 1 s frees to 2 chunks without walking A (posted kept: "posted count reset before the
+  InitBM"), B's first render re-inits (posted 64) and grows the backing again with new
+  objects, A's next publication replaces its stale aliases (chunks-2 unmaps and maps), a
+  second idle reclaim walks B and A's aliases past the backing go at its next catch-up.
+- same_client_render_after_60ms: 2100 posted, idle 60 ms: reinit + reclaim_pending set,
+  posted and chunks unchanged; the same VM renders: InitBM -> posted 64, flags cleared; grows
+  back to 2100 with NO backing event (no alloc/map/unmap/free) and every record within the
+  mapped blocks.
+- same_client_render_after_1_1s, for 1500 (idle reclaim at 1 s) and 2100 (client boundary at
+  50 ms, then the free at 1 s): checks at 0, 50 ms, 1 s, 1.1 s; 2 chunks left, posted kept,
+  the VM's aliases cut to 2; the same VM renders: InitBM; grows back with every chunk backed and
+  mapped before a record/producer names it (assert_posted_backed from 2 chunks).
+- compute_between_reclaim_and_initbm: 1500 posted, level-2 reclaim at 1 s; a compute-only
+  prefix of the same VM is published and a growth request naming its ctx is queued; 4 passes:
+  no alloc/map/unmap/free/record/producer/reply, reinit still pending, posted still 1500, the
+  request counted bad (left unanswered); the compute retires, a later check does nothing, the
+  next render re-inits and grows over fresh chunks mapped before they are posted.
+- Mutations: reinit-at-idle-reclaim (same_client_render_after_1_1s, "posted count reset
+  before the InitBM (1500)"), reinit-at-any-reclaim (same_client_render_after_60ms, "posted
+  count reset before the InitBM").
+- Docstring bullet.
+
+FIX VALIDATION (M3 chroot, ~/Projects/build-out/kernel-stack177/i5/)
+- pb-growth --mutations: "36 passed; 0 failed"; 36 mutations, 36 caught by their intended
+  test and message; control passes.
+- single runs: reinit-at-idle-reclaim now fails 3 tests (compute_between..., freed_chunks...,
+  same_client_render_after_1_1s); reinit-at-any-reclaim fails 6; refill-for-any-flight (the
+  reviewers' literal item 2 rule, `flights.is_empty()`) fails compute_between_reclaim_and_initbm
+  with "compute-only flight backed or posted: [Alloc(14, 16777216), Map(5, ...), ...]", i.e.
+  a compute flight after a level-2 reclaim re-backs the freed chunks: the item 2 render-only
+  condition is now shown in the realistic sequence, not only in a unit case.
+- asahi-g15 selftest 71 passed (2 ignored), zero-words pass, asahi build OK 0 warnings
+  (no kernel source changed).
+- No hardware run (harness only; item 6 runs the same sequences on the J516C).
+
+PLANNED COMMITS
+- Fixup into 38f9a931 "re-initialize the parameter buffer at a client boundary" (the commit
+  where the harness starts running reclaim_check() and the client-boundary/pending-free code
+  these cases exercise): everything except one line. drop_chunks() was introduced one commit
+  earlier (4296961b), where the harness cannot run the reclaim yet; it stays there as that
+  commit's model and is removed here, where the real body replaces it.
+- Fixup into 34653844 (delay): the `defaults();` line in nothing_grown_arms_nothing (that test
+  is introduced there).
+- Message of 38f9a931, harness sentence extended: "... frees nothing; nothing grown, nothing is
+  re-initialized. The reclaim keeps the posted count until the next render's InitBM, as the
+  driver does: the same client rendering again after 60 ms grows again from the kept backing
+  with nothing allocated, after 1.1 s over freshly backed chunks mapped before they are
+  posted, and a compute-only submission between the reclaim and the InitBM maps, backs and
+  posts nothing."
+- Per-commit build and host tests over the rewritten range after the squash, as before.
+
+APPENDED AFTER APPROVAL
+- Squashed as planned: fixup A into the client-boundary commit (now 14cc13d9; message extended
+  with the InitBM sentence), the `defaults();` line of nothing_grown_arms_nothing into the
+  delay commit (now 420e55f1), together with the optional docstring rewrap (comment only;
+  every line now <= 100 columns). Head 40b47534; tree = the validated tree plus that rewrap.
+- Per-commit build over b9334a4d..40b47534 (M3 ~/aurora-test/silicon/r5-bisect.log): all OK,
+  apple W=1 0 warnings.
+- Per-commit host tests (r5-ht.log): self 65/68/70/70/71/71, pb-growth 26/33/33/33/36/36
+  passed, zero-words and dcp14-panel pass at every commit; head --mutations: 36 passed, 36/36
+  caught, control passes.
+- check-commits: 11 signed off, the same 2 checkpatch warnings; keyword scan clean.

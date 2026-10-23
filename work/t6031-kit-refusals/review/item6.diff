@@ -1,0 +1,16 @@
+diff --git i/drivers/gpu/drm/asahi/g15/pools/growth.rs w/drivers/gpu/drm/asahi/g15/pools/growth.rs
+index ddd181e96c25..fef40a6d3a73 100644
+--- i/drivers/gpu/drm/asahi/g15/pools/growth.rs
++++ w/drivers/gpu/drm/asahi/g15/pools/growth.rs
+@@ -198,8 +198,9 @@ pub(crate) const fn pending_free_delay(
+     /// Whether a short idle re-initializes the heap: more than half the maximum posted and
+     /// idle for [`DRAIN_IDLE_NS`]. Back-to-back heavy scenes (a new client every few hundred
+     /// ms) never reach `g15_pb_idle_ms`, and posted blocks never come back while a PB lives, so
+-    /// without this they run the heap to the maximum. A re-initialization with no idle time,
+-    /// between two renders of one client, faulted at the heap base.
++    /// without this they run the heap to the maximum. A re-initialization with no idle time
++    /// faulted at the heap base (at a client switch, the second in a row with no recovery
++    /// between); with 50 ms of idle none did, also between two renders of one client.
+     pub(crate) const fn drain_reinit_due(&self, idle_ns: u64) -> bool {
+         self.posted > self.initial && self.posted > self.max / 2 && idle_ns >= DRAIN_IDLE_NS
+     }
