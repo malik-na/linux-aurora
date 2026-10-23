@@ -161,3 +161,31 @@ passes; selftest 71 passed (2 ignored); per-commit build (apple W=1: 0 warnings)
 host tests green; rustfmt (Air, 1.93.1) no drift; check-commits unchanged (2 warnings, 0
 errors); keyword scan clean. No hardware run (off-default parameters; host logic). Supervisor
 verdict: APPROVED. Branch head 9e30961c.
+
+## Item 5: harness fidelity
+
+**Finding (Chris):** the harness's `Pools::drop_chunks()` reset the ledger at once while the
+driver defers the reset to the next render's InitBM, and the harness ran neither
+`reclaim_check()` nor `reclaim_delay_ns()`.
+
+**Validation: partly real at the item 4 head.** The bodies were already extracted by item 3.
+The rest was real: a driver mutant that resets the posted count at the idle reclaim instead of
+at the InitBM survived the whole harness (33 passed, nothing failed), and
+`freed_chunks_are_mapped_again` still ran from `drop_chunks()`'s state.
+
+**Fix (harness only; fixups into the client-boundary commit 14cc13d9, one line into the delay
+commit 420e55f1):** `drop_chunks()` removed. A `publish()` helper models engine.rs:
+`map_pb()` first, then the InitBM (the ledger reset of `Pools::init()`) only for a render prefix
+with a re-initialization pending. `freed_chunks_are_mapped_again` now runs on the real reclaim.
+New cases: the same client renders after 60 ms (the backing is kept, it grows again with nothing
+allocated), after 1.1 s (for 1500 and 2100 posted: it grows again over new chunks, each mapped
+before it is posted), and a compute-only submission between the reclaim and the InitBM (it maps,
+backs and posts nothing, and its growth request is left unanswered). Two new mutations. A
+`defaults()` helper resets the parameters in every test that sets them.
+
+**Fix validation (M3 chroot):** growth harness 36 passed, 36/36 mutations caught. The
+reclaim-timing mutants now fail 3 and 6 cases. `refill-for-any-flight`, the reviewers' literal
+item 2 rule, fails the compute case: the trace shows the freed chunks backed again, which is
+evidence for the render-only rule. Selftest 71 passed. Per-commit build and host tests are
+green. check-commits is unchanged; the keyword scan is clean. Supervisor verdict: APPROVED.
+Branch head 40b47534.
