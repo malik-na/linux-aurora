@@ -48,7 +48,9 @@ New series: d60121ff..61d68d9f8bd7 (11 commits).
   chroot's clang 23 (`-Werror,-Wunused-but-set-global`; CI uses LLVM 18), service-rebind fails
   its retained-recovery control expectation; not from this series. Base-only run of
   run.sh on d60121ff: the same 6 `not ok`, 50 ok (M3
-  `~/Projects/build-out/kernel-stack177/dcp-run-base-d60121ff{,.log}`).
+  `~/Projects/build-out/kernel-stack177/dcp-run-base-d60121ff{,.log}`); the full G15/DCP
+  host-tests.py run at d60121ff (14 of 15 pass, only run.sh fails) is
+  `~/aurora-test/silicon/r1-ht-base.log`.
   publication-hpd passes again. g15-probe-init, g15-retention, g15-stats-drain,
   g15-input-error, g15-queue-credit, g15-maintained-handoff, dcp14-panel (both), dcp14-backlight
   (both), plane-layout: pass.
@@ -245,3 +247,47 @@ the pages go. The harness case checks this through to that publication; mutation
 per-commit build and host tests green; check-commits unchanged; keyword scan clean; rustfmt (Air,
 1.93.1) clean. No hardware run, because a failed walk needs an allocation failure. Supervisor
 verdict: APPROVED. Branch head 575a3484.
+
+## Item 8: the panel EDID
+
+**Findings (Marcelo, Chris):** gamma byte 0 (decodes as 1.00); manufacture year 0 (1990); no
+detailed timing in the first descriptor, which EDID 1.4 requires; the update wrote the node's
+size and bypassed `dcp_update_connector_dimensions()`; `drm_edid_firmware_derived` was not
+cleared; the KUnit fixture's empty connector funcs caused a warning at `drm_connector.c:236`.
+
+**Validation: all real.** The live EDID of the running branch, read from sysfs on the J516C,
+was checked with edid-decode 1.32.0 and with libdisplay-info. edid-decode reported "Gamma: 1.00",
+"Made in: 1990" and "Missing preferred timing"; libdisplay-info reported "Year set to reserved
+value", "White-point coordinates are unset" and that the first descriptor must hold the
+preferred timing. A host build of the block reproduced it byte for byte. The KUnit baseline on
+the M3 (arm64 QEMU/KVM, aurora.kunitconfig, run-kunit.py) reproduced Chris's splat.
+
+**The timing (decision D4, Naeem):** the panel's 3456x2234 120 Hz timing cannot be an EDID
+detailed timing. The pixel-clock field is 16 bits in 10 kHz units, at most 655.35 MHz, and the
+panel needs 3536 x 2456 x 120 = 1,042,129,920 Hz; the 6-bit vertical front porch cannot hold its
+118 lines either. So the base block's first descriptor is the panel's geometry at 60 Hz, with
+the front porch at 63 and the preferred-timing feature bit clear. A DisplayID 2.0 extension
+carries the real 120 Hz timing as its preferred Type VII timing (1042130 kHz, the DCP mode line
+with the notch rows shown), plus display parameters. DisplayID 1.3 Type I failed
+libdisplay-info, and 2.0 without a Display Parameters block failed edid-decode; 2.0 with it
+passes both, with no warnings. DRM modes still come from the DCP firmware, not from this EDID.
+
+**Fix (EDID commit, now d77c5566, renamed "give the J516C panel an EDID"):**
+- gamma 2.2 (0x78): a P3 panel, and the sRGB transfer function approximates 2.2;
+- model year 2023, from a model table that also holds the native timing;
+- P3/D65 colour, the 60 Hz DTD and the DisplayID block as above, both checksums filled;
+- the size comes from `dcp_update_connector_dimensions()` (firmware first) before the update,
+  and the millimetres are restored after it;
+- `drm_edid_firmware_derived` is cleared in the panel branch;
+- the fixture uses the atomic connector state helpers;
+- KUnit checks every field of both blocks and that the update adds no mode;
+- the publication-hpd harness gets the new stubs.
+
+**Fix validation:** KUnit has 1541 passes and 0 splats, with no differences from
+kunit-expected.json; the panel-EDID suite passes 6/6. Both decoders report PASS on the host build
+and on the live EDID, which are byte-identical. J516C boot (`results/20261023-131907-r182-item8-
+d4-accept/`): kmscube 120.03 fps; EDID 256 bytes; the same single mode before and after
+(3456x2160 at 120.00 Hz, `modetest.txt`); no fault lines. The per-commit build is OK; apple W=1
+gives 0 warnings; checkpatch shows only the MAINTAINERS warning; the apple-dcp run.sh failures
+are only the 6 pre-existing cases. Supervisor verdict: APPROVED (revision 2). Branch head
+98dc5a9c.

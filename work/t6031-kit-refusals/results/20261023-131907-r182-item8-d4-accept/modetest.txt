@@ -1,0 +1,17 @@
+# eDP-1 modes, modetest -M apple -c (connector 40)
+
+## before: package 7.2.11_aurora_dev_silicon-8 (40b47534, 128-byte EDID)
+
+40	39	connected	eDP-1          	346x216		1	39
+  modes:
+	index name refresh (Hz) hdisp hss hse htot vdisp vss vse vtot
+  #0 3456x2160 120.00 3456 3464 3496 3536 2160 2278 2360 2456 1042130 flags: ; type: preferred, driver
+
+## after: package 7.2.11_aurora_dev_silicon-10 (575a3484 + item 8 D4, 256-byte EDID)
+
+40	39	connected	eDP-1          	346x216		1	39
+  modes:
+	index name refresh (Hz) hdisp hss hse htot vdisp vss vse vtot
+  #0 3456x2160 120.00 3456 3464 3496 3536 2160 2278 2360 2456 1042130 flags: ; type: preferred, driver
+
+sysfs modes after: 3456x2160; EDID bytes after: 256
