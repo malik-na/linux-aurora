@@ -1,0 +1,52 @@
+== r182-final #16 SMP PREEMPT_DYNAMIC Fri Oct 23 18:44:44 IST 2026
+-- glmark2 1
+[terrain] duration=5: FPS: 57 FrameTime: 17.587 ms
+[refract] duration=5: FPS: 106 FrameTime: 9.484 ms
+[shadow] duration=5: FPS: 388 FrameTime: 2.580 ms
+[jellyfish] duration=5: FPS: 706 FrameTime: 1.418 ms
+[build] duration=5:use-vbo=true: FPS: 960 FrameTime: 1.042 ms
+[texture] duration=5: FPS: 963 FrameTime: 1.039 ms
+                                  glmark2 Score: 529 
+-- glmark2 2
+[terrain] duration=5: FPS: 57 FrameTime: 17.591 ms
+[refract] duration=5: FPS: 106 FrameTime: 9.451 ms
+[shadow] duration=5: FPS: 391 FrameTime: 2.562 ms
+[jellyfish] duration=5: FPS: 681 FrameTime: 1.470 ms
+[build] duration=5:use-vbo=true: FPS: 958 FrameTime: 1.044 ms
+[texture] duration=5: FPS: 959 FrameTime: 1.044 ms
+                                  glmark2 Score: 524 
+-- glmark2 3
+[terrain] duration=5: FPS: 57 FrameTime: 17.776 ms
+[refract] duration=5: FPS: 106 FrameTime: 9.453 ms
+[shadow] duration=5: FPS: 389 FrameTime: 2.577 ms
+[jellyfish] duration=5: FPS: 704 FrameTime: 1.420 ms
+[build] duration=5:use-vbo=true: FPS: 962 FrameTime: 1.040 ms
+[texture] duration=5: FPS: 960 FrameTime: 1.042 ms
+                                  glmark2 Score: 528 
+-- heavy, first
+ms=1228 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1474/3072/4095 backed 1664/13 requests 1102 grown 11020 refused 0 bad 0 waits 0 refills 84 reclaims 6 freed 73
+-- heavy cold 1
+ms=1210 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1474/3072/4095 backed 1664/13 requests 1243 grown 12430 refused 0 bad 0 waits 0 refills 95 reclaims 7 freed 84
+-- heavy cold 2
+ms=1211 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1474/3072/4095 backed 1664/13 requests 1384 grown 13840 refused 0 bad 0 waits 0 refills 106 reclaims 8 freed 95
+-- heavy cold 3
+ms=1219 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1484/3072/4095 backed 1664/13 requests 1526 grown 15260 refused 0 bad 0 waits 0 refills 117 reclaims 9 freed 106
+-- heavy cold 4
+ms=1237 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1444/3072/4095 backed 1664/13 requests 1664 grown 16640 refused 0 bad 0 waits 0 refills 128 reclaims 10 freed 117
+-- heavy warm 1
+ms=1197 res=[ Fail (4:SubmitRenderPass Image comparison failed)] pb: blocks 64/2754/3072/4095 backed 2944/23 requests 1795 grown 17950 refused 0 bad 0 waits 0 refills 138 reclaims 10 freed 117
+-- heavy warm 2
+ms=1191 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1474/3072/4095 backed 2944/23 requests 1936 grown 19360 refused 0 bad 0 waits 0 refills 138 reclaims 11 freed 117
+-- heavy warm 3
+ms=1186 res=[ Fail (4:SubmitRenderPass Image comparison failed)] pb: blocks 64/2794/3072/4095 backed 2944/23 requests 2068 grown 20680 refused 0 bad 0 waits 0 refills 138 reclaims 11 freed 117
+-- heavy warm 4
+ms=1205 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1474/3072/4095 backed 2944/23 requests 2209 grown 22090 refused 0 bad 0 waits 0 refills 138 reclaims 12 freed 117
+-- heavy warm 5
+ms=1182 res=[ Fail (4:SubmitRenderPass Image comparison failed)] pb: blocks 64/2784/3072/4095 backed 2944/23 requests 2340 grown 23400 refused 0 bad 0 waits 0 refills 138 reclaims 12 freed 117
+-- heavy warm 6
+ms=1198 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1484/3072/4095 backed 2944/23 requests 2482 grown 24820 refused 0 bad 0 waits 0 refills 138 reclaims 13 freed 117
+-- heavy warm 7
+ms=1196 res=[ Fail (4:SubmitRenderPass Image comparison failed)] pb: blocks 64/2794/3072/4095 backed 2944/23 requests 2613 grown 26130 refused 0 bad 0 waits 0 refills 138 reclaims 13 freed 117
+-- heavy warm 8
+ms=1193 res=[ Fail (2:SubmitRenderPass Image comparison failed)] pb: blocks 64/1484/3072/4095 backed 2944/23 requests 2755 grown 27550 refused 0 bad 0 waits 0 refills 138 reclaims 14 freed 117
+-- faults 1

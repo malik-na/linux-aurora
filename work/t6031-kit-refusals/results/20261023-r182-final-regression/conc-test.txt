@@ -1,0 +1,8 @@
+== r182-final #16 SMP PREEMPT_DYNAMIC Fri Oct 23 18:44:44 IST 2026
+Pass: 706, Fail: 2, Skip: 630, Duration: 8, Remaining: 0
+Unexpected results:
+  dEQP-VK.memory.pipeline_barrier.graphics.host_write_index_buffer.1048576,Fail
+  dEQP-VK.pipeline.monolithic.primitive_restart_index.triangle_list.uint32_index.custom_index_one_draw_indexed_indirect_dyn_prim_restart,Fail
+heat: Renderer: Apple M3 Max (G15C B2)
+pb: blocks 64/64/3072/4095 backed 2944/23 requests 961 grown 9610 refused 0 bad 0 waits 0 refills 73 reclaims 5 freed 52
+faults 0

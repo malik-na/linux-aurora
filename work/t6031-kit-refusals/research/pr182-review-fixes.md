@@ -352,3 +352,27 @@ Supervisor verdict: APPROVED (revision 4). Branch head a089fd06.
 Supervisor verdict: APPROVED, with two text conditions applied. The rebase reply now names the
 six base-run cases, backed by the M3 file `dcp-run-base-d60121ff.log`. The per-commit build of
 the whole series is cited from the final regression.
+
+## Final regression (head a089fd06, silicon-16)
+
+Record: `results/20261023-r182-final-regression/`.
+
+**Software (M3 chroot):**
+- per-commit build of all 11 commits: OK, 0 apple W=1 warnings;
+- per-commit host tests: green; at the head, growth-harness mutations 37/37 caught;
+- host-tests.py G15/DCP: 14 of 15 suites pass. run.sh fails the 6 cases that also fail at the
+  base; they are in files this series does not touch;
+- KUnit: 1541 pass, 0 splats, no differences;
+- check-commits.py: 11 commits signed off, 2 checkpatch warnings, 0 errors.
+
+**J516C:**
+- acceptance: FAIL only on #177's crtc file; kmscube 120.03 fps; EDID 256 bytes;
+- full unfiltered dEQP: VK 706/2/0, GLES3 955 + 1 Warn, GLES31 796/1, the same as before;
+- conc-test.sh: VK 706/2;
+- pbbench.sh full: glmark2 524-529; the heavy case at 1182-1237 ms, waits 0, warm 8 of 8;
+- 0 GPU faults, recoveries or CDM rejections in the boot;
+- idle free with no job: the heavy dEQP case freed 11 chunks after 1029 ms of idle; the
+  client-boundary re-init freed 20 chunks after 1037 ms with the re-init pending.
+
+The M3 was then restored to #363 (silicon-50). Its acceptance run passes
+(`results/20261023-185321-back-to-363-accept`).
