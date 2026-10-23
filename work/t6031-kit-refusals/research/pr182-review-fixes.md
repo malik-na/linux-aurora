@@ -133,3 +133,31 @@ per-commit host tests green over the rewritten range; rustfmt (on the Air, 1.93.
 check-commits 11 signed off, checkpatch unchanged; keyword scan clean. No hardware run for this
 item (the final regression's idle-free check covers it on the J516C). Supervisor verdict:
 APPROVED after one CHANGES round (split the fixup). Branch head 562e7797.
+
+## Item 4: re-initializations when nothing grew
+
+**Finding (Marcelo):** `reclaim_due()` and `drain_reinit_due()` look only at the posted count,
+so with `g15_pb_reclaim_blocks` below `g15_pb_blocks` (e.g. 32 with 64) or `g15_pb_blocks` above
+2047, every qualifying idle re-initializes a PB that would post the same blocks again, and
+`reclaim_delay()` arms the poll for it.
+
+**Validation: real, test-first.** New assertions run against the unfixed code: asahi-g15
+selftest 68 passed, 3 failed (`re-initialization with nothing grown`, `drain with nothing
+grown`, `armed with nothing grown`); growth harness 31 passed, 2 failed
+(`nothing_grown_reinitializes_nothing`: re-initialization with 3000 initial blocks;
+`nothing_grown_arms_nothing`: 1 wake).
+
+**Fix:** require `posted > initial` in both predicates, mirrored in `reclaim_delay()` (drain and
+floor arms gated on growth; the free arm unchanged, matching `reclaim_check()`). Split by owner:
+`reclaim_due()` into the reclaim commit (4296961b), `drain_reinit_due()` and the reclaim-check
+harness case into the client-boundary commit (38f9a931), `reclaim_delay()` and the poll-model
+case into the delay commit (34653844). Three new mutations (one, the delay alone, shows the wake
+loop a half-fix would cause). Left as is, per the supervisor: a level-2 free with posted ==
+initial still sets a (harmless, unneeded) re-initialization; noted for the item 11 replies as a
+possible follow-up.
+
+**Fix validation (M3 chroot):** growth harness 33 passed, 34/34 mutations caught, control
+passes; selftest 71 passed (2 ignored); per-commit build (apple W=1: 0 warnings) and per-commit
+host tests green; rustfmt (Air, 1.93.1) no drift; check-commits unchanged (2 warnings, 0
+errors); keyword scan clean. No hardware run (off-default parameters; host logic). Supervisor
+verdict: APPROVED. Branch head 9e30961c.
