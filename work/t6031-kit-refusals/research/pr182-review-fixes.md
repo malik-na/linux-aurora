@@ -291,3 +291,17 @@ d4-accept/`): kmscube 120.03 fps; EDID 256 bytes; the same single mode before an
 gives 0 warnings; checkpatch shows only the MAINTAINERS warning; the apple-dcp run.sh failures
 are only the 6 pre-existing cases. Supervisor verdict: APPROVED (revision 2). Branch head
 98dc5a9c.
+
+## Item 9: the swap-stamp commit's message
+
+**Finding (Marcelo):** the message said that 120 fps had been measured on an earlier present
+path, "not yet on this one". The finding is real: the measurement on this branch had not been
+written into it yet.
+
+**Fix (message only, trees unchanged):** the message now reports what was measured on this
+branch. kmscube presents at 120.03 fps on two J516C boots, in the 120 Hz mode 3456x2160 with the
+notch rows hidden. The first swaps of a boot complete in 2.9 to 8.1 ms instead of 16.7 ms. The
+evidence is the item 6 and item 8 acceptance records and their dmesg.
+
+**Validation:** all 11 trees are identical to the previous head. check-commits is unchanged and
+the keyword scan is clean. Supervisor verdict: APPROVED. Branch head d465423f.
