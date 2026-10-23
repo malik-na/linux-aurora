@@ -189,3 +189,38 @@ item 2 rule, fails the compute case: the trace shows the freed chunks backed aga
 evidence for the render-only rule. Selftest 71 passed. Per-commit build and host tests are
 green. check-commits is unchanged; the keyword scan is clean. Supervisor verdict: APPROVED.
 Branch head 40b47534.
+
+## Item 6: hardware safety on the J516C
+
+**Findings (Marcelo):** (a) a re-init in the middle of one client is guarded only by time;
+(b) a level-2 reclaim frees posted blocks before the re-init, so is compute safe in between?
+Also: what made the no-idle re-init fault?
+
+**Hardware run** (40b47534 package, #177's device tree; acceptance FAIL only on the crtc
+debugfs file, as expected with #177's display driver; kmscube 120 fps; EDID 128 bytes). New
+tool `tools/pb-idle-check/` drives one Vulkan device (one client) through renders of about
+2550 or 1440 blocks of growth, computes and idle gaps. Full record:
+`results/20261023-r182-item6-pb-idle/`.
+
+- (a) R 60 R 1100 R in one process, the longer mixes, and six consecutive 60 ms re-inits in one
+  client: 0 faults. In total there were 15 client-boundary re-inits at 51 ms, 5 frees of the
+  kept backing with the re-init pending, and 2 level-2 idle reclaims. Every readback and
+  compute check passed. `waits`, `refused` and `bad` stayed 0. Because nothing faulted, the
+  "different VM" keying was not implemented.
+- (b) 8 computes between a level-2 free and the next InitBM: 0 faults, all correct.
+
+**Why the no-idle re-init faulted (the r2c log):** every no-idle re-init in r2c came at a client
+switch, with the new client's first render faulting. None came between two renders of one
+client. The fault came on the second no-idle re-init in a row; after a long idle or a recovery,
+the next one was fine. The faulting writes, by two units, went to block 0 at the heap base
+0.4 ms after the InitBM. Block 0 was backed and mapped. The cause is internal to the firmware and
+unknown. The 50 ms margin is empirical, not a proven quiescence point. This run added the
+consecutive case that r2d never covered.
+
+**Fix:** a factual correction to our own text. The `drain_reinit_due()` doc and the
+client-boundary commit message (now 873d95fb) said the fault was "between two renders of one
+client". They now state the client-switch and second-in-a-row facts, and that with 50 ms of idle
+nothing faulted, also within one client. Validation: selftest 71 passed; asahi build has 0
+warnings; per-commit build and host tests are green (harness 36 passed, 36/36 mutations caught);
+rustfmt (Air, 1.93.1) is clean; check-commits is unchanged; the keyword scan is clean.
+Supervisor verdict: APPROVED. Branch head b1f6bbb7.

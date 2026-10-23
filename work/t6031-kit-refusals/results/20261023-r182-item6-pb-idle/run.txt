@@ -1,0 +1,156 @@
+kernel 7.2.11-aurora-dev-silicon
+=== a1: pb-idle-check -n 350000 R 60 R 1100 R
+before pb: blocks 64/64/3072/4095 backed 256/2 requests 0 grown 0 refused 0 bad 0 waits 0 refills 0 reclaims 0 freed 0
+  pb-idle-check: 350000 triangles of 0.250, 2048x2048, queue family 0
+  step 0 R: 437.8 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 1 60: 60.1 ms, idle
+  step 2 R: 385.2 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 3 1100: 1100.1 ms, idle
+  step 4 R: 442.7 ms, ok: 43241 of 43241 sampled pixels drawn
+  pb-idle-check: PASS
+after  pb: blocks 64/2614/3072/4095 backed 2816/22 requests 765 grown 7650 refused 0 bad 0 waits 0 refills 40 reclaims 2 freed 20
+  k: [  137.782801] asahi-g15 40a400000.gpu: PB heap: idle 51 ms with 2614 blocks posted: re-initialization to 64 at the next render, 0 chunks freed, 22 backed
+  k: [  137.792327] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22141
+  k: [  138.228835] asahi-g15 40a400000.gpu: PB heap: idle 51 ms with 2614 blocks posted: re-initialization to 64 at the next render, 0 chunks freed, 22 backed
+  k: [  139.256998] asahi-g15 40a400000.gpu: PB heap: idle 1055 ms with 2614 blocks posted and the re-initialization pending: 20 chunks freed, 2 backed
+  k: [  139.277555] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22142
+faults: 0
+=== a2: pb-idle-check -n 350000 R 60 R 60 R 1100 R 60 R 1100 R
+before pb: blocks 64/2614/3072/4095 backed 256/2 requests 765 grown 7650 refused 0 bad 0 waits 0 refills 40 reclaims 3 freed 40
+  pb-idle-check: 350000 triangles of 0.250, 2048x2048, queue family 0
+  step 0 R: 443.3 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 1 60: 60.1 ms, idle
+  step 2 R: 385.1 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 3 60: 60.1 ms, idle
+  step 4 R: 385.4 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 5 1100: 1100.1 ms, idle
+  step 6 R: 445.0 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 7 60: 60.1 ms, idle
+  step 8 R: 386.3 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 9 1100: 1100.1 ms, idle
+  step 10 R: 444.8 ms, ok: 43241 of 43241 sampled pixels drawn
+  pb-idle-check: PASS
+after  pb: blocks 64/2614/3072/4095 backed 2816/22 requests 2295 grown 22950 refused 0 bad 0 waits 0 refills 100 reclaims 8 freed 80
+  k: [  142.793302] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22143
+  k: [  143.285768] asahi-g15 40a400000.gpu: PB heap: idle 51 ms with 2614 blocks posted: re-initialization to 64 at the next render, 0 chunks freed, 22 backed
+  k: [  143.295928] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22144
+  k: [  143.731769] asahi-g15 40a400000.gpu: PB heap: idle 51 ms with 2614 blocks posted: re-initialization to 64 at the next render, 0 chunks freed, 22 backed
+  k: [  143.741076] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22145
+  k: [  144.177744] asahi-g15 40a400000.gpu: PB heap: idle 51 ms with 2614 blocks posted: re-initialization to 64 at the next render, 0 chunks freed, 22 backed
+  k: [  145.217259] asahi-g15 40a400000.gpu: PB heap: idle 1058 ms with 2614 blocks posted and the re-initialization pending: 20 chunks freed, 2 backed
+  k: [  145.226530] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22146
+  k: [  145.722745] asahi-g15 40a400000.gpu: PB heap: idle 51 ms with 2614 blocks posted: re-initialization to 64 at the next render, 0 chunks freed, 22 backed
+  k: [  145.731795] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22147
+  k: [  146.168746] asahi-g15 40a400000.gpu: PB heap: idle 51 ms with 2614 blocks posted: re-initialization to 64 at the next render, 0 chunks freed, 22 backed
+  k: [  147.197565] asahi-g15 40a400000.gpu: PB heap: idle 1051 ms with 2614 blocks posted and the re-initialization pending: 20 chunks freed, 2 backed
+  k: [  147.218067] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22148
+faults: 0
+=== a3: pb-idle-check -n 200000 R 60 R 1100 R
+before pb: blocks 64/2614/3072/4095 backed 256/2 requests 2295 grown 22950 refused 0 bad 0 waits 0 refills 100 reclaims 9 freed 100
+  pb-idle-check: 200000 triangles of 0.250, 2048x2048, queue family 0
+  step 0 R: 248.2 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 1 60: 60.1 ms, idle
+  step 2 R: 30.5 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 3 1100: 1100.1 ms, idle
+  step 4 R: 251.5 ms, ok: 43241 of 43241 sampled pixels drawn
+  pb-idle-check: PASS
+after  pb: blocks 64/1504/3072/4095 backed 1664/13 requests 2583 grown 25830 refused 0 bad 0 waits 0 refills 122 reclaims 10 freed 111
+  k: [  150.741849] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22149
+  k: [  152.118361] asahi-g15 40a400000.gpu: PB heap: idle 1017 ms with 1504 blocks posted: re-initialization to 64 at the next render, 11 chunks freed, 2 backed
+  k: [  152.179825] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22151
+faults: 0
+=== a4: pb-idle-check -n 350000 R 60 R 60 R 60 R 60 R 60 R 60 R
+before pb: blocks 64/1504/3072/4095 backed 256/2 requests 2583 grown 25830 refused 0 bad 0 waits 0 refills 122 reclaims 11 freed 122
+  pb-idle-check: 350000 triangles of 0.250, 2048x2048, queue family 0
+  step 0 R: 442.2 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 1 60: 60.1 ms, idle
+  step 2 R: 386.2 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 3 60: 60.1 ms, idle
+  step 4 R: 385.6 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 5 60: 60.1 ms, idle
+  step 6 R: 387.7 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 7 60: 60.1 ms, idle
+  step 8 R: 388.2 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 9 60: 60.1 ms, idle
+  step 10 R: 385.1 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 11 60: 60.1 ms, idle
+  step 12 R: 388.4 ms, ok: 43241 of 43241 sampled pixels drawn
+  pb-idle-check: PASS
+after  pb: blocks 64/2614/3072/4095 backed 2816/22 requests 4368 grown 43680 refused 0 bad 0 waits 0 refills 142 reclaims 17 freed 122
+  k: [  155.509093] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22152
+  k: [  156.000683] asahi-g15 40a400000.gpu: PB heap: idle 51 ms with 2614 blocks posted: re-initialization to 64 at the next render, 0 chunks freed, 22 backed
+  k: [  156.010452] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22153
+  k: [  156.447676] asahi-g15 40a400000.gpu: PB heap: idle 51 ms with 2614 blocks posted: re-initialization to 64 at the next render, 0 chunks freed, 22 backed
+  k: [  156.456656] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22154
+  k: [  156.893654] asahi-g15 40a400000.gpu: PB heap: idle 51 ms with 2614 blocks posted: re-initialization to 64 at the next render, 0 chunks freed, 22 backed
+  k: [  156.902440] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22155
+  k: [  157.340666] asahi-g15 40a400000.gpu: PB heap: idle 51 ms with 2614 blocks posted: re-initialization to 64 at the next render, 0 chunks freed, 22 backed
+  k: [  157.350316] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22156
+  k: [  157.789655] asahi-g15 40a400000.gpu: PB heap: idle 51 ms with 2614 blocks posted: re-initialization to 64 at the next render, 0 chunks freed, 22 backed
+  k: [  157.798466] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22157
+  k: [  158.234656] asahi-g15 40a400000.gpu: PB heap: idle 51 ms with 2614 blocks posted: re-initialization to 64 at the next render, 0 chunks freed, 22 backed
+  k: [  158.243778] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22158
+faults: 0
+=== c: 6 heavy clients back to back
+step 0 R: 439.1 ms, ok: 43241 of 43241 sampled pixels drawn pb-idle-check: PASS 
+step 0 R: 46.9 ms, ok: 43241 of 43241 sampled pixels drawn pb-idle-check: PASS 
+step 0 R: 48.1 ms, ok: 43241 of 43241 sampled pixels drawn pb-idle-check: PASS 
+step 0 R: 48.0 ms, ok: 43241 of 43241 sampled pixels drawn pb-idle-check: PASS 
+step 0 R: 46.7 ms, ok: 43241 of 43241 sampled pixels drawn pb-idle-check: PASS 
+step 0 R: 47.2 ms, ok: 43241 of 43241 sampled pixels drawn pb-idle-check: PASS 
+after  pb: blocks 64/2624/3072/4095 backed 2816/22 requests 4624 grown 46240 refused 0 bad 0 waits 0 refills 162 reclaims 18 freed 142
+  k: [  161.708699] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22159
+faults: 0
+=== b1: pb-idle-check -n 350000 R 1100 C 10 C 100 C R
+before pb: blocks 64/2624/3072/4095 backed 256/2 requests 4624 grown 46240 refused 0 bad 0 waits 0 refills 162 reclaims 19 freed 162
+  pb-idle-check: 350000 triangles of 0.250, 2048x2048, queue family 0
+  step 0 R: 441.5 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 1 1100: 1100.1 ms, idle
+  step 2 C: 1.2 ms, ok
+  step 3 10: 10.1 ms, idle
+  step 4 C: 1.1 ms, ok
+  step 5 100: 100.1 ms, idle
+  step 6 C: 1.1 ms, ok
+  step 7 R: 441.7 ms, ok: 43241 of 43241 sampled pixels drawn
+  pb-idle-check: PASS
+after  pb: blocks 64/2614/3072/4095 backed 2816/22 requests 5134 grown 51340 refused 0 bad 0 waits 0 refills 202 reclaims 20 freed 182
+  k: [  165.542119] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22165
+  k: [  166.032611] asahi-g15 40a400000.gpu: PB heap: idle 51 ms with 2614 blocks posted: re-initialization to 64 at the next render, 0 chunks freed, 22 backed
+  k: [  167.040235] asahi-g15 40a400000.gpu: PB heap: idle 1027 ms with 2614 blocks posted and the re-initialization pending: 20 chunks freed, 2 backed
+  k: [  167.196180] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22166
+faults: 0
+=== b2: pb-idle-check -n 200000 R 1100 C 10 C 100 C R
+before pb: blocks 64/2614/3072/4095 backed 256/2 requests 5134 grown 51340 refused 0 bad 0 waits 0 refills 202 reclaims 21 freed 202
+  pb-idle-check: 200000 triangles of 0.250, 2048x2048, queue family 0
+  step 0 R: 249.1 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 1 1100: 1100.1 ms, idle
+  step 2 C: 1.2 ms, ok
+  step 3 10: 10.1 ms, idle
+  step 4 C: 1.2 ms, ok
+  step 5 100: 100.1 ms, idle
+  step 6 C: 1.1 ms, ok
+  step 7 R: 250.0 ms, ok: 43241 of 43241 sampled pixels drawn
+  pb-idle-check: PASS
+after  pb: blocks 64/1504/3072/4095 backed 1664/13 requests 5422 grown 54220 refused 0 bad 0 waits 0 refills 224 reclaims 22 freed 213
+  k: [  170.716334] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22167
+  k: [  172.017953] asahi-g15 40a400000.gpu: PB heap: idle 1037 ms with 1504 blocks posted: re-initialization to 64 at the next render, 11 chunks freed, 2 backed
+  k: [  172.178609] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22168
+faults: 0
+=== b3: pb-idle-check -n 350000 R 1100 C 1100 C R C
+before pb: blocks 64/1504/3072/4095 backed 256/2 requests 5422 grown 54220 refused 0 bad 0 waits 0 refills 224 reclaims 23 freed 224
+  pb-idle-check: 350000 triangles of 0.250, 2048x2048, queue family 0
+  step 0 R: 442.9 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 1 1100: 1100.1 ms, idle
+  step 2 C: 1.2 ms, ok
+  step 3 1100: 1100.1 ms, idle
+  step 4 C: 1.1 ms, ok
+  step 5 R: 445.0 ms, ok: 43241 of 43241 sampled pixels drawn
+  step 6 C: 0.4 ms, ok
+  pb-idle-check: PASS
+after  pb: blocks 64/2614/3072/4095 backed 2816/22 requests 5932 grown 59320 refused 0 bad 0 waits 0 refills 264 reclaims 24 freed 244
+  k: [  175.506520] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22169
+  k: [  175.998595] asahi-g15 40a400000.gpu: PB heap: idle 51 ms with 2614 blocks posted: re-initialization to 64 at the next render, 0 chunks freed, 22 backed
+  k: [  177.009693] asahi-g15 40a400000.gpu: PB heap: idle 1045 ms with 2614 blocks posted and the re-initialization pending: 20 chunks freed, 2 backed
+  k: [  178.150767] asahi-g15 40a400000.gpu: G15: render allocators re-initialized; InitBM at draw 22170
+faults: 0
+total faults this boot: 1
