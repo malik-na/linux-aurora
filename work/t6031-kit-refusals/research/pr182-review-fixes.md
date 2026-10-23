@@ -46,7 +46,9 @@ New series: d60121ff..61d68d9f8bd7 (11 commits).
   same 6 cases as on d60121ff alone (service-rebind, cpuidle-s2idle, probe-mux-pm-dispatch,
   dwc3-teardown, same-handle-srcu-index, mux-release-stages): five do not compile under the
   chroot's clang 23 (`-Werror,-Wunused-but-set-global`; CI uses LLVM 18), service-rebind fails
-  its retained-recovery control expectation; not from this series.
+  its retained-recovery control expectation; not from this series. Base-only run of
+  run.sh on d60121ff: the same 6 `not ok`, 50 ok (M3
+  `~/Projects/build-out/kernel-stack177/dcp-run-base-d60121ff{,.log}`).
   publication-hpd passes again. g15-probe-init, g15-retention, g15-stats-drain,
   g15-input-error, g15-queue-credit, g15-maintained-handoff, dcp14-panel (both), dcp14-backlight
   (both), plane-layout: pass.
