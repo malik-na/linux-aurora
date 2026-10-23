@@ -96,3 +96,40 @@ rustfmt: no drift against d60121ff in any changed .rs file (rustfmt 1.8.0 from t
 toolchain on the Air, kernel .rustfmt.toml; a first check in the chroot failed silently, the
 chroot has no rustfmt, and was redone). No hardware run for this item (host logic; covered by the final J516C
 regression). Supervisor verdict: APPROVED. Branch head a2e8b5d1.
+
+## Item 3: kept backing not freed after a client-boundary re-init with no later render
+
+**Finding (Greptile P1, Marcelo):** with more than half the maximum posted, the 50 ms path of
+`reclaim_check()` sets `recovery.reinit` and keeps the backing; `reclaim_check()` and
+`reclaim_delay_ns()` then both return early on the pending re-init, so the 1 s free never runs
+and nothing is armed until the next render.
+
+**Validation: real.** The growth harness now runs the actual `reclaim_check()`,
+`free_backing()`, `note_idle()`, `free_chunks()`, `reclaim_delay_ns()` and the reclaim
+parameters over a clock, and models the idle poll work as poll.rs arms it (ms round-up plus one
+jiffy). A heavy client grown to 2100 posted (18 chunks) exits with no render after it. With the
+pre-fix guards (mutation `old-reinit-guards`): `kept backing not freed: 18 chunks, wakes [54] ms`
+(one wake for the re-init, nothing armed after; 288 MiB held for good).
+
+**Fix (split per the supervisor into the commits that own each half):**
+- "reclaim the parameter buffer when the engine is idle" (9b999a24): behaviour-neutral
+  extraction of `free_backing()`.
+- "re-initialize the parameter buffer at a client boundary" (b375d3d2): `Pools::reclaim_pending`
+  (set with the reclaim's `reinit`, cleared in `Pools::init()`); `reclaim_check()` stops only on
+  a recovery's pending re-init; with a reclaim's pending, level 2 frees the backing above
+  `keep_chunks()` after `g15_pb_idle_ms` (`Ledger::pending_free_due()`), keeping the posted
+  count until the InitBM. Direct-clock harness cases (no render, level 1, recovery) and 4
+  mutations.
+- "run the PB reclaim check after the idle time without new work" (d02f912a):
+  `reclaim_delay_ns()` arms the rest of the long idle (`Ledger::pending_free_delay()`), not the
+  expired 50 ms. Poll-model cases: wakes exactly [54, 1004] ms then nothing armed; an idle
+  reclaim arms nothing once pending; nothing armed at level 1 or for a recovery. 3 mutations
+  (one shows the wake loop a half-fix would cause: `poll woke in a loop: 8 wakes`).
+
+**Fix validation (M3 chroot):** at the client-boundary commit 29 passed, 28/28 mutations; at the
+delay commit and the head 31 passed, 31/31 mutations caught by their intended test, control
+passes; asahi-g15 selftest 71 passed (2 ignored); per-commit build (apple W=1: 0 warnings) and
+per-commit host tests green over the rewritten range; rustfmt (on the Air, 1.93.1): no drift;
+check-commits 11 signed off, checkpatch unchanged; keyword scan clean. No hardware run for this
+item (the final regression's idle-free check covers it on the J516C). Supervisor verdict:
+APPROVED after one CHANGES round (split the fixup). Branch head 562e7797.
