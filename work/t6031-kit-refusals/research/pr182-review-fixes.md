@@ -335,3 +335,20 @@ never trips. The worst case is now about 149 ms per command and about 9.5 s per 
 dEQP-VK `multi_draw.mosaic ... max_draws ... with_tess` cases pass, with no CDM rejections.
 Per-commit build and host tests are green; checkpatch shows 0 issues; the keyword scan is clean.
 Supervisor verdict: APPROVED (revision 4). Branch head a089fd06.
+
+## Item 11: drafts (not posted)
+
+`drafts/pr182-replies.md` holds three things, all written against the branch head a089fd06:
+- The PR-body additions: the compute-only client after a reclaim runs one flight at a time until
+  the next render; the long-idle free; no re-init when nothing grew; the EDID and CDM rows with
+  the 60 Hz / DisplayID 120 Hz reason and the CDM worst cases; the display row with 120.03 fps.
+- Two issue drafts for omacom/linux-aurora `tools/aurora-sep`, where the installer and the Mesa
+  session hook live: the M3 Max boot.bin is written with `chosen.asahi,t6031-gpu=0`
+  (install-aurora-sep.sh:639-641), and the session hook has no software-rendering fallback for
+  the M3 Max (mesa-m3-session-env:60 and `_mm3_soc_of`).
+- One reply per reviewer point (Marcelo's two reviews, Chris's review, his M3 Pro comment and
+  his inline note, Greptile's P1), each naming the commit, the validation and the numbers.
+
+Supervisor verdict: APPROVED, with two text conditions applied. The rebase reply now names the
+six base-run cases, backed by the M3 file `dcp-run-base-d60121ff.log`. The per-commit build of
+the whole series is cited from the final regression.
