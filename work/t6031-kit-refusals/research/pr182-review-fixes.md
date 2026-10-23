@@ -92,5 +92,7 @@ their intended test (was 24 / 22), control passes; asahi-g15 selftest 70 passed 
 per-commit build of the rewritten commits OK (apple W=1: 0 warnings) and per-commit host tests
 green (the autosquash had harness conflicts in the backing and reclaim commits, resolved);
 check-commits 11 signed off, checkpatch unchanged (2 warnings, 0 errors); keyword scan clean;
-rustfmt drift 0. No hardware run for this item (host logic; covered by the final J516C
+rustfmt: no drift against d60121ff in any changed .rs file (rustfmt 1.8.0 from the 1.93.1
+toolchain on the Air, kernel .rustfmt.toml; a first check in the chroot failed silently, the
+chroot has no rustfmt, and was redone). No hardware run for this item (host logic; covered by the final J516C
 regression). Supervisor verdict: APPROVED. Branch head a2e8b5d1.
