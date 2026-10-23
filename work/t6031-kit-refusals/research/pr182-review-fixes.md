@@ -44,14 +44,17 @@ New series: d60121ff..61d68d9f8bd7 (11 commits).
 **Fix validation:**
 - host-tests.py, all 15 G15/DCP suites at 61d68d9f: 14 pass. `apple-dcp/run.sh` fails the
   same 6 cases as on d60121ff alone (service-rebind, cpuidle-s2idle, probe-mux-pm-dispatch,
-  dwc3-teardown, same-handle-srcu-index, mux-release-stages): the chroot's clang 23 adds
-  `-Werror,-Wunused-but-set-global` (CI uses LLVM 18); not from this series.
+  dwc3-teardown, same-handle-srcu-index, mux-release-stages): five do not compile under the
+  chroot's clang 23 (`-Werror,-Wunused-but-set-global`; CI uses LLVM 18), service-rebind fails
+  its retained-recovery control expectation; not from this series.
   publication-hpd passes again. g15-probe-init, g15-retention, g15-stats-drain,
   g15-input-error, g15-queue-credit, g15-maintained-handoff, dcp14-panel (both), dcp14-backlight
   (both), plane-layout: pass.
 - per commit (asahi-g15 selftest, g15-pb-growth, g15-zero-words, dcp14-panel): every commit
-  passes; selftest 61 → 69 passed (2 ignored), pb-growth 23-24 passed. Head with
-  `--mutations`: see below.
+  passes; selftest 61 → 70 passed (2 ignored), pb-growth 23-24 passed, zero-words and
+  dcp14-panel pass. Head 61d68d9f with `--mutations`: pb-growth 24 passed, 22/22 mutations
+  caught by their intended test, control passes; zero-words 15 passed (2 ignored), its 3
+  mutants caught.
 - The per-commit build above still holds: the fixups touch only tools/.
 - check-commits.py d60121ff..61d68d9f: 11 commits signed off; checkpatch 1 warning each on the
   EDID and loader-notice commits (the same two Marcelo saw), 0 errors. Trailers
