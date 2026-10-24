@@ -227,3 +227,46 @@ Spec malik-na/linux-aurora#53 (ready-for-agent). Tickets #54-#68, blocking edges
 - 02:40 (Oct 20): #69 fixed and pushed to #363 (45338523..027bd762, 4 commits; regression record
   20261020-023600-regress-hangfix). Installed default: silicon-30 (= 027bd762). PR body's gap line about the compute
   hangs is now stale (Naeem to OK a body edit). Next asked: a Basecamp update report.
+
+## Update 2026-10-25 04:20: reinstalled from edge, native G15 back on omacom integration/aurora
+
+Naeem reinstalled the M3 from the edge image on 2026-10-24 (pacman log starts 10:42 UTC). Everything below replaces the
+2026-10-12..20 state: `~/aurora-backups`, `~/Projects/build-root`, the dev kernels, `/opt/mesa-m3-*` and the old host
+key are gone. Edge ships `linux-aurora 7.2.11.aurora3-1` (pin b6f070c, `DRM_ASAHI_G15` off), `mesa-aurora`
+20261017.af3d9c6fc84 (no G15S/G15C admission), m1n1-aurora 1.6.1.aurora20-4 with no `/etc/m1n1.conf`, so the GPU and
+DCP nodes stay disabled and the desktop ran on simpledrm. Scott's agent posted the same kernel/Mesa gaps to the team.
+
+- **Reaching the M3:** `ssh m3` = `192.168.1.4` (LAN; the Air is now 192.168.1.5), `HostKeyAlias m3-max`, new host key
+  ED25519 `SHA256:KTTwYdC1Au7mQb0avcOUUHWxA0IfrnzJsa/u5v94Yo0` (confirmed on the M3 by Naeem). Tailscale is not running
+  on the M3 (`omarchy-2` offline). The Air's `m1-air` key is in `authorized_keys`; ufw allows 22 from 192.168.1.0/24;
+  `naeem` has NOPASSWD sudo (`/etc/sudoers.d/10-naeem-nopasswd`, set up by Naeem).
+- **Kernel:** omacom `integration/aurora` 7b969982 (past #202, #204; #182 merged) from a tarball in
+  `~/Projects/linux-g15`, config = edge `/proc/config.gz` + `DRM_ASAHI_G15=y` (with `DRM_APPLE=m`/`DRM_ASAHI=m`, allowed
+  since #204), `LOCALVERSION=-aurora-g15`. Built natively on the M3 (clang/LLD 23.1.3, rustc 1.99.1, bindgen 0.73.2 from
+  extra; no chroot), `pacman-pkg PACMAN_PKGBASE=linux-aurora-g15`, about 5 min. Package `linux-aurora-g15
+  7.2.11_aurora_g15-2`. Script and log: `~/Projects/build-g15.sh`, `build-g15.log`.
+- **Board file:** the J516C entry still loads `asahi/t6031-j516c-board.bin` (sha256-pinned 4e03f29f...). Regenerated on
+  the Air from the t40 records and `~/m3-images/t22/overlay/t6031-hwdata-overlay.bin` with the script in
+  `research/port-kernel-status.md` (byte-identical: 385 words, 64408 bytes), installed to `/usr/lib/firmware/asahi/`.
+  Private, never in git.
+- **Boot chain:** `/etc/m1n1.conf` = `chosen.asahi,t6031-gpu=1` + `chosen.asahi,t6031-dcp=1`, `update-m1n1` (checked first
+  that it reproduces the edge `boot.bin` byte for byte: bf567cbe...; copy in `~/aurora-backups/` with `.sha256`). New
+  `boot.bin` 89041478... `/etc/default/limine`: `BOOT_ORDER` puts `linux-aurora-g15` first, stock `linux-aurora` second;
+  `KERNEL_CMDLINE[linux-aurora-g15]` = the default line spelled out + `apple_t6031_display.enable=1` (limine-entry-tool
+  does not expand `${KERNEL_CMDLINE[default]}`; the line will not follow omarchy-mac-limine-cmdline rewrites of the
+  default). `/etc/modules-load.d/asahi-g15.conf` loads `asahi` (T6031 is not autoloaded, g15/mod.rs).
+- **Mesa:** aurora-silicon/mesa `aurora-wip` 4911479 (2026-10-24) in `~/Projects/mesa-wip`, installed to
+  `/opt/mesa-g15c` (gallium asahi+llvmpipe, vulkan asahi, glvnd). Used by the session through `~/.config/uwsm/env` (only
+  when `uname -r` = 7.2.11-aurora-g15) and by the sddm greeter through `/etc/sddm.conf.d/20-mesa-g15c.conf`
+  (unconditional). Needed: with the GPU visible the packaged mesa-aurora refuses G15C ("uses the G15 command stream,
+  which this driver does not implement") instead of falling back, so the greeter's Hyprland aborted.
+- **Result (boot 04:11):** firmware READY (14.7 stub, J516C), board images from the DT match the file, cores
+  [10,10,10,10], `asahi-g15` on renderD128, `apple-drm` eDP-1 3456x2234@120; vulkaninfo and eglinfo report
+  "Apple M3 Max (G15C B2)", Hyprland renderer "Apple M3 Max (G15C B2)" at about 4 % CPU, no G15 faults or recoveries.
+  m3-accept has not been run on this setup.
+- **Gaps for the packaged path** (beyond Scott's list: G15 in asahi.config, pin past #202, Mesa admission, LLVM fallback):
+  the installer writes neither m1n1 option, the board file is not packaged, `apple_t6031_display.enable=1` is not on
+  the command line, `asahi` is not autoloaded on T6031, and mesa-aurora fails hard rather than falling back on an
+  unadmitted G15C.
+- **Caveat:** the stock entry now sees an enabled GPU node too; the session env switches Mesa only on the G15 kernel,
+  so the stock kernel's session may hit the same mesa-aurora refusal.
