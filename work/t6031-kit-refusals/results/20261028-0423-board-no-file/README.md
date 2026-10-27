@@ -38,3 +38,7 @@ per SoC). A second J516C's record would answer it. The DT `opp-microwatt` (`asah
   [10,10,10,10], renderD128, Hyprland greeter on the GPU, vulkaninfo "Apple M3 Max (G15C B2)".
   `g15stress jobs 400000`: PASS in 56.6 s (7064/s). No G15 fault, recovery or rejection lines.
 - Not run: a full m3-accept / deqp pass; a long thermal soak.
+
+## PR
+
+Opened 2026-10-28 as https://github.com/omacom/linux-aurora/pull/249 (head aeffd0e5, base integration/aurora), text = `drafts/pr-omacom-board-no-file.md`, approved by Naeem along with publishing the 14 reference words.
