@@ -270,3 +270,14 @@ DCP nodes stay disabled and the desktop ran on simpledrm. Scott's agent posted t
   unadmitted G15C.
 - **Caveat:** the stock entry now sees an enabled GPU node too; the session env switches Mesa only on the G15 kernel,
   so the stock kernel's session may hit the same mesa-aurora refusal.
+
+## Update 2026-10-28: user support (M3 Pro / M3 Max on edge)
+
+- M3 (J516C) default is back to `linux-aurora-g15` (`omarchy-kernel set`); `omarchy update`'s boot check fails by design
+  while g15 is first (it only knows linux-aurora/linux-asahi). M3 now on Tailscale at 100.112.120.0 (omarchy-3).
+- Stock edge `linux-aurora 7.2.11.aurora8` + `apple_t6031_display.enable=1` drives the J516C panel at 120 Hz, and its
+  G15C path reaches READY given gpu=1, the board file and a manual `asahi` load: `results/20261028-005753-stock-display-oneshot/`.
+- Stock M3 Max users (e.g. MikeK, J516C): GPU blocked by the unpackaged board file (ENOENT); m1n1 aurora21 defaults skip T6031.
+- Stock M3 Pro users: m1n1 aurora21 arms t6030 automatically; G15 probe refuses the TEXT image. Filed
+  https://github.com/omacom/linux-aurora/issues/247 (J514S #1 `cd05af6a…` on iBoot-10151.140.19.700.2; J514S #2 runs the
+  J516S-only B0 pin `da26ecca…`). Not yet posted: the #189 update draft (stock M3 Max still disabled; install-aurora-sep.sh gone).
