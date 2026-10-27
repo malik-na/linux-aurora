@@ -46,3 +46,8 @@ The engine's compute count went from 21,359 to 4,321,391 (debugfs `asahi-g15/sta
 - After: `jobs 74221 job_cmds 4322965 job_max 64 early 0 recoveries 0 hang_kills 0`; no kernel lines.
 - Not covered: TA (8.8 M draws) and FS (12.8 M) wraps, mixed render/compute across the wrap, the J514S CTS runs in
   the PR body. The wrap test was not run on the old kernel (risk of a GPU wedge that needs a power cycle).
+
+## Posted
+
+`pr-comment.md` posted on omacom/linux-aurora#233 as written (Naeem approved the text, 2026-10-28):
+https://github.com/omacom/linux-aurora/pull/233#issuecomment-6453687235
