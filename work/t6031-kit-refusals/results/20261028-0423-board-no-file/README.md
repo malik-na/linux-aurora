@@ -42,3 +42,6 @@ per SoC). A second J516C's record would answer it. The DT `opp-microwatt` (`asah
 ## PR
 
 Opened 2026-10-28 as https://github.com/omacom/linux-aurora/pull/249 (head aeffd0e5, base integration/aurora), text = `drafts/pr-omacom-board-no-file.md`, approved by Naeem along with publishing the 14 reference words.
+
+- 2026-10-28: CI failed in tools/asahi/g15-maintained-handoff-tests.py (GpuAdt needs record::SENSOR_ROW_COUNT); fixed in follow-up 23a7bd13, pushed to #249 (Naeem ok). All g15 host suites pass locally (pb-growth/stats-drain via a rustup shim, host rustc 1.99).
+- Mesa: packaged mesa-aurora 7c86130d (20261025) drives the G15C (vulkaninfo/eglinfo, g15stress 200k PASS 8032/s); the earlier refusal was af3d9c6fc84 (20261017). Desktop on the packaged Mesa not yet tried (sddm/uwsm still point at /opt/mesa-g15c).
