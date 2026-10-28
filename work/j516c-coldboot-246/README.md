@@ -57,3 +57,11 @@ and all three packages matched SHA256SUMS and the 02:58Z comment. No `.INSTALL` 
 - uwsm env sets `/opt/mesa-g15c` only when `uname -r` = `7.2.11-aurora-g15`, so the candidate kernel gets packaged
   `mesa-aurora`/`vulkan-aurora` `7c86130d`. Board file `/usr/lib/firmware/asahi/t6031-j516c-board.bin` absent.
 - Still open: whether stage 1 (`v1.6.1-dirty`, proxy window) falls through to disk without the Air.
+
+## Default entry for the test (2026-10-28, Naeem)
+
+`/etc/default/limine` BOOT_ORDER now starts `linux-aurora, linux-aurora-g15, …` (sed swap; `omarchy-kernel` is not
+installed on the M3), regenerated with `limine-update`: `default_entry: 2` = `linux-aurora`, no remember-last-entry,
+timeout 1 s. **After the test, switch back:** swap the two names again, `sudo limine-update`, and restore
+`m1n1.conf`, `asahi-g15.conf` from `~/aurora-backups/coldboot-246-20261028/` (then update-m1n1) if the G15 stack
+should come back as the daily setup.
