@@ -2,7 +2,16 @@
 
 Combination: omacom/m1n1#19 at `5d17a034` (stage 2, package `m1n1-aurora 1.6.1.aurora22-1`, unreleased),
 omacom/linux-aurora#246 at `ca6c77a0`, #249 at `79f78916` (#249 already merged into integration/aurora).
-Waiting on: Chris's combined test build.
+Chris's build (#246 comment, 2026-10-28 02:58Z), held privately, not published: linux-aurora `7.2.11.aurora7-246249.2`
+(sha256 `b2d08c31…`, headers `2cb41c49…`), m1n1-aurora `1.6.1.aurora22-1` (`602b92e6…`); combined tree `a9a2a9af` over
+`937b727e`. Expected on boot: kernel `7.2.11-7-246249.2-ARCH`, stage 2 `5d17a034-dirty`. An owner-built equivalent is
+also accepted if its source and binaries are named.
+
+## Backups taken 2026-10-28
+
+M3 `~/aurora-backups/coldboot-246-20261028/` with SHA256SUMS: boot.bin (`9f2f1412`), limine.conf, limine.default,
+m1n1.conf, asahi-g15.conf, uwsm-env. Recovery-readable copy on the ESP: `m1n1/boot.bin.before-coldboot-246`
+(`9f2f1412`, = the boot.bin that booted today). ESP at 81%.
 
 ## M3 state on 2026-10-28 (before the test)
 
