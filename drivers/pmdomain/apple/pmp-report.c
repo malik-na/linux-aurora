@@ -82,6 +82,10 @@ struct apple_pmp_report {
 static const struct apple_pmp_report_offsets apple_pmp_offsets_t6030;
 static const struct apple_pmp_report_offsets apple_pmp_offsets_t6031;
 
+static bool t6031_gpu;
+module_param(t6031_gpu, bool, 0444);
+MODULE_PARM_DESC(t6031_gpu, "Experiment: request the T6031 GPU (record 13) after PMP start");
+
 /* Bound report regions, protected by RCU until managed teardown drains readers. */
 static LIST_HEAD(apple_pmp_reports);
 static DEFINE_MUTEX(apple_pmp_reports_lock);
@@ -897,11 +901,20 @@ static void apple_pmp_start_work(struct work_struct *work)
 	/* Experiment: request the T6031 GPU (ADT device 14, record 13). */
 	if (!ret && rep->offsets == &apple_pmp_offsets_t6031) {
 		u64 gpu = BIT_ULL(13);
+		unsigned long deadline = jiffies + msecs_to_jiffies(2000);
 
-		writeq(readq(rep->base + rep->offsets->tgt_read) | gpu,
-		       rep->base + rep->offsets->tgt_write);
+		if (t6031_gpu)
+			writeq(readq(rep->base + rep->offsets->tgt_read) | gpu,
+			       rep->base + rep->offsets->tgt_write);
 		msleep(20);
-		dev_info(rep->dev, "T6031 GPU request set: request %#llx ack %#llx\n",
+		dev_info(rep->dev, "T6031 GPU request %s: request %#llx ack %#llx (20 ms)\n",
+			 t6031_gpu ? "set" : "not set",
+			 readq(rep->base + rep->offsets->tgt_read),
+			 readq(rep->base + rep->offsets->actual));
+		while (t6031_gpu && !(readq(rep->base + rep->offsets->actual) & gpu) &&
+		       time_before(jiffies, deadline))
+			msleep(20);
+		dev_info(rep->dev, "T6031 GPU request: request %#llx ack %#llx (after up to 2 s)\n",
 			 readq(rep->base + rep->offsets->tgt_read),
 			 readq(rep->base + rep->offsets->actual));
 	}
