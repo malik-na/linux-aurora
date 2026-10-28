@@ -1,0 +1,65 @@
+[    0.000000] Linux version 7.2.11-7-246249.2-ARCH (linux-aurora@archlinux) (clang version 18.1.8, LLD 18.1.8) #1 SMP PREEMPT_DYNAMIC Wed, 28 Oct 2026 02:42:29 +0000
+[    0.000000] Kernel command line: root=UUID=4f4d5801-524f-4f54-8000-000000000001 rw rootflags=subvol=@,x-systemd.device-timeout=0 zswap.enabled=0 rootfstype=btrfs user4k=on quiet splash loglevel=0 systemd.show_status=false rd.udev.log_level=0 vt.global_cursor_default=0 plymouth.ignore-serial-consoles
+[    0.009316] DMI: SMBIOS 3.7.0 present.
+[    0.009321] DMI: Apple Inc. Mac15,9/J516c, BIOS 2026.07-gfe7979927b51-dirty 07/01/2026
+[    0.009328] DMI: Memory slots populated: 1/1
+[    0.020588] apple-t6031-display: handoff: apple,t6031-handoff dcp 0x1 display 0x1 piodma 0x1; dcp firmware-compat 14.7.0 version 14.7.0 uuid F493F03E-CC40-3D89-9A08-5F259BA2B246; 8 memory regions, 1 OS log
+[    0.020603] apple-t6031-display: handoff: PMP values /chosen/asahi,t6031-pmp: board-id 0x46 dram-vendor-id 0x6 tunable-uuid 07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB, 72 tunables (image pinned: 07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB)
+[    0.020618] apple-t6031-display: handoff: dcp-oslog [mem 0x10004728000-0x10004747fff] no-map
+[    0.020624] apple-t6031-display: handoff: dcp-oslog [mem 0x10004708000-0x10004727fff] no-map
+[    0.020628] apple-t6031-display: handoff: dcp-oslog [mem 0x100046e8000-0x10004707fff] no-map
+[    0.020632] apple-t6031-display: handoff: dcp-oslog [mem 0x100046c8000-0x100046e7fff] no-map
+[    0.020636] apple-t6031-display: handoff: dcp-oslog [mem 0x100046a8000-0x100046c7fff] no-map
+[    0.020638] apple-t6031-display: handoff: 5 dcp-oslog reservations
+[    0.020639] apple-t6031-display: handoff: firmware image gfx=F9BEA4A3-D65B-386D-B884-ECF2DF7B159E
+[    0.020640] apple-t6031-display: handoff: firmware image dcp=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.020641] apple-t6031-display: handoff: firmware image dcpext0=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.020641] apple-t6031-display: handoff: firmware image dcpext1=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.020642] apple-t6031-display: handoff: firmware image dcpext2=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.020642] apple-t6031-display: handoff: firmware image dcpext3=F493F03E-CC40-3D89-9A08-5F259BA2B246
+[    0.020643] apple-t6031-display: handoff: firmware image pmp=07FF4C5B-CB2E-3DE6-95FF-3B107D19B7AB
+[    0.020644] apple-t6031-display: native display on by default on apple,j516c; apple_t6031_display.enable=0 keeps the boot framebuffer
+[    0.021208] apple-t6031-display: enabled /soc/iommu@38530c000, /soc/iommu@385304000, /soc/mailbox@386c08000, /soc/dcp@386c00000 and /display-subsystem
+[    0.021357] apple-t6031-display: PMP: this Mac's 74 values from /chosen/asahi,t6031-pmp on /soc/pmp@290700000
+[    0.021361] apple-t6031-display: completed /soc/pmp_report@2903c0000 with its display (/soc/pmp_report@2903c0000/report@10) and storage (/soc/pmp_report@2903c0000/report@21) requests; minimum power state of disp_sys, disp_fe and disp_cpu raised to active; pmp and pms_sram kept on
+[    0.069928] apple-pmp-report 2903c0000.pmp_report: T6031 PMP handed over: requests 0x200010000; it starts when a consumer asks for it
+[    0.087572] [drm] Initialized simpledrm 1.0.0 for 10bd1485c00.framebuffer on minor 0
+[    0.110712] simple-framebuffer 10bd1485c00.framebuffer: [drm] fb0: simpledrmdrmfb frame buffer device
+[    0.606586] workqueue: work func apple_pmp_start_work enqueued on deprecated workqueue. Use system_{percpu|dfl}_wq instead.
+[    0.607047] apple-pmp-report 2903c0000.pmp_report: PMP halted, firmware 07ff4c5b-cb2e-3de6-95ff-3b107d19b7ab; PTD status 0x0 request 0x200010000 ack 0x0
+[    0.607051] apple-pmp-report 2903c0000.pmp_report: starting the PMP with request 0x200010000
+[    0.614869] apple_pmp 290700000.pmp: RTKit: Initializing (protocol version 12)
+[    0.615721] apple_pmp 290700000.pmp: PMP firmware and endpoint ready
+[    1.631856] apple-pmp-report 2903c0000.pmp_report: PMP ready: PTD status 0x1 request 0x200010000 ack 0x200010400
+[    1.631902] apple-dcp 386c00000.dcp: PMP running with the display request acknowledged
+[    1.632276] apple-dcp 386c00000.dcp: DCP CPU control 0x10 status 0x3000ac
+[    1.632536] apple-dcp 386c00000.dcp: RTKit: Initializing (protocol version 12)
+[    1.634164] apple-dcp 386c00000.dcp: DCP RTKit session running
+[    1.634170] apple-drm display-subsystem: bound 386c00000.dcp (ops dcp_comp_ops [appledrm])
+[    1.634937] apple-dcp 386c00000.dcp: DCPLink ready, RPC alignment 64
+[    1.642010] apple-dcp 386c00000.dcp: display clock 0: 712000000 Hz
+[    1.643559] apple-dcp 386c00000.dcp: display clock 0: 712000000 Hz
+[    1.773869] [drm] Initialized apple 1.0.0 for display-subsystem on minor 1
+[    1.775833] apple-drm display-subsystem: [drm] fb0: appledrmfb frame buffer device
+[    1.788551] asahi-g15 40a400000.gpu: G15: probing (T6031 G15C)
+[    1.789751] asahi-g15 40a400000.gpu: GPU firmware build: macOS 14.7 stub firmware (iBoot-10151.140.19.700.2), J516C
+[    1.789754] asahi-g15 40a400000.gpu: M3: firmware identity accepted
+[    1.789846] asahi-g15 40a400000.gpu: board data: T6031 G15C images from the device tree and the ADT sensor rows, reference maximum power 116739 mW and MTR masks, 1380 MHz top operating point
+[    1.789874] asahi-g15 40a400000.gpu: board data sha256 7e4096e7c29389ac7f1592a00179789c573ede30bb45171ba5597efa07cc72a1
+[    1.789893] asahi-g15 40a400000.gpu: T6031 G15C admitted, ASC=0x0
+[    1.789911] asahi-g15 40a400000.gpu: T6031 G15C: power acknowledged, version=0x7041100 counts=0x21040a core-mask=0xffffffffff
+[    1.789913] asahi-g15 40a400000.gpu: T6031 G15C: cores enabled per cluster: [10, 10, 10, 10]
+[    1.789998] asahi-g15 40a400000.gpu: G15: UAT leaf self-check passed (9 classes)
+[    1.790955] asahi-g15 40a400000.gpu: RTKit: Initializing (protocol version 12)
+[    1.791066] asahi-g15 40a400000.gpu: mapped firmware crash storage 0x10001d08000/0x4000
+[    1.791145] asahi-g15 40a400000.gpu: MMU: initialized, root[0..2]=0x10bfff7c403 0x10bfff84403 0x10bfff74003
+[    1.793420] asahi-g15 40a400000.gpu: idle standby 1500 us from the device tree
+[    1.793430] asahi-g15 40a400000.gpu: M3: publishing owned initdata root 0xfffffc204062ff40 (77 pages, 5 L3)
+[    1.795845] asahi-g15 40a400000.gpu: M3 firmware readiness: magic=0xabcdabcd flags=1
+[    1.797103] asahi-g15 40a400000.gpu: M3: firmware accepted owned initdata and device controls
+[    1.797106] asahi-g15 40a400000.gpu: G15: firmware at READY, starting the backend
+[    1.850136] apple-dcp 386c00000.dcp: swap 1 complete: surface 1, imported 0, 3726 us
+[    2.021137] asahi-g15 40a400000.gpu: G15: PB heap: 64 blocks posted at start, 2 chunks of 16 MiB backed
+[    2.021330] asahi-g15 40a400000.gpu: G15: compute graph: work 0xfffffc2d05e37760/0x7021003760 pools 0x7000000000 freelist 0x7005858000 table 0x7005c5f000
+[    2.022631] asahi-g15 40a400000.gpu: preemption divisor Globals+0x9b0=0: 0
+[    2.022784] [drm] Initialized asahi 0.0.0 for 40a400000.gpu on minor 0
