@@ -31,3 +31,11 @@ Manual steps / deviations: none during or after the boot. Before it: m1n1.conf e
 m1n1.conf and the modules-load file left as tested until Naeem decides.
 
 Posted on #246 by Naeem's approval, 2026-10-28: https://github.com/omacom/linux-aurora/pull/246#issuecomment-6460183247
+
+## Restored after the test (2026-10-28, Naeem)
+
+`/etc/m1n1.conf` (`858a1761`, `t6031-gpu=1`, `t6031-dcp=1`) and `/etc/modules-load.d/asahi-g15.conf` (`7e5da22e`) put back
+from `~/aurora-backups/coldboot-246-20261028/`; `update-m1n1` rebuilt boot.bin `0be2f319` → `2f8597aa` (stage 2 still
+`5d17a034-dirty`, now with the two owner lines). `boot.bin.old` = `0be2f319` (the tested one); the pre-test original
+`9f2f1412` stays as `m1n1/boot.bin.before-coldboot-246`. BOOT_ORDER: g15 first. Kernel `linux-aurora` stays at the
+test build `7.2.11.aurora7-246249.2` (aurora8 still in the pacman cache). Not rebooted since.
