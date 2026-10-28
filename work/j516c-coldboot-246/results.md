@@ -18,7 +18,7 @@ without the Air. Full dmesg on the M3: `~/aurora-test/coldboot-246/dmesg-full.tx
 | Autoload | no modules-load file; `asahi` live (22 users), `appledrm`, `apple_pmp` |
 | G15 | firmware identity accepted (macOS 14.7, J516C); board data from DT + ADT sensor rows, sha256 `7e4096e7…cc72a1` (= author's value); 40 cores [10,10,10,10]; firmware READY at 1.797 s; `[drm] Initialized asahi` minor 0 at 2.02 s; no "waiting for display" line |
 | Nodes | card0 + renderD128 = asahi-g15 (40a400000.gpu), card1 = apple-drm |
-| phram ADT export | DT has `reserved-memory/flash@100044a0000` compatible `phram` label `adt` (0x8c000) and `flash@10bca228000` label `m1n1_stage2.log`; no `/dev/mtd` for them: this kernel config has `# CONFIG_MTD_PHRAM is not set` |
+| phram ADT export | DT has `reserved-memory/flash@100044a0000` compatible `phram` label `adt` (0x8c000) and `flash@10bca228000` label `m1n1_stage2.log`; no `/dev/mtd` for them: this kernel config has `# CONFIG_MTD_PHRAM is not set`. Chris (2026-10-28): G15 reads the ADT export directly (the "ADT sensor rows" in the board data line), so it is used; the missing MTD device is only the user-space view |
 | Faults | none: no G15 faults, recoveries or rejections; no new kernel lines during GL/Vulkan |
 | Greeter / desktop | SDDM → uwsm Hyprland on eDP-1, 3456x2234@120 scale 2; no `/opt/mesa` mapped in the compositor |
 | Mesa | packaged `mesa-aurora`/`vulkan-aurora` 26.3.0-devel `7c86130d` |
