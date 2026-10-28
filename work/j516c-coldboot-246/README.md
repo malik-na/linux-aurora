@@ -40,3 +40,20 @@ m1n1.conf, asahi-g15.conf, uwsm-env. Recovery-readable copy on the ESP: `m1n1/bo
 4. Agent: record `asahi,m1n1-stage2-version`, `/proc/cmdline`, `asahi,t6031-*` chosen values, `lsmod | grep asahi`,
    DCP/GPU readiness lines from `dmesg`, greeter/desktop (camera still), `eglinfo`/`glxinfo -B`, `vulkaninfo --summary`.
 5. Naeem approves the exact comment text before it goes on #246. Boot log scrubbed (no serials, MACs, firmware memory).
+
+## Installed 2026-10-28 (ready for the cold boot)
+
+Packages came over Signal from Chris's agent as four tar parts; joined tar sha256 `1597f607…` matched his message,
+and all three packages matched SHA256SUMS and the 02:58Z comment. No `.INSTALL` scripts; nothing installs stage 1.
+
+- Before install: `/etc/m1n1.conf` truncated to 0 bytes, `/etc/modules-load.d/asahi-g15.conf` removed (both in the backup dir).
+- `pacman -U` of the three (log: M3 `~/aurora-test/coldboot-246/install.log`). Kernel downgrade aurora8 → aurora7-246249.2
+  (aurora8 packages still in the pacman cache for rollback). UKI rebuilt as `omarchy_linux-aurora.efi`.
+- update-m1n1 ran from the hook (no `M1N1_UPDATE_DISABLED` on this Mac): boot.bin `9f2f1412` → `0be2f319`, contains
+  `5d17a034-dirty`, no appended `chosen.` lines. `boot.bin.old` = `9f2f1412` = `boot.bin.before-coldboot-246`. ESP 81%.
+- 96-omarchy-mac-m3-air hook: acts only on the M3 Air (j613/j615); no-op here.
+- Limine: `linux-aurora` entry (candidate) cmdline has no `apple_t6031_display.enable`; `linux-aurora-g15` entry keeps it
+  and stays first in BOOT_ORDER (fallback). Pick `linux-aurora` at the menu, or change BOOT_ORDER for the boot.
+- uwsm env sets `/opt/mesa-g15c` only when `uname -r` = `7.2.11-aurora-g15`, so the candidate kernel gets packaged
+  `mesa-aurora`/`vulkan-aurora` `7c86130d`. Board file `/usr/lib/firmware/asahi/t6031-j516c-board.bin` absent.
+- Still open: whether stage 1 (`v1.6.1-dirty`, proxy window) falls through to disk without the Air.
