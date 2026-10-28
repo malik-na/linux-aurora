@@ -16,7 +16,8 @@ Boot details for the J516C test boot (2026-10-28, board file removed from `/usr/
 - iBoot `iBoot-10151.140.19.700.2`, system firmware 27.0, OS firmware 14.7 (GPU firmware: the 14.7 stub build, J516C pin).
 - Kernel command line: the edge default plus `apple_t6031_display.enable=1`.
 - `/etc/modules-load.d/asahi-g15.conf` = `asahi` (T6031 is not autoloaded).
-- Mesa for the session: aurora-silicon/mesa `aurora-wip` 4911479 in `/opt/mesa-g15c`; the packaged `mesa-aurora` refuses G15C.
+- Mesa for the session: aurora-silicon/mesa `aurora-wip` 4911479 in `/opt/mesa-g15c`. The session was moved there when the then-installed package, `mesa-aurora` `20261017.af3d9c6fc84`, refused G15C.
+- The current package, `mesa-aurora 1:26.3.0_devel.20261025.231095.7c86130d26c-1`, does not refuse it. On this kernel with nothing from `/opt` on the path: vulkaninfo and eglinfo report "Apple M3 Max (G15C B2)", and `g15stress jobs 200000` passes (8032/s). The greeter and desktop on that package are not tested yet.
 
 **Result**
 - `board data: T6031 G15C images from the device tree and the ADT sensor rows, reference maximum power 116739 mW and MTR masks, 1380 MHz top operating point`
