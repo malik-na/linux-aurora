@@ -80,6 +80,7 @@ struct apple_pmp_report {
 };
 
 static const struct apple_pmp_report_offsets apple_pmp_offsets_t6030;
+static const struct apple_pmp_report_offsets apple_pmp_offsets_t6031;
 
 /* Bound report regions, protected by RCU until managed teardown drains readers. */
 static LIST_HEAD(apple_pmp_reports);
@@ -892,6 +893,17 @@ static void apple_pmp_start_work(struct work_struct *work)
 		dev_info(rep->dev, "PMP ready: PTD status %#llx request %#llx ack %#llx\n",
 			 status, request, ack);
 		ret = 0;
+	}
+	/* Experiment: request the T6031 GPU (ADT device 14, record 13). */
+	if (!ret && rep->offsets == &apple_pmp_offsets_t6031) {
+		u64 gpu = BIT_ULL(13);
+
+		writeq(readq(rep->base + rep->offsets->tgt_read) | gpu,
+		       rep->base + rep->offsets->tgt_write);
+		msleep(20);
+		dev_info(rep->dev, "T6031 GPU request set: request %#llx ack %#llx\n",
+			 readq(rep->base + rep->offsets->tgt_read),
+			 readq(rep->base + rep->offsets->actual));
 	}
 	apple_pmp_start_finish(st, ret);
 }
