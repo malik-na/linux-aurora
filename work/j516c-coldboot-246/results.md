@@ -29,3 +29,5 @@ without the Air. Full dmesg on the M3: `~/aurora-test/coldboot-246/dmesg-full.tx
 Manual steps / deviations: none during or after the boot. Before it: m1n1.conf emptied, modules-load file removed,
 `linux-aurora` put first in BOOT_ORDER (Naeem), all backed up. After: BOOT_ORDER back to g15 first (Naeem's request);
 m1n1.conf and the modules-load file left as tested until Naeem decides.
+
+Posted on #246 by Naeem's approval, 2026-10-28: https://github.com/omacom/linux-aurora/pull/246#issuecomment-6460183247
