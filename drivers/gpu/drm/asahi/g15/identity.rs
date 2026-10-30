@@ -4,7 +4,11 @@
 //!
 //! The firmware build is the SHA-256 of TEXT with the 8 entropy bytes after the single
 //! `GKTS\x08\0\0\0` marker zeroed, plus the segment sizes, looked up in the SoC
-//! configuration's `firmware` list; the hardware revision is checked against its `hw_ids` at
+//! configuration's `firmware` list. That digest also covers the rest of the patchbay the boot
+//! loader fills (carveout addresses that follow the memory size, the SoC revision, tunables), so
+//! the same build measures differently on two machines; a build that also pins a code digest
+//! (TEXT with all of that zeroed, [`lookup::zero_boot_data`]) matches by either. The hardware
+//! revision is checked against its `hw_ids` at
 //! start ([`super::boot`]). An unknown build or revision is refused with its measured identity;
 //! an unknown build's refusal also says what to report so that it can be pinned. The pure
 //! lookup is in [`lookup`] (host-tested).
@@ -57,6 +61,18 @@ pub(crate) fn copy_physical(phys: u64, size: usize) -> Result<KVVec<u8>> {
     Ok(copy?)
 }
 
+/// A code digest as the logs print it, `none` when the image did not delimit its boot data.
+struct CodeDigest(Option<[u8; 32]>);
+
+impl fmt::Display for CodeDigest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.0 {
+            Some(d) => write!(f, "{}", Hex(d)),
+            None => write!(f, "none"),
+        }
+    }
+}
+
 impl From<&FirmwareBuild> for Measured {
     fn from(build: &FirmwareBuild) -> Self {
         Measured {
@@ -64,6 +80,7 @@ impl From<&FirmwareBuild> for Measured {
             data_size: build.data_size,
             marker: build.marker,
             sha256: build.text_sha256,
+            code_sha256: build.code_sha256,
         }
     }
 }
@@ -87,12 +104,29 @@ pub(crate) fn firmware(
         EINVAL
     })?;
     copy[at + 8..at + 16].fill(0);
+    let sha256 = glue::sha256(&copy);
+    // The code digest: the same TEXT with everything the boot loader writes into it zeroed (the
+    // patchbay values, which include carveout addresses that follow the machine's memory size,
+    // and the tunables buffer). An image that does not delimit them has only the full digest.
+    let code_sha256 = match lookup::zero_boot_data(&mut copy, at, super::hw::UPPER) {
+        Ok(()) => Some(glue::sha256(&copy)),
+        Err(why) => {
+            dev_warn!(
+                dev,
+                "GPU firmware TEXT boot data not delimited ({:?}): no code digest\n",
+                why
+            );
+            None
+        }
+    };
     let m = Measured {
         text_size: size as u64,
         data_size,
         marker: u32::try_from(at)?,
-        sha256: glue::sha256(&copy),
+        sha256,
+        code_sha256,
     };
+    let code = CodeDigest(m.code_sha256);
     // A qualified build pins only on the machine it names.
     let qualified = builds
         .iter()
@@ -100,17 +134,27 @@ pub(crate) fn firmware(
     match lookup::verdict(&m, qualified, super::params::accept_text_prefix()) {
         Verdict::Pinned(i) => {
             let build = builds.get(i).ok_or(EINVAL)?;
-            dev_info!(dev, "GPU firmware build: {}\n", build.name);
+            if build.text_sha256 == m.sha256 {
+                dev_info!(dev, "GPU firmware build: {}\n", build.name);
+            } else {
+                dev_info!(
+                    dev,
+                    "GPU firmware build: {} (by code digest; full sha256 {})\n",
+                    build.name,
+                    Hex(&m.sha256)
+                );
+            }
             return Ok(Some(build));
         }
         Verdict::Admitted => {
             dev_warn!(
                 dev,
-                "GPU firmware build admitted by g15_accept_text_prefix: TEXT {:#x} DATA {:#x} GKTS {:#x} sha256 {}\n",
+                "GPU firmware build admitted by g15_accept_text_prefix: TEXT {:#x} DATA {:#x} GKTS {:#x} sha256 {} code sha256 {}\n",
                 size,
                 data_size,
                 at,
-                Hex(&m.sha256)
+                Hex(&m.sha256),
+                code
             );
             return Ok(None);
         }
@@ -118,11 +162,12 @@ pub(crate) fn firmware(
     }
     dev_err!(
         dev,
-        "unsupported GPU firmware build: TEXT {:#x} DATA {:#x} GKTS {:#x} sha256 {}; {}\n",
+        "unsupported GPU firmware build: TEXT {:#x} DATA {:#x} GKTS {:#x} sha256 {} code sha256 {}; {}\n",
         size,
         data_size,
         at,
         Hex(&m.sha256),
+        code,
         lookup::REPORT_HINT
     );
     for build in builds {

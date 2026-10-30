@@ -28,6 +28,10 @@ pub(crate) struct FirmwareBuild {
     /// Offset of the GKTS marker in TEXT; the 8 entropy bytes after it are zeroed before hashing.
     pub(crate) marker: u32,
     pub(crate) text_sha256: [u8; 32],
+    /// SHA-256 of TEXT with every boot-loader value zeroed (the patchbay record values and the
+    /// tunables buffer, `identity::lookup::zero_boot_data`): the same on every machine that runs
+    /// this build. `None` pins by `text_sha256` alone.
+    pub(crate) code_sha256: Option<[u8; 32]>,
 }
 
 /// Where a SoC's GPU regions, firmware segments and performance states come from, and how its
@@ -144,6 +148,7 @@ pub(crate) mod t6030 {
                 0xa3, 0xa8, 0x77, 0x55, 0x86, 0xd6, 0xb1, 0xe3, 0xaa, 0xe8, 0xa6, 0xa4, 0x64, 0xa7,
                 0x80, 0x02, 0x93, 0xd5,
             ],
+            code_sha256: None,
           },
           // The maintained J516S runtime already identifies this B0 image by
           // UUID dbf37c40-ead5-3760-9441-995018782955 and uses the same
@@ -161,6 +166,7 @@ pub(crate) mod t6030 {
                 0x40, 0x6d, 0x1d, 0x06, 0x70, 0xf1, 0xd4, 0x70,
                 0xe7, 0x9b, 0xb9, 0xb0, 0x22, 0x09, 0xdb, 0x53,
             ],
+            code_sha256: None,
           },
         ],
         machine: kernel::c_str!("apple,t6030"),
