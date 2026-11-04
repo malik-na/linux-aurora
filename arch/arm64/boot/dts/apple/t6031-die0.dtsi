@@ -563,6 +563,62 @@
 		status = "disabled";
 	};
 
+	/*
+	 * iBoot hands over a running SEP (J516C ADT). Keep Linux off its DART at
+	 * boot; apple_sep enables it when the driver binds. The SEP only accepts
+	 * IOVAs in the window iBoot programmed (ADT vm-base 0x10000004000), which
+	 * carries the BIT(40) alias the DART translates.
+	 *
+	 * UNVERIFIED: vm-size is 0x3ff00000 as measured on the J516C. The T6030,
+	 * T8122 and T8140 windows are 0xffff0000. The driver author has not
+	 * confirmed the smaller size; do not boot before they do.
+	 */
+	sep_dart: iommu@388ac0000 {
+		compatible = "apple,t6031-dart", "apple,t8110-dart";
+		reg = <0x3 0x88ac0000 0x0 0x4000>;
+		interrupt-parent = <&aic>;
+		interrupts = <AIC_IRQ 0 579 IRQ_TYPE_LEVEL_HIGH>;
+		#iommu-cells = <1>;
+		apple,dma-range = /bits/ 64 <0x10000004000 0x3ff00000>;
+		apple,dma-offset = /bits/ 64 <0x0>;
+		status = "disabled";
+	};
+
+	/*
+	 * The J516C ADT also lists a second SEP register window at 0x38a050000.
+	 * apple,sep.yaml allows one reg entry and the driver maps one, so it is
+	 * not described here.
+	 */
+	sep: sep@38a400000 {
+		compatible = "apple,sep";
+		reg = <0x3 0x8a400000 0x0 0x6c000>;
+		mboxes = <&sep_mbox>;
+		mbox-names = "mbox";
+		iommus = <&sep_dart 0>;
+		power-domains = <&ps_sep>;
+		status = "disabled";
+	};
+
+	/*
+	 * UNVERIFIED: the mailbox address (SEP + 0x8000, the pattern on every
+	 * other SoC) and the order of the four AIC lines (573-576 in the
+	 * send-empty, send-not-empty, recv-empty, recv-not-empty order of the
+	 * other SoCs) are inferred, not read from the ADT.
+	 */
+	sep_mbox: mbox@38a408000 {
+		compatible = "apple,t6031-asc-mailbox", "apple,asc-mailbox-v4";
+		reg = <0x3 0x8a408000 0x0 0x4000>;
+		interrupt-parent = <&aic>;
+		interrupts = <AIC_IRQ 0 573 IRQ_TYPE_LEVEL_HIGH>,
+			<AIC_IRQ 0 574 IRQ_TYPE_LEVEL_HIGH>,
+			<AIC_IRQ 0 575 IRQ_TYPE_LEVEL_HIGH>,
+			<AIC_IRQ 0 576 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "send-empty", "send-not-empty",
+			"recv-empty", "recv-not-empty";
+		#mbox-cells = <0>;
+		status = "disabled";
+	};
+
 	isp: isp@38c000000 {
 		compatible = "apple,t6031-isp";
 		iommus = <&isp_dart0 0 0x100 0x0 0x1 0x0>,
@@ -729,6 +785,38 @@
 		pinctrl-names = "default";
 		power-domains = <&ps_spi1>;
 		status = "disabled";
+	};
+
+	/*
+	 * Touch ID (J516C ADT /arm-io/spi2). iBoot leaves the pads muxed and
+	 * the controller uses its native chip select, so there is no pinctrl
+	 * here, as on t6030 and t8122. The controller address and interrupt
+	 * (spi1 + 0x4000, spi1 + 1) match the J516C ADT.
+	 */
+	spi2: spi@391108000 {
+		compatible = "apple,t6031-spi", "apple,t8103-spi";
+		reg = <0x3 0x91108000 0x0 0x4000>;
+		interrupt-parent = <&aic>;
+		interrupts = <AIC_IRQ 0 1313 IRQ_TYPE_LEVEL_HIGH>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		clocks = <&clk_200m>;
+		power-domains = <&ps_spi2>;
+		status = "disabled";
+
+		mesa: fingerprint@0 {
+			compatible = "apple,mesa-fingerprint";
+			reg = <0>;
+			spi-max-frequency = <8000000>;
+			/*
+			 * UNVERIFIED: the SPI mode and the sensor part were not read
+			 * from the J516C. spi-cpha (mode 1) is the T6030/T8122
+			 * value; the M1 Pro/Max and M2 Pro/Max boards use spi-cpol
+			 * (mode 2). Confirm before binding.
+			 */
+			spi-cpha;
+			status = "disabled";
+		};
 	};
 
 	serial0: serial@391200000 {

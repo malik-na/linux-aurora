@@ -16,6 +16,10 @@
 / {
 	compatible = "apple,j516c", "apple,t6031", "apple,arm-platform";
 	model = "Apple MacBook Pro (16-inch, M3 Max, 16 CPU cores, Nov 2023)";
+
+	aliases {
+		sep = &sep;
+	};
 };
 
 &mtp_mt {
@@ -52,4 +56,31 @@
 &sound {
 	compatible = "apple,j516-macaudio", "apple,j316-macaudio", "apple,macaudio";
 	model = "MacBook Pro J516";
+};
+
+/* apple_sep enables the SEP and its DART when it loads. */
+&sep_mbox {
+	status = "okay";
+};
+
+/*
+ * Touch ID sensor (J516C ADT /arm-io/spi2/mesa): chip select 0, 8 MHz. The
+ * data-ready line (AP GPIO 34 in the ADT) is left out, so the driver polls
+ * until its trigger is confirmed, as on J514s and J613.
+ *
+ * UNVERIFIED: the power GPIO (NUB GPIO 53) is inferred from the ADT, not
+ * confirmed on hardware; the SPI mode and the sensor part ID are not read
+ * (see the mesa node in t6031-die0.dtsi).
+ */
+&spi2 {
+	status = "okay";
+};
+
+&mesa {
+	status = "okay";
+	enable-gpios = <&pinctrl_nub 53 GPIO_ACTIVE_HIGH>;
+	spi-cs-setup-delay-ns = <20>;
+	spi-cs-hold-delay-ns = <20>;
+	/* Per-device factory data from this Mac's own iBoot system container. */
+	firmware-name = "apple/mesacal-j516c.bin";
 };

@@ -425,6 +425,39 @@ pub(crate) const T8122: PlatformProfile = PlatformProfile {
     ..T8112
 };
 
+/// The SEP DART window the J516C ADT records: `vm-base` 0x10000004000 with
+/// `vm-size` 0x3ff00000, as the device tree states it (no separate offset).
+///
+/// UNVERIFIED: every other BIT(40) SoC uses a `vm-size` of 0xffff0000. The
+/// 0x3ff00000 is the value measured on the J516C and has not been confirmed
+/// by the driver author. The device tree carries the same window, so this
+/// only applies if a tree without it is loaded.
+const DART_T6031: DartWindow = DartWindow {
+    name: "no offset, range 0x100_0000_4000 + 0x3ff00000",
+    offset: [0x0, 0x0],
+    range: [0x100, 0x4000, 0x0, 0x3ff0_0000],
+};
+
+/// MacBook Pro 16" M3 Max (J516C). The J516C ADT records a pre-booted SEP,
+/// its DART at `0x388ac0000` and the Mesa sensor on spi2 at `0x391108000`,
+/// 8 MHz, chip select 0. Otherwise T8122's warm-registration profile, as the
+/// open T6030 (J514s) profile is.
+///
+/// UNVERIFIED, never run on hardware: the DART window size (see
+/// [`DART_T6031`]), the SPI mode and the sensor part ID are inherited from
+/// T8122 rather than read from the J516C; so are the key-store dialect and
+/// `xart_guard`. The mailbox address and IRQ order are inferred. Only the
+/// J516C is claimed: the J514C shares the SoC but its ADT was not read.
+pub(crate) const T6031: PlatformProfile = PlatformProfile {
+    name: "T6031/J516C",
+    sensor: SensorProfile {
+        controller_base: 0x3_9110_8000,
+        ..T8122.sensor
+    },
+    dart_window: &DART_T6031,
+    ..T8122
+};
+
 static_assert!(T8103.shmem_capacity == 0x30000);
 static_assert!(T6020.shmem_capacity == 0x40000);
 static_assert!(T8140.shmem_capacity == 0x40000);
@@ -440,6 +473,9 @@ static_assert!(T8112.sensor.controller_base == T8103.sensor.controller_base);
 static_assert!(T8122.shmem_capacity == T8112.shmem_capacity);
 static_assert!(T8122.sensor.controller_base == 0x2a1108000);
 static_assert!(T8122.wide_dma_mask);
+static_assert!(T6031.sensor.controller_base == 0x391108000);
+static_assert!(T6031.sensor.expected_id == T8122.sensor.expected_id);
+static_assert!(T6031.wide_dma_mask);
 
 /// Whether the machine root declares `compatible`.
 ///
@@ -586,6 +622,11 @@ pub(crate) fn detect() -> Result<&'static PlatformProfile> {
     if machine_has(b"apple,t8122") && (machine_has(b"apple,j613") || machine_has(b"apple,j615")) {
         return Ok(&T8122);
     }
+    // Only the board whose ADT was read: J516C. The 14" M3 Max (J514C)
+    // shares the SoC but its sensor wiring is unchecked.
+    if machine_has(b"apple,t6031") && machine_has(b"apple,j516c") {
+        return Ok(&T6031);
+    }
     Err(ENODEV)
 }
 
@@ -656,6 +697,13 @@ mod dart_window_tests {
         assert_eq!(range(T8112.dart_window), (0x4000, 0x4000 + 0xffff_0000));
         // The whole window fits the 32-bit DART input aperture.
         assert!(range(T8112.dart_window).1 <= 1 << 32);
+    }
+
+    #[test]
+    fn t6031_window_matches_the_j516c_adt() {
+        // UNVERIFIED size: the J516C vm-size, not the 0xffff0000 of the others.
+        assert_eq!(offset(T6031.dart_window), 0);
+        assert_eq!(range(T6031.dart_window), (0x100_0000_4000, 0x100_0000_4000 + 0x3ff0_0000));
     }
 
     #[test]
