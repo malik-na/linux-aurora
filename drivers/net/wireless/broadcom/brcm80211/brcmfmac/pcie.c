@@ -1080,7 +1080,15 @@ static irqreturn_t brcmf_pcie_quick_check_isr(int irq, void *arg)
 	struct brcmf_pciedev_info *devinfo = (struct brcmf_pciedev_info *)arg;
 
 	if (brcmf_pcie_read_pcie32(devinfo, devinfo->reginfo->mailboxint)) {
-		brcmf_pcie_intr_disable(devinfo);
+		/*
+		 * Mask the dongle only. brcmf_pcie_intr_disable() would also
+		 * clear irq_ready, which gates ring servicing until the driver
+		 * has set the rings up; clearing it here makes the thread skip
+		 * the rings for this very interrupt, and in MSI mode a
+		 * completion that arrived with it (an ioctl response, a D3 ACK)
+		 * is then never serviced unless another MSI follows.
+		 */
+		brcmf_pcie_write_pcie32(devinfo, devinfo->reginfo->mailboxmask, 0);
 		brcmf_dbg(PCIE, "Enter\n");
 		return IRQ_WAKE_THREAD;
 	}
