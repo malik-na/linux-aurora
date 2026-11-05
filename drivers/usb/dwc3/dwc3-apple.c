@@ -650,6 +650,16 @@ static int dwc3_apple_probe(struct platform_device *pdev)
 	 * details.
 	 */
 	appledwc->state = DWC3_APPLE_PROBE_PENDING;
+
+	/*
+	 * dwc3_core_probe() sets the driver data, but only once the first cable
+	 * arrives. Set it now: remove() looks appledwc up through it, and on a
+	 * port that never saw a cable it was NULL, so unbinding the driver
+	 * dereferenced a NULL pointer in mutex_lock(). dwc3_core_probe() later
+	 * stores this same pointer.
+	 */
+	platform_set_drvdata(pdev, &appledwc->dwc);
+
 	ret = dwc3_apple_setup_role_switch(appledwc);
 	if (ret)
 		return dev_err_probe(&pdev->dev, ret, "Failed to setup role switch\n");
