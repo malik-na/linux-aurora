@@ -35,6 +35,9 @@
 #define RTC_CTRL_ALARM_EVENT	BIT(1)
 #define RTC_CTRL_ALARM_EN	BIT(6)
 
+/* Optional separate alarm event register (t8103 Sera: 0xd00c), bit 0 */
+#define RTC_EVENT_ALARM		BIT(0)
+
 struct macsmc_rtc {
 	struct device *dev;
 	struct apple_smc *smc;
@@ -45,6 +48,7 @@ struct macsmc_rtc {
 	struct nvmem_cell *alarm_ctrl;
 	struct nvmem_cell *alarm_value;
 	struct nvmem_cell *alarm_mask;
+	struct nvmem_cell *alarm_event;	/* optional */
 	struct mutex alarm_lock;
 	u32 alarm_secs;
 };
@@ -204,6 +208,39 @@ static int macsmc_rtc_offset_secs(struct macsmc_rtc *rtc, s64 *secs)
 	return 0;
 }
 
+/* Whether the optional event register has the alarm latched */
+static int macsmc_rtc_event_pending(struct macsmc_rtc *rtc, bool *pending)
+{
+	u8 ev = 0;
+	int ret = 0;
+
+	if (rtc->alarm_event)
+		ret = macsmc_rtc_read_u8(rtc->alarm_event, &ev);
+	*pending = !ret && (ev & RTC_EVENT_ALARM);
+	return ret;
+}
+
+/*
+ * Clear a latched event in the optional event register. Its bit is cleared
+ * by writing 1 on the PMUs where that has been checked (T602x); should it
+ * read back set, it is written as 0 as well.
+ */
+static int macsmc_rtc_clear_event(struct macsmc_rtc *rtc)
+{
+	bool pending;
+	int ret;
+
+	ret = macsmc_rtc_event_pending(rtc, &pending);
+	if (ret || !pending)
+		return ret;
+	ret = macsmc_rtc_write_u8(rtc->alarm_event, RTC_EVENT_ALARM);
+	if (!ret)
+		ret = macsmc_rtc_event_pending(rtc, &pending);
+	if (!ret && pending)
+		ret = macsmc_rtc_write_u8(rtc->alarm_event, 0);
+	return ret;
+}
+
 /*
  * Arm the alarm at counter second @secs, or disarm it if @secs is 0. The
  * other bits of the control byte are kept. A latched event is cleared by
@@ -215,6 +252,9 @@ static int macsmc_rtc_program_alarm(struct macsmc_rtc *rtc, u32 secs)
 	u8 ctrl;
 	int ret;
 
+	ret = macsmc_rtc_clear_event(rtc);
+	if (ret)
+		return ret;
 	ret = macsmc_rtc_read_u8(rtc->alarm_ctrl, &ctrl);
 	if (ret)
 		return ret;
@@ -247,6 +287,7 @@ static int macsmc_rtc_program_alarm(struct macsmc_rtc *rtc, u32 secs)
 static int macsmc_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 {
 	struct macsmc_rtc *rtc = dev_get_drvdata(dev);
+	bool event;
 	size_t len;
 	s64 off;
 	u32 secs;
@@ -260,6 +301,8 @@ static int macsmc_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 
 	mutex_lock(&rtc->alarm_lock);
 	ret = macsmc_rtc_read_u8(rtc->alarm_ctrl, &ctrl);
+	if (!ret)
+		ret = macsmc_rtc_event_pending(rtc, &event);
 	if (ret)
 		goto out;
 	p = nvmem_cell_read(rtc->alarm_value, &len);
@@ -272,7 +315,7 @@ static int macsmc_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 
 	rtc_time64_to_tm((time64_t)secs + off, &alrm->time);
 	alrm->enabled = !!(ctrl & RTC_CTRL_ALARM_EN);
-	alrm->pending = !!(ctrl & RTC_CTRL_ALARM_EVENT);
+	alrm->pending = (ctrl & RTC_CTRL_ALARM_EVENT) || event;
 out:
 	mutex_unlock(&rtc->alarm_lock);
 	return ret;
@@ -320,11 +363,14 @@ static int macsmc_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
 static irqreturn_t macsmc_rtc_alarm_irq(int irq, void *data)
 {
 	struct macsmc_rtc *rtc = data;
+	bool event;
 	u8 ctrl;
 
 	mutex_lock(&rtc->alarm_lock);
+	/* Either latch may be the one a PMU sets; t8103's is not known yet. */
 	if (macsmc_rtc_read_u8(rtc->alarm_ctrl, &ctrl) ||
-	    !(ctrl & RTC_CTRL_ALARM_EVENT)) {
+	    macsmc_rtc_event_pending(rtc, &event) ||
+	    !((ctrl & RTC_CTRL_ALARM_EVENT) || event)) {
 		mutex_unlock(&rtc->alarm_lock);
 		return IRQ_NONE;
 	}
@@ -366,6 +412,9 @@ static int macsmc_rtc_init_alarm(struct platform_device *pdev,
 	rtc->alarm_ctrl = macsmc_rtc_cell_optional(dev, "rtc_ctrl");
 	rtc->alarm_value = macsmc_rtc_cell_optional(dev, "rtc_alarm");
 	rtc->alarm_mask = macsmc_rtc_cell_optional(dev, "rtc_alarm_mask");
+	rtc->alarm_event = macsmc_rtc_cell_optional(dev, "rtc_alarm_event");
+	if (IS_ERR(rtc->alarm_event))
+		return PTR_ERR(rtc->alarm_event);
 	if (IS_ERR(rtc->alarm_ctrl))
 		return PTR_ERR(rtc->alarm_ctrl);
 	if (IS_ERR(rtc->alarm_value))
@@ -401,6 +450,10 @@ static int macsmc_rtc_init_alarm(struct platform_device *pdev,
 		if (ret)
 			dev_warn(dev, "alarm cannot wake the system: %d\n", ret);
 	}
+
+	dev_info(dev, "PMU alarm on IRQ %d%s%s\n", irq,
+		 rtc->alarm_event ? ", with event register" : "",
+		 device_may_wakeup(dev) ? ", wake source" : "");
 
 	return 0;
 }
