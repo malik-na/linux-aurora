@@ -2699,7 +2699,8 @@ static void dcp_client_open_run(struct apple_dcp *dcp, void *out, void *cookie)
 		break;
 	}
 	case DCP_STEP_A450: {
-		u32 val = 0;
+		/* m1power experiment: let DCP firmware use its idle power savings. */
+		u32 val = 1;
 
 		dcp_enable_disable_video_power_savings(dcp, false, &val, next,
 						       ncookie);
@@ -2784,7 +2785,8 @@ static void init_2(struct apple_dcp *dcp, void *out, void *cookie)
 
 static void init_1(struct apple_dcp *dcp, void *out, void *cookie)
 {
-	u32 val = 0;
+	/* m1power experiment: let DCP firmware use its idle power savings. */
+	u32 val = 1;
 	dcp_enable_disable_video_power_savings(dcp, false, &val, init_2, NULL);
 }
 #endif
