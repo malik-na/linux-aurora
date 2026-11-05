@@ -19,9 +19,10 @@
  *  - the SMC RTC gets those cells, the PMU's SPMI interrupt 2 (spmi-pmu
  *    "interrupts") and wakeup-source.
  *
- * Nothing is changed unless all of the nodes are found as expected, nor when
- * the tree already describes the alarm. Boot with apple_t8103_pmu_alarm=0 to
- * leave the tree alone.
+ * This is opt-in while the alarm is unproven on t8103 hardware: nothing is
+ * done unless the kernel is booted with apple_t8103_pmu_alarm=1. Even then,
+ * nothing is changed unless all of the nodes are found as expected, nor when
+ * the tree already describes the alarm.
  *
  * Copyright (C) The Asahi Linux Contributors
  */
@@ -42,7 +43,7 @@
 /* First cell of an AIC specifier: AIC_IRQ (dt-bindings apple-aic.h) */
 #define DT_AIC_IRQ		0
 
-static bool enable = true;
+static bool enable;
 core_param(apple_t8103_pmu_alarm, enable, bool, 0444);
 
 struct alarm_cell {
@@ -122,8 +123,12 @@ static int __init t8103_pmu_alarm_dt(void)
 	u32 icells, len;
 	int i, idx, ret;
 
-	if (!enable || !of_machine_is_compatible("apple,t8103"))
+	if (!of_machine_is_compatible("apple,t8103"))
 		return 0;
+	if (!enable) {
+		pr_info("off: boot with apple_t8103_pmu_alarm=1 to describe the PMU alarm\n");
+		return 0;
+	}
 
 	pmic = of_find_compatible_node(NULL, NULL, "apple,sera-pmic");
 	if (pmic) {
@@ -245,6 +250,10 @@ static int __init t8103_pmu_alarm_dt(void)
 		ret = of_changeset_apply(&alarm_cs);
 	if (ret) {
 		of_changeset_destroy(&alarm_cs);
+		/* The nodes this created were never attached: drop them too. */
+		for (i = 0; i < NCELLS; i++)
+			if (cell_np[i] && !found[i])
+				of_node_put(cell_np[i]);
 		pr_err("could not describe the PMU alarm: %d\n", ret);
 		goto out_cells;
 	}

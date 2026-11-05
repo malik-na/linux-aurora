@@ -65,9 +65,10 @@ config APPLE_T8103_PMU_ALARM_DT
 	  NVMEM cells, the SPMI controller's interrupt (AIC 343) and the
 	  SMC RTC's alarm interrupt and wakeup-source. With them the SMC
 	  RTC (RTC_DRV_MACSMC) has an alarm that wakes the system, e.g.
-	  "rtcwake -m freeze". Does nothing on other SoCs, or when the
-	  tree already describes the alarm. Boot with
-	  apple_t8103_pmu_alarm=0 to leave the tree alone.
+	  "rtcwake -m freeze". Opt-in while it is unproven on hardware:
+	  it does nothing unless the kernel is booted with
+	  apple_t8103_pmu_alarm=1. Does nothing on other SoCs, or when
+	  the tree already describes the alarm.
 
 config APPLE_RTKIT
 	tristate "Apple RTKit co-processor IPC protocol"
