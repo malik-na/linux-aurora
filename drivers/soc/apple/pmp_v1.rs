@@ -19,8 +19,11 @@
 //! at run time; off keeps whatever the PMP was last told.
 //!
 //! The OF match table is deliberately not exported as a module alias, so udev
-//! never loads this module at boot. `modprobe apple-pmp-v1` binds it to the
-//! pmp node. Once the coprocessor runs it owns DMA buffers and DART mappings
+//! never loads this module at boot. On `modprobe apple-pmp-v1` the module
+//! first calls the built-in apple_pmp_v1_dt_setup() (pmp_v1_dt.c), which keeps
+//! ps_pmp and ps_pms_sram on and adds the PMP, DART and mailbox nodes from a
+//! built-in overlay (the boot loader's device tree has none), then registers
+//! the driver, which binds to the new pmp node. Once the coprocessor runs it owns DMA buffers and DART mappings
 //! that cannot be revoked, so the driver pins its own module and never frees
 //! its state: reboot to stop the PMP.
 //!
@@ -52,7 +55,7 @@ use kernel::{
         IoSysMap,
         Region, //
     },
-    module_platform_driver,
+    driver,
     new_mutex,
     of,
     platform,
@@ -793,6 +796,10 @@ impl platform::Driver for PmpDriver {
                 dev,
                 "PMPv1: ps_pmp or ps_pms_sram is not powered on; refusing to start state=failed\n"
             );
+            dev_err!(
+                dev,
+                "PMPv1: boot with pd_ignore_unused or apple_pmp_v1_hold=1 so genpd does not power off pms_sram\n"
+            );
             return Err(ENODEV);
         }
         if cpu_ctl & ASC_CPU_RUN != 0 {
@@ -826,7 +833,7 @@ impl platform::Driver for PmpDriver {
             if *module_parameters::sram_check.value() != 0 {
                 dev_err!(
                     dev,
-                    "PMPv1: SRAM looks empty, the firmware image is probably gone; refusing to start state=failed\n"
+                    "PMPv1: SRAM looks empty, the firmware image is probably gone (pms_sram powered off since boot?); refusing to start state=failed\n"
                 );
                 return Err(ENODEV);
             }
@@ -905,8 +912,45 @@ impl platform::Driver for PmpDriver {
     }
 }
 
-module_platform_driver! {
-    type: PmpDriver,
+extern "C" {
+    /// Built-in (pmp_v1_dt.c): holds ps_pmp and ps_pms_sram on and adds the
+    /// PMP nodes from the built-in overlay. Idempotent.
+    fn apple_pmp_v1_dt_setup() -> core::ffi::c_int;
+}
+
+fn dt_setup() -> Result {
+    // SAFETY: Plain C call without arguments; the C side serializes itself.
+    let ret = unsafe { apple_pmp_v1_dt_setup() };
+    if ret < 0 {
+        pr_err!("PMPv1: device tree setup failed: {}; see the apple-pmp-v1 lines above\n", ret);
+        return Err(Error::from_errno(ret));
+    }
+    Ok(())
+}
+
+/// The module: device tree setup first, which creates the pmp device, then
+/// the driver registration that binds to it.
+#[pin_data]
+struct PmpModule {
+    _dt: (),
+    #[pin]
+    _driver: driver::Registration<platform::Adapter<PmpDriver>>,
+}
+
+impl kernel::InPlaceModule for PmpModule {
+    fn init(module: &'static kernel::ThisModule) -> impl PinInit<Self, Error> {
+        try_pin_init!(Self {
+            _dt: dt_setup()?,
+            _driver <- driver::Registration::new(
+                <Self as kernel::ModuleMetadata>::NAME,
+                module,
+            ),
+        })
+    }
+}
+
+module! {
+    type: PmpModule,
     name: "apple_pmp_v1",
     description: "Apple PMP v1 (t8103) bring-up, stage 2: start the firmware and report device power",
     license: "Dual MIT/GPL",
