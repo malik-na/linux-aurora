@@ -51,6 +51,12 @@
 #define REG_POLL_INTERVAL_US 10000
 #define REG_POLL_TIMEOUT_US (REG_POLL_INTERVAL_US * 5)
 
+/*
+ * Entries of the chained handler that find nothing to handle, within one
+ * second, after which the parent line is taken to be stuck and is masked.
+ */
+#define SPMI_IRQ_STORM_LIMIT 1000
+
 struct apple_spmi_hw {
 	u32 status;
 	u32 command;
@@ -85,6 +91,12 @@ struct apple_spmi {
 	int irq;
 	bool notify_irq;
 	bool prev_fail;
+	/* The parent interrupt was masked for a storm: no peripheral IRQs */
+	bool dead_irq;
+	unsigned int unhandled;
+	unsigned long unhandled_since;
+	/* Chained-handler entries; /proc/interrupts does not count them */
+	atomic_long_t entries, empty_entries;
 };
 
 static void apple_spmi_irq_ack_raw(struct apple_spmi *spmi, u32 irq)
@@ -149,23 +161,25 @@ static int apple_spmi_wait_rx_not_empty(struct spmi_controller *ctrl)
 	int ret;
 	u32 status;
 
-	if (spmi->notify_irq) {
+	if (READ_ONCE(spmi->notify_irq)) {
 		ret = wait_for_completion_timeout(&spmi->fifo_rx,
 			usecs_to_jiffies(REG_POLL_TIMEOUT_US));
 		if (readl(spmi->regs + spmi->hw->status) & spmi->hw->rx_empty) {
 			ret = ret ? -EIO : -ETIMEDOUT;
 		} else if (!ret) {
 			/*
-			 * The reply is there but its interrupt never came: the
-			 * interrupt the device tree gives is not this
-			 * controller's. Poll from now on, so that a wrong
-			 * interrupt costs one timeout, not every transfer.
-			 * Peripheral interrupts are lost with it.
+			 * The reply is there but NOTIFY never reached this
+			 * driver: either the device tree's interrupt is not
+			 * this controller's line, or NOTIFY is not the bit
+			 * this driver unmasks. Poll from now on, so that costs
+			 * one timeout, not every transfer. No peripheral
+			 * interrupt can be trusted to arrive either, so none
+			 * may be armed for wakeup (apple_spmi_irq_set_wake).
 			 */
 			dev_err(&ctrl->dev,
-				"reply interrupt not delivered, polling from now on\n");
+				"NOTIFY not delivered (wrong AIC line or NOTIFY bit): polling from now on, peripheral interrupts cannot wake\n");
 			apple_spmi_irq_mask_raw(spmi, SPMI_IRQ_NOTIFY);
-			spmi->notify_irq = false;
+			WRITE_ONCE(spmi->notify_irq, false);
 			ret = 0;
 		} else {
 			ret = 0;
@@ -314,18 +328,30 @@ static int apple_spmi_irq_set_type(struct irq_data *d, unsigned int type)
 	return type == IRQ_TYPE_EDGE_RISING ? 0 : -EINVAL;
 }
 
+/*
+ * The controller sits in an always-on block and its parent interrupt is
+ * chained, so it stays live through suspend: a wake-armed peripheral
+ * interrupt needs nothing more from the chip to wake the system. Unless the
+ * parent line was found not to deliver (no NOTIFY, or masked for a storm):
+ * then refuse, so that nothing counts on a wake that cannot come.
+ */
+static int apple_spmi_irq_set_wake(struct irq_data *d, unsigned int on)
+{
+	struct apple_spmi *spmi = irq_data_get_irq_chip_data(d);
+
+	if (on && (!READ_ONCE(spmi->notify_irq) || READ_ONCE(spmi->dead_irq)))
+		return -ENXIO;
+	return 0;
+}
+
 static struct irq_chip apple_spmi_irq_chip = {
 	.name = "apple_spmi",
 	.irq_mask = apple_spmi_irq_mask,
 	.irq_unmask = apple_spmi_irq_unmask,
 	.irq_ack = apple_spmi_irq_ack,
 	.irq_set_type = apple_spmi_irq_set_type,
-	/*
-	 * The controller sits in an always-on block and its parent interrupt is
-	 * chained, so it stays live through suspend: a wake-armed peripheral
-	 * interrupt needs nothing more from the chip to wake the system.
-	 */
-	.flags = IRQCHIP_ONESHOT_SAFE | IRQCHIP_SKIP_SET_WAKE,
+	.irq_set_wake = apple_spmi_irq_set_wake,
+	.flags = IRQCHIP_ONESHOT_SAFE,
 };
 
 static int apple_spmi_irq_domain_map(struct irq_domain *irqd,
@@ -396,6 +422,36 @@ static const struct irq_domain_ops apple_spmi_irq_domain_ops = {
 	.free		= apple_spmi_irq_domain_free,
 };
 
+/*
+ * A chained handler gets no "nobody cared" protection: should the parent line
+ * stay asserted with nothing this driver handles, it would re-enter forever.
+ * Past SPMI_IRQ_STORM_LIMIT empty entries in a second, mask every source in
+ * the controller and the parent line itself, and poll for replies from then
+ * on. The parent is masked with disable_irq_nosync(), which IRQ_DISABLE_UNLAZY
+ * (set at init) makes mask at once, so the EOI does not unmask it again.
+ */
+static void apple_spmi_irq_storm(struct apple_spmi *spmi)
+{
+	unsigned long flags;
+
+	if (time_after(jiffies, spmi->unhandled_since + HZ)) {
+		spmi->unhandled_since = jiffies;
+		spmi->unhandled = 0;
+	}
+	if (++spmi->unhandled < SPMI_IRQ_STORM_LIMIT || spmi->dead_irq)
+		return;
+
+	raw_spin_lock_irqsave(&spmi->irq_mask_lock, flags);
+	for (size_t offset = 0; offset < SPMI_NUM_IRQS / 8; offset += 4)
+		writel(0, spmi->regs + SPMI_IRQ_MASK_BASE + offset);
+	raw_spin_unlock_irqrestore(&spmi->irq_mask_lock, flags);
+	WRITE_ONCE(spmi->notify_irq, false);
+	WRITE_ONCE(spmi->dead_irq, true);
+	disable_irq_nosync(spmi->irq);
+	pr_err("apple-spmi %pOF: interrupt %d stuck (%u empty entries in a second): masked; polling from now on, peripheral interrupts lost\n",
+	       irq_domain_get_of_node(spmi->irqd), spmi->irq, spmi->unhandled);
+}
+
 static void apple_spmi_irq_handler(struct irq_desc *desc)
 {
 	struct apple_spmi *spmi = irq_desc_get_handler_data(desc);
@@ -404,6 +460,7 @@ static void apple_spmi_irq_handler(struct irq_desc *desc)
 	unsigned long val, offset, bit;
 
 	chained_irq_enter(chip, desc);
+	atomic_long_inc(&spmi->entries);
 	val = readl(spmi->regs + SPMI_IRQ_ACK_BASE + (SPMI_IRQ_NOTIFY / 32) * 4);
 	if (val & BIT(SPMI_IRQ_NOTIFY % 32)) {
 		apple_spmi_irq_ack_raw(spmi, SPMI_IRQ_NOTIFY);
@@ -425,10 +482,36 @@ static void apple_spmi_irq_handler(struct irq_desc *desc)
 			handled = true;
 		}
 	}
-	if (!handled)
-		handle_bad_irq(desc);
+	if (handled) {
+		spmi->unhandled = 0;
+	} else {
+		atomic_long_inc(&spmi->empty_entries);
+		apple_spmi_irq_storm(spmi);
+	}
 	chained_irq_exit(chip, desc);
 }
+
+/* For power work: how often the parent line fired, e.g. across a sleep */
+static ssize_t irq_stats_show(struct device *dev, struct device_attribute *attr,
+			      char *buf)
+{
+	struct apple_spmi *spmi = dev_get_drvdata(dev);
+
+	return sysfs_emit(buf, "irq %d entries %ld empty %ld notify_irq %d dead_irq %d\n",
+			  spmi->irq, atomic_long_read(&spmi->entries),
+			  atomic_long_read(&spmi->empty_entries),
+			  READ_ONCE(spmi->notify_irq), READ_ONCE(spmi->dead_irq));
+}
+static DEVICE_ATTR_RO(irq_stats);
+
+static struct attribute *apple_spmi_irq_attrs[] = {
+	&dev_attr_irq_stats.attr,
+	NULL
+};
+
+static const struct attribute_group apple_spmi_irq_group = {
+	.attrs = apple_spmi_irq_attrs,
+};
 
 static void apple_spmi_teardown_irq(void *data)
 {
@@ -439,6 +522,7 @@ static void apple_spmi_teardown_irq(void *data)
 
 	synchronize_irq(spmi->irq);
 	irq_set_chained_handler_and_data(spmi->irq, NULL, NULL);
+	irq_clear_status_flags(spmi->irq, IRQ_DISABLE_UNLAZY);
 }
 
 static int apple_spmi_init_irq(struct platform_device *pdev,
@@ -467,9 +551,16 @@ static int apple_spmi_init_irq(struct platform_device *pdev,
 	if (ret)
 		return ret;
 
+	spmi->unhandled_since = jiffies;
+	/* So that the storm guard's disable_irq_nosync() masks at once */
+	irq_set_status_flags(spmi->irq, IRQ_DISABLE_UNLAZY);
 	irq_set_chained_handler_and_data(spmi->irq, apple_spmi_irq_handler, spmi);
 	apple_spmi_irq_unmask_raw(spmi, SPMI_IRQ_NOTIFY);
 	spmi->notify_irq = true;
+
+	/* Diagnostics only: a failure here costs nothing else */
+	if (devm_device_add_group(&pdev->dev, &apple_spmi_irq_group))
+		dev_warn(&pdev->dev, "no irq_stats attribute\n");
 
 	return 0;
 }
