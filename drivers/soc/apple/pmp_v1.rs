@@ -1,13 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-only OR MIT
 #![recursion_limit = "2048"]
 
-//! Apple PMP v1 (M1, t8103) bring-up driver, stage 1.
+//! Apple PMP v1 (M1, t8103) bring-up driver, stage 2.
 //!
 //! iBoot loads the t8103pmp RTKit firmware into PMS SRAM but leaves the
 //! coprocessor halted. This driver starts it and runs the PMP endpoint
-//! handshake (Startup -> Configure -> Init1 -> Init2). It sends no device
-//! power reports. It is a lab experiment derived from dd-dreams' pmp-v1 work
-//! (AsahiLinux/linux PR #576) and the m1n1 PMP v1 proxy client.
+//! handshake (Startup -> Configure -> Init1 -> Init2). It is a lab experiment
+//! derived from dd-dreams' pmp-v1 work (AsahiLinux/linux PR #576) and the m1n1
+//! PMP v1 proxy client.
+//!
+//! Stage 2 then reports device power to the PMP: for each PMGR device the ADT
+//! flags notify_pmp it sends DevPwr (0x20e, dev << 16 | 1 on / 0 off), first
+//! the current state of all of them, then each change. The states are read
+//! from the PMGR power-state registers (the target Linux requested, bits 3:0)
+//! by a slow deferrable poll, so no device and no genpd domain gains a
+//! consumer, a notifier or a dependency on this module.
+//! /sys/kernel/debug/apple_pmp_v1/reports turns the reports on (1) or off (0)
+//! at run time; off keeps whatever the PMP was last told.
 //!
 //! The OF match table is deliberately not exported as a module alias, so udev
 //! never loads this module at boot. `modprobe apple-pmp-v1` binds it to the
@@ -20,10 +29,17 @@
 //!
 //! Copyright (C) The Asahi Linux Contributors
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::{
+    ffi::c_void,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use kernel::{
     bindings,
+    debugfs::{
+        Dir,
+        File, //
+    },
     device::{
         self,
         Core, //
@@ -47,12 +63,23 @@ use kernel::{
     },
     sync::{
         aref::ARef,
+        atomic::{
+            Atomic,
+            Relaxed, //
+        },
         Arc,
         Completion,
         Mutex, //
     },
     time::msecs_to_jiffies,
-    types::ForeignOwnable, //
+    types::ForeignOwnable,
+    workqueue::{
+        self,
+        impl_has_delayed_work,
+        new_delayed_work,
+        DelayedWork,
+        WorkItem, //
+    }, //
 };
 
 const ASC_MMIO_SIZE: usize = 0x4000;
@@ -64,10 +91,12 @@ const SRAM_SIZE: usize = 0x80000;
 /// Words of SRAM sampled to tell a loaded image from a wiped one.
 const SRAM_SAMPLE_WORDS: usize = 0x400;
 
-/// PMGR power-state registers of ps_pmp (+0x0) and ps_pms_sram (+0x8).
-const PMGR_PS_SIZE: usize = 0x10;
-const PMGR_PS_PMP: usize = 0x0;
-const PMGR_PS_PMS_SRAM: usize = 0x8;
+/// The PMGR power-state registers (pmgr@23b700000, first page). Bits 3:0 are
+/// the target state Linux requested, bits 7:4 the actual state.
+const PMGR_SIZE: usize = 0x1000;
+const PMGR_PS_PMP: usize = 0x3d8;
+const PMGR_PS_PMS_SRAM: usize = 0x3e0;
+const PS_STATE_ON: u32 = 0xf;
 
 const PMP_ENDPOINT: u8 = 0x20;
 
@@ -84,6 +113,7 @@ const OPC_INIT1: u64 = 0x200;
 const OPC_INIT1_ACK: u64 = 0x201;
 const OPC_INIT2: u64 = 0x202;
 const OPC_INIT2_ACK: u64 = 0x203;
+const OPC_DEVPWR: u64 = 0x20e;
 
 /// Shared memory handed to the firmware in Configure.
 const SHMEM_SIZE: usize = 0x10000;
@@ -100,8 +130,54 @@ const ARM_IO_BASE: u64 = 0x2_0000_0000;
 const DART_PAGE: u64 = 0x4000;
 
 const HANDSHAKE_TIMEOUT_MS: u32 = 3000;
-/// Messages logged at info level; later ones go to dev_dbg.
+/// Messages logged at info level before rate limiting starts: after that,
+/// only every power-of-two-th one is logged at info, the rest at debug.
 const RX_LOG_LIMIT: u32 = 64;
+const TX_LOG_LIMIT: u32 = 256;
+
+fn log_this(n: u32, limit: u32) -> bool {
+    n <= limit || n.is_power_of_two()
+}
+
+/// A device the PMP wants power reports for: ADT pmgr "devices" entries with
+/// the notify_pmp flag on MacBookAir10,1. `id` is the entry's device id (the
+/// DevPwr DEV field), `ps` the PMGR register offset of its power state (the
+/// same as the DT's ps_* node; ADT ps-regs bank:index in the comment).
+/// Virtual (-V) devices have no register and follow their parent.
+struct Report {
+    id: u16,
+    name: &'static str,
+    ps: usize,
+    parent: u16,
+}
+
+const REPORTS: [Report; 13] = [
+    Report { id: 84, name: "DISP0_FE", ps: 0x360, parent: 0 },     // 5:12 ps_disp0_fe
+    Report { id: 85, name: "DISPEXT_FE", ps: 0x368, parent: 0 },   // 5:13 ps_dispext_fe
+    Report { id: 92, name: "JPG", ps: 0x3c0, parent: 0 },          // 5:24 ps_jpg
+    Report { id: 93, name: "MSR", ps: 0x3c8, parent: 0 },          // 5:25 ps_msr
+    Report { id: 99, name: "GFX", ps: 0x3f8, parent: 0 },          // 5:31 ps_gfx
+    Report { id: 100, name: "ISP_SYS", ps: 0x400, parent: 0 },     // 12:0 ps_isp_sys
+    Report { id: 101, name: "VENC_SYS", ps: 0x408, parent: 0 },    // 12:1 ps_venc_sys
+    Report { id: 102, name: "AVD_SYS", ps: 0x410, parent: 0 },     // 12:2 ps_avd_sys
+    Report { id: 104, name: "ANE_SYS", ps: 0x470, parent: 0 },     // 12:14 ps_ane_sys
+    Report { id: 222, name: "ATC0_PCIE", ps: 0x428, parent: 0 },   // 12:5 ps_atc0_pcie
+    Report { id: 227, name: "ATC1_PCIE", ps: 0x450, parent: 0 },   // 12:10 ps_atc1_pcie
+    Report { id: 347, name: "ATC0_PCIE-V", ps: 0, parent: 222 },   // no_ps
+    Report { id: 348, name: "ATC1_PCIE-V", ps: 0, parent: 227 },   // no_ps
+];
+const N_REPORTS: usize = REPORTS.len();
+const STATE_UNKNOWN: u8 = 0xff;
+
+const POLL_MS_MIN: u32 = 50;
+const POLL_MS_MAX: u32 = 60000;
+
+struct ReportState {
+    /// What the PMP was last told per REPORTS entry (0, 1 or STATE_UNKNOWN).
+    last: [u8; N_REPORTS],
+    /// Whether the previous poll had reports enabled.
+    enabled: bool,
+}
 
 const DRAM_CONFIG_PROP: &CStr = c"apple,energy-model-dram-configs";
 
@@ -211,6 +287,7 @@ fn opcode_name(opc: u64) -> &'static str {
         OPC_INIT1_ACK => "Init1Ack",
         OPC_INIT2_ACK => "Init2Ack",
         0x205 => "Unk205",
+        OPC_DEVPWR => "DevPwr",
         0x208 => "DevPwrSync",
         0x209 => "DevPwrAck",
         0x20b => "ChangeState2Ack",
@@ -227,8 +304,33 @@ struct PmpData {
     shmem: Coherent<[u8]>,
     state: AtomicU32,
     rx_count: AtomicU32,
+    tx_devpwr: AtomicU32,
     #[pin]
     done: Completion,
+    /// The PMGR power-state page, mapped for the life of the system.
+    pmgr: *mut u8,
+    #[pin]
+    report: Mutex<ReportState>,
+    #[pin]
+    reports: File<Atomic<usize>>,
+    _debugfs: Dir,
+    #[pin]
+    poll: DelayedWork<PmpData>,
+}
+
+impl_has_delayed_work! {
+    impl HasDelayedWork<Self> for PmpData { self.poll }
+}
+
+impl WorkItem for PmpData {
+    type Pointer = Arc<PmpData>;
+
+    fn run(this: Arc<PmpData>) {
+        if this.poll_reports() {
+            let ms = (*module_parameters::poll_ms.value()).clamp(POLL_MS_MIN, POLL_MS_MAX);
+            let _ = workqueue::system_power_efficient().enqueue_delayed(this, msecs_to_jiffies(ms));
+        }
+    }
 }
 
 // SAFETY: The shared memory is only written before the firmware starts, and
@@ -254,13 +356,16 @@ impl Drop for MapGuard {
 }
 
 impl PmpData {
-    fn new(dev: ARef<device::Device>) -> Result<Arc<PmpData>> {
+    fn new(dev: ARef<device::Device>, pmgr: *mut u8) -> Result<Arc<PmpData>> {
         // SAFETY: Called from probe, so the device is bound.
         let bound = unsafe { dev.as_bound() };
         let shmem = Coherent::<u8>::zeroed_slice(bound, SHMEM_SIZE, GFP_KERNEL)?;
 
         Self::fill_dram_config(&dev, &shmem)?;
         Self::map_windows(&dev, &shmem)?;
+
+        let reports_init = usize::from(*module_parameters::reports.value() != 0);
+        let debugfs = Dir::new(c"apple_pmp_v1");
 
         Arc::pin_init(
             try_pin_init!(PmpData {
@@ -269,7 +374,16 @@ impl PmpData {
                 shmem,
                 state: AtomicU32::new(ST_IDLE),
                 rx_count: AtomicU32::new(0),
+                tx_devpwr: AtomicU32::new(0),
                 done <- Completion::new(),
+                pmgr,
+                report <- new_mutex!(ReportState {
+                    last: [STATE_UNKNOWN; N_REPORTS],
+                    enabled: false,
+                }),
+                reports <- debugfs.read_write_file(c"reports", Atomic::<usize>::new(reports_init)),
+                _debugfs: debugfs,
+                poll <- new_delayed_work!("apple_pmp_v1_poll"),
             }),
             GFP_KERNEL,
         )
@@ -447,11 +561,109 @@ impl PmpData {
         }
     }
 
+    fn pmgr_read(&self, offset: usize) -> u32 {
+        // SAFETY: `pmgr` maps PMGR_SIZE bytes for the life of the system and
+        // every offset in REPORTS is below PMGR_SIZE - 4.
+        unsafe { bindings::readl(self.pmgr.add(offset) as *const c_void) }
+    }
+
+    fn send_devpwr(&self, r: &Report, on: u8, raw: u32) -> Result {
+        let msg = (OPC_DEVPWR << OPC_SHIFT) | (u64::from(r.id) << 16) | u64::from(on);
+        let n = self.tx_devpwr.fetch_add(1, Ordering::SeqCst) + 1;
+        {
+            let mut guard = self.rtkit.lock();
+            let rtk = guard.as_mut().as_pin_mut().ok_or(ENODEV)?;
+            rtk.send_message(PMP_ENDPOINT, msg)?;
+        }
+        if log_this(n, TX_LOG_LIMIT) {
+            dev_info!(
+                self.dev,
+                "PMPv1: DevPwr #{} dev={} ({}) state={} ps={:#010x} msg={:#018x}\n",
+                n,
+                r.id,
+                r.name,
+                on,
+                raw,
+                msg
+            );
+        } else {
+            dev_dbg!(self.dev, "PMPv1: DevPwr #{} dev={} state={}\n", n, r.id, on);
+        }
+        Ok(())
+    }
+
+    /// One poll: report every device whose state differs from what the PMP
+    /// was last told (all of them on the first poll with reports enabled).
+    /// Returns false once the PMP is no longer running, to stop polling.
+    fn poll_reports(&self) -> bool {
+        if self.state() != ST_READY {
+            dev_warn!(
+                self.dev,
+                "PMPv1: reports stopped state={}\n",
+                state_name(self.state())
+            );
+            return false;
+        }
+        let enabled = self.reports.load(Relaxed) != 0;
+        let mut st = self.report.lock();
+        if !enabled {
+            if st.enabled {
+                dev_info!(self.dev, "PMPv1: reports off; the PMP keeps the last reported states\n");
+                st.enabled = false;
+                st.last = [STATE_UNKNOWN; N_REPORTS];
+            }
+            return true;
+        }
+        let first = !st.enabled;
+        st.enabled = true;
+
+        let mut raw = [0u32; N_REPORTS];
+        let mut cur = [0u8; N_REPORTS];
+        for (i, r) in REPORTS.iter().enumerate() {
+            if r.ps != 0 {
+                raw[i] = self.pmgr_read(r.ps);
+                cur[i] = u8::from(raw[i] & 0xf == PS_STATE_ON);
+            } else if let Some(j) = REPORTS[..i].iter().position(|p| p.id == r.parent) {
+                raw[i] = raw[j];
+                cur[i] = cur[j];
+            }
+        }
+
+        let mut sent = 0;
+        let mut on = 0;
+        for (i, r) in REPORTS.iter().enumerate() {
+            on += usize::from(cur[i]);
+            if st.last[i] == cur[i] {
+                continue;
+            }
+            match self.send_devpwr(r, cur[i], raw[i]) {
+                Ok(()) => {
+                    st.last[i] = cur[i];
+                    sent += 1;
+                }
+                Err(e) => {
+                    dev_err!(self.dev, "PMPv1: DevPwr dev={} failed: {:?}\n", r.id, e);
+                    st.last[i] = STATE_UNKNOWN;
+                }
+            }
+        }
+        if first {
+            dev_info!(
+                self.dev,
+                "PMPv1: reports on: snapshot of {} devices sent ({} on, {} off)\n",
+                sent,
+                on,
+                N_REPORTS - on
+            );
+        }
+        true
+    }
+
     fn recv_message(&self, msg: u64) -> Result {
         let opc = (msg >> OPC_SHIFT) & OPC_MASK;
         let payload = msg & PAYLOAD_MASK;
         let n = self.rx_count.fetch_add(1, Ordering::SeqCst) + 1;
-        if n <= RX_LOG_LIMIT {
+        if log_this(n, RX_LOG_LIMIT) {
             dev_info!(
                 self.dev,
                 "PMPv1: rx #{} {:#018x} opc {:#x} ({}) payload {:#x} state={}\n",
@@ -560,8 +772,8 @@ impl platform::Driver for PmpDriver {
         let asc_req = pdev.io_request_by_name(c"asc").ok_or(EINVAL)?;
         let asc_mmio = asc_req.iomap_sized::<ASC_MMIO_SIZE>()?;
         let asc_mmio = asc_mmio.as_view().relaxed();
-        let ps_req = pdev.io_request_by_name(c"pmgr-ps").ok_or(EINVAL)?;
-        let ps_mmio = ps_req.iomap_sized::<PMGR_PS_SIZE>()?;
+        let ps_req = pdev.io_request_by_name(c"pmgr").ok_or(EINVAL)?;
+        let ps_mmio = ps_req.iomap_sized::<PMGR_SIZE>()?;
         let ps_mmio = ps_mmio.as_view().relaxed();
 
         // Reading a power-gated SRAM faults the bus, so check its power
@@ -621,7 +833,16 @@ impl platform::Driver for PmpDriver {
             dev_warn!(dev, "PMPv1: SRAM looks empty, starting anyway (sram_check=0)\n");
         }
 
-        let data = PmpData::new(dev.clone())?;
+        // A second mapping of the PMGR page for the report poller; never
+        // unmapped because the PMP state it serves is never freed.
+        let pmgr_start = pdev.resource_by_name(c"pmgr").ok_or(EINVAL)?.start();
+        // SAFETY: Mapping device registers; only read.
+        let pmgr = unsafe { bindings::ioremap(pmgr_start, PMGR_SIZE) } as *mut u8;
+        if pmgr.is_null() {
+            return Err(ENOMEM);
+        }
+
+        let data = PmpData::new(dev.clone(), pmgr)?;
         let rtkit = rtkit::RtKit::<PmpData>::new(&dev, None, 0, data.clone())?;
         data.rtkit.lock().as_mut().set(Some(rtkit));
 
@@ -663,6 +884,23 @@ impl platform::Driver for PmpDriver {
             dev_info!(dev, "PMPv1: probe done state={}\n", state_name(data.state()));
         }
 
+        if data.state() == ST_READY {
+            // SAFETY: The poll work is initialised and not yet queued, so its
+            // timer is idle. A deferrable timer does not wake an idle CPU.
+            unsafe {
+                let dw: *mut bindings::delayed_work =
+                    DelayedWork::<PmpData>::raw_as_work(&data.poll).cast();
+                (*dw).timer.flags |= bindings::TIMER_DEFERRABLE;
+            }
+            dev_info!(
+                dev,
+                "PMPv1: report poller started (reports={}, poll_ms={})\n",
+                data.reports.load(Relaxed),
+                (*module_parameters::poll_ms.value()).clamp(POLL_MS_MIN, POLL_MS_MAX)
+            );
+            let _ = workqueue::system_power_efficient().enqueue(data.clone());
+        }
+
         Ok(PmpDriver(data))
     }
 }
@@ -670,7 +908,7 @@ impl platform::Driver for PmpDriver {
 module_platform_driver! {
     type: PmpDriver,
     name: "apple_pmp_v1",
-    description: "Apple PMP v1 (t8103) bring-up, stage 1: start the firmware only",
+    description: "Apple PMP v1 (t8103) bring-up, stage 2: start the firmware and report device power",
     license: "Dual MIT/GPL",
     params: {
         dram_config: u8 {
@@ -680,6 +918,14 @@ module_platform_driver! {
         sram_check: u8 {
             default: 1,
             description: "Refuse to start the PMP if the start of PMS SRAM looks empty (1) or start anyway (0)",
+        },
+        reports: u8 {
+            default: 1,
+            description: "Send device power reports after the handshake (1) or not (0); changeable later in debugfs apple_pmp_v1/reports",
+        },
+        poll_ms: u32 {
+            default: 1000,
+            description: "Period of the PMGR power-state poll behind the reports, in ms (50-60000; deferrable timer)",
         },
     },
 }

@@ -193,15 +193,15 @@ config APPLE_PMP
 	  Say 'y' here if you have an Apple SoC.
 
 config APPLE_PMP_V1
-	tristate "Apple PMP v1 (M1) bring-up, stage 1"
+	tristate "Apple PMP v1 (M1) bring-up"
 	depends on ARCH_APPLE || COMPILE_TEST
 	depends on RUST
 	select RUST_APPLE_RTKIT
 	default m if ARCH_APPLE
 	help
 	  Lab experiment: start the power management coprocessor (PMP)
-	  firmware that iBoot preloads on Apple M1 (t8103) and run its
-	  startup handshake. It sends no device power reports.
+	  firmware that iBoot preloads on Apple M1 (t8103), run its
+	  startup handshake and report device power states to it.
 
 	  The module is not loaded automatically: load it with
 	  "modprobe apple-pmp-v1". It cannot be unloaded once the PMP
