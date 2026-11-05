@@ -420,6 +420,7 @@ struct brcmf_pciedev_info {
 	bool irq_ready;
 	bool have_msi;
 	bool wowl_enabled;
+	bool d3_ack_missed;
 	u8 dma_idx_sz;
 	void *idxbuf;
 	u32 idxbuf_sz;
@@ -3067,6 +3068,7 @@ static int brcmf_pcie_pm_enter_D3(struct device *dev)
 {
 	struct brcmf_pciedev_info *devinfo;
 	struct brcmf_bus *bus;
+	int err;
 
 	brcmf_dbg(PCIE, "Enter\n");
 
@@ -3077,14 +3079,28 @@ static int brcmf_pcie_pm_enter_D3(struct device *dev)
 	brcmf_bus_change_state(bus, BRCMF_BUS_DOWN);
 
 	devinfo->mbdata_completed = false;
-	brcmf_pcie_send_mb_data(devinfo, BRCMF_H2D_HOST_D3_INFORM);
+	err = brcmf_pcie_send_mb_data(devinfo, BRCMF_H2D_HOST_D3_INFORM);
+	if (err)
+		brcmf_err(bus, "Failed to send D3_INFORM: %d\n", err);
 
 	wait_event_timeout(devinfo->mbdata_resp_wait, devinfo->mbdata_completed,
 			   BRCMF_PCIE_MBDATA_TIMEOUT);
 	if (!devinfo->mbdata_completed) {
-		brcmf_err(bus, "Timeout on response for entering D3 substate\n");
-		brcmf_bus_change_state(bus, BRCMF_BUS_UP);
-		return -EIO;
+		if (devinfo->wowl_enabled) {
+			brcmf_err(bus, "Timeout on response for entering D3 substate\n");
+			brcmf_bus_change_state(bus, BRCMF_BUS_UP);
+			return -EIO;
+		}
+
+		/*
+		 * Without WoWL nothing needs the dongle's state across the
+		 * suspend, so a missing ACK must not abort the system suspend.
+		 * The firmware is unresponsive, though, and in s2idle the chip
+		 * stays powered, so leave_D3 would find it "still up" and keep
+		 * using it: make it reload the firmware instead.
+		 */
+		brcmf_err(bus, "No D3 ACK; the firmware will be reloaded on resume\n");
+		devinfo->d3_ack_missed = true;
 	}
 
 	devinfo->state = BRCMFMAC_PCIE_STATE_DOWN;
@@ -3107,7 +3123,8 @@ static int brcmf_pcie_pm_leave_D3(struct device *dev)
 	brcmf_dbg(PCIE, "Enter, dev=%p, bus=%p\n", dev, bus);
 
 	/* Check if device is still up and running, if so we are ready */
-	if (brcmf_pcie_read_pcie32(devinfo, devinfo->reginfo->intmask) != 0) {
+	if (!devinfo->d3_ack_missed &&
+	    brcmf_pcie_read_pcie32(devinfo, devinfo->reginfo->intmask) != 0) {
 		brcmf_dbg(PCIE, "Try to wakeup device....\n");
 		/* Set the device up, so we can write the MB data message in ring mode */
 		devinfo->state = BRCMFMAC_PCIE_STATE_UP;
