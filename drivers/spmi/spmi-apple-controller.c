@@ -152,12 +152,24 @@ static int apple_spmi_wait_rx_not_empty(struct spmi_controller *ctrl)
 	if (spmi->notify_irq) {
 		ret = wait_for_completion_timeout(&spmi->fifo_rx,
 			usecs_to_jiffies(REG_POLL_TIMEOUT_US));
-		if (!ret)
-			ret = -ETIMEDOUT;
-		else if (readl(spmi->regs + spmi->hw->status) & spmi->hw->rx_empty)
-			ret = -EIO;
-		else
+		if (readl(spmi->regs + spmi->hw->status) & spmi->hw->rx_empty) {
+			ret = ret ? -EIO : -ETIMEDOUT;
+		} else if (!ret) {
+			/*
+			 * The reply is there but its interrupt never came: the
+			 * interrupt the device tree gives is not this
+			 * controller's. Poll from now on, so that a wrong
+			 * interrupt costs one timeout, not every transfer.
+			 * Peripheral interrupts are lost with it.
+			 */
+			dev_err(&ctrl->dev,
+				"reply interrupt not delivered, polling from now on\n");
+			apple_spmi_irq_mask_raw(spmi, SPMI_IRQ_NOTIFY);
+			spmi->notify_irq = false;
 			ret = 0;
+		} else {
+			ret = 0;
+		}
 	} else {
 		ret = readl_poll_timeout(spmi->regs + spmi->hw->status, status,
 					 !(status & spmi->hw->rx_empty), 10,
