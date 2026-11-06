@@ -93,6 +93,13 @@ struct apple_spmi {
 	bool prev_fail;
 	/* The parent interrupt was masked for a storm: no peripheral IRQs */
 	bool dead_irq;
+	/*
+	 * The parent line has delivered at least one interrupt this driver
+	 * handled (NOTIFY or a peripheral). Separate from notify_irq: on t8103
+	 * the NOTIFY reply bit never arrives, yet peripheral interrupts such as
+	 * the PMU RTC alarm do come in on the same line.
+	 */
+	bool line_live;
 	unsigned int unhandled;
 	unsigned long unhandled_since;
 	/* Chained-handler entries; /proc/interrupts does not count them */
@@ -169,15 +176,15 @@ static int apple_spmi_wait_rx_not_empty(struct spmi_controller *ctrl)
 		} else if (!ret) {
 			/*
 			 * The reply is there but NOTIFY never reached this
-			 * driver: either the device tree's interrupt is not
-			 * this controller's line, or NOTIFY is not the bit
-			 * this driver unmasks. Poll from now on, so that costs
-			 * one timeout, not every transfer. No peripheral
-			 * interrupt can be trusted to arrive either, so none
-			 * may be armed for wakeup (apple_spmi_irq_set_wake).
+			 * driver: NOTIFY is not the bit this driver unmasks
+			 * (as on t8103), or the device tree's interrupt is not
+			 * this controller's line. Poll for replies from now on,
+			 * so that costs one timeout, not every transfer.
+			 * Peripheral interrupts may still arrive on the line:
+			 * apple_spmi_irq_set_wake() allows wakeup once one has.
 			 */
-			dev_err(&ctrl->dev,
-				"NOTIFY not delivered (wrong AIC line or NOTIFY bit): polling from now on, peripheral interrupts cannot wake\n");
+			dev_warn(&ctrl->dev,
+				"NOTIFY not delivered: polling for replies; peripheral wakeup allowed once the line delivers an interrupt\n");
 			apple_spmi_irq_mask_raw(spmi, SPMI_IRQ_NOTIFY);
 			WRITE_ONCE(spmi->notify_irq, false);
 			ret = 0;
@@ -331,15 +338,20 @@ static int apple_spmi_irq_set_type(struct irq_data *d, unsigned int type)
 /*
  * The controller sits in an always-on block and its parent interrupt is
  * chained, so it stays live through suspend: a wake-armed peripheral
- * interrupt needs nothing more from the chip to wake the system. Unless the
- * parent line was found not to deliver (no NOTIFY, or masked for a storm):
- * then refuse, so that nothing counts on a wake that cannot come.
+ * interrupt needs nothing more from the chip to wake the system. Refuse
+ * when the parent line was masked for a storm, or when nothing shows it
+ * delivers at all (no NOTIFY and no interrupt handled yet), so that nothing
+ * counts on a wake that cannot come.
  */
 static int apple_spmi_irq_set_wake(struct irq_data *d, unsigned int on)
 {
 	struct apple_spmi *spmi = irq_data_get_irq_chip_data(d);
 
-	if (on && (!READ_ONCE(spmi->notify_irq) || READ_ONCE(spmi->dead_irq)))
+	if (!on)
+		return 0;
+	if (READ_ONCE(spmi->dead_irq))
+		return -ENXIO;
+	if (!READ_ONCE(spmi->notify_irq) && !READ_ONCE(spmi->line_live))
 		return -ENXIO;
 	return 0;
 }
@@ -484,6 +496,7 @@ static void apple_spmi_irq_handler(struct irq_desc *desc)
 	}
 	if (handled) {
 		spmi->unhandled = 0;
+		WRITE_ONCE(spmi->line_live, true);
 	} else {
 		atomic_long_inc(&spmi->empty_entries);
 		apple_spmi_irq_storm(spmi);
@@ -497,10 +510,11 @@ static ssize_t irq_stats_show(struct device *dev, struct device_attribute *attr,
 {
 	struct apple_spmi *spmi = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "irq %d entries %ld empty %ld notify_irq %d dead_irq %d\n",
+	return sysfs_emit(buf, "irq %d entries %ld empty %ld notify_irq %d dead_irq %d line_live %d\n",
 			  spmi->irq, atomic_long_read(&spmi->entries),
 			  atomic_long_read(&spmi->empty_entries),
-			  READ_ONCE(spmi->notify_irq), READ_ONCE(spmi->dead_irq));
+			  READ_ONCE(spmi->notify_irq), READ_ONCE(spmi->dead_irq),
+			  READ_ONCE(spmi->line_live));
 }
 static DEVICE_ATTR_RO(irq_stats);
 
