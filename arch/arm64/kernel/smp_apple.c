@@ -192,6 +192,7 @@ enum apple_cpu_state {
 	APPLE_CPU_RUNNING,
 	APPLE_CPU_OFF,		/* PMGR stop requested, core powering down */
 	APPLE_CPU_STARTING,	/* PMGR start sent, not yet in the kernel */
+	APPLE_CPU_S2R,		/* suspend-to-RAM deep stop: down until the SoC wakes */
 };
 
 static const char *const apple_cpu_state_name[] = {
@@ -199,6 +200,7 @@ static const char *const apple_cpu_state_name[] = {
 	[APPLE_CPU_RUNNING]	= "running",
 	[APPLE_CPU_OFF]		= "off",
 	[APPLE_CPU_STARTING]	= "starting",
+	[APPLE_CPU_S2R]		= "s2r",
 };
 
 struct apple_cpu_regs {
@@ -252,6 +254,8 @@ extern volatile unsigned long secondary_holding_pen_release;
 void apple_cpu_mmu_off_jump(unsigned long entry, unsigned long arg0,
 			    unsigned long arg1, unsigned long arg2);
 void apple_cpu_park_mmuoff(unsigned long pen_pa, unsigned long flushed_pa);
+void apple_cpu_s2r_mmuoff(unsigned long stop_pa, unsigned long flushed_pa,
+			  unsigned long stop_bit);
 void apple_cpu_off_mmuoff(unsigned long stop_pa, unsigned long flushed_pa,
 			  unsigned long stop_bit);
 
@@ -272,6 +276,25 @@ static bool apple_pmgr_unmapped;
  * powered down or restarted again.
  */
 static bool apple_restarts_blocked;
+
+/*
+ * Set by the t8103 suspend-to-RAM driver (drivers/soc/apple/apple-s2r.c)
+ * around a real "mem" suspend: cpu_disable() then picks the S2R deep stop
+ * for every secondary, regardless of the powerdown rules above, because the
+ * whole SoC is about to power off. A core stopped this way is marked stuck:
+ * nothing restarts it before the SoC itself has been through a wake.
+ */
+static bool apple_cpu_s2r_stop;
+
+bool apple_cpu_hotplug_active(void)
+{
+	return apple_hp_active;
+}
+
+void apple_cpu_hotplug_set_s2r(bool on)
+{
+	WRITE_ONCE(apple_cpu_s2r_stop, on);
+}
 
 static int __init apple_cpu_hotplug_setup(char *arg)
 {
@@ -742,6 +765,12 @@ static int apple_cpu_disable(unsigned int cpu)
 	/* Before the restarts_blocked check below. */
 	apple_cpu_reap_failed_boots();
 
+	if (READ_ONCE(apple_cpu_s2r_stop) && !ac->stuck) {
+		ac->park_reason = NULL;
+		ac->down_mode = APPLE_CPU_S2R;
+		return 0;
+	}
+
 	ac->down_mode = APPLE_CPU_PARKED;
 	if (apple_hp_mode != APPLE_HP_POWERDOWN) {
 		ac->park_reason = "mode";
@@ -790,6 +819,7 @@ static void apple_cpu_die(unsigned int cpu)
 	typeof(apple_cpu_mmu_off_jump) *jump;
 	struct apple_cpu *ac = &apple_cpus[cpu];
 	bool off = ac->down_mode == APPLE_CPU_OFF;
+	bool s2r = ac->down_mode == APPLE_CPU_S2R;
 	unsigned long flushed_pa = __pa_symbol(&apple_cpu_flushed[cpu].done);
 
 	/*
@@ -804,18 +834,22 @@ static void apple_cpu_die(unsigned int cpu)
 	/* Cleared and cleaned before cpu_kill() can look at it. */
 	apple_flushed_clear(cpu);
 
-	if (off)
+	if (off || s2r)
 		ac->powerdowns++;
 	else
 		ac->parks++;
 	/* cpu_disable() chooses again; a crash-stop cpu_die() without it parks. */
 	ac->down_mode = APPLE_CPU_PARKED;
-	smp_store_release(&ac->state, off ? APPLE_CPU_OFF : APPLE_CPU_PARKED);
+	smp_store_release(&ac->state, s2r ? APPLE_CPU_S2R : off ? APPLE_CPU_OFF : APPLE_CPU_PARKED);
 	dsb(sy);
 
 	jump = (void *)__pa_symbol(apple_cpu_mmu_off_jump);
 	cpu_install_idmap();
-	if (off)
+	if (s2r)
+		jump(__pa_symbol(apple_cpu_s2r_mmuoff),
+		     T8103_CPU_START + CPU_START_STOP, flushed_pa,
+		     apple_cpu_bit(cpu));
+	else if (off)
 		jump(__pa_symbol(apple_cpu_off_mmuoff),
 		     T8103_CPU_START + CPU_START_STOP, flushed_pa,
 		     apple_cpu_bit(cpu));
@@ -861,6 +895,17 @@ static int apple_cpu_kill(unsigned int cpu)
 			break;
 		}
 		usleep_range(50, 100);
+	}
+
+	/*
+	 * S2R deep stop: the cluster may power down with its last core, and then
+	 * its registers fault, so do not poll the power status. Nothing may
+	 * restart this core until the SoC has woken: mark it stuck.
+	 */
+	if (state == APPLE_CPU_S2R) {
+		ac->stuck = true;
+		ac->stuck_reason = "suspend-to-RAM deep stop";
+		return 0;
 	}
 
 	if (state != APPLE_CPU_OFF)

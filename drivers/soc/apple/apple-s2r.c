@@ -1,0 +1,391 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Suspend-to-RAM ("mem", "deep") for the Apple M1 (t8103), first stage.
+ *
+ * Opt-in only: with apple_s2r=1 on the kernel command line (together with
+ * apple_cpu_hotplug=park, which provides CPU offline) this registers
+ * platform_suspend_ops for PM_SUSPEND_MEM. Without it nothing changes and
+ * the system keeps s2idle.
+ *
+ * The entry follows macOS 27's own sleep on this SoC, as traced under the
+ * m1n1 hypervisor (2026-11-06/07): the PM core suspends the devices and
+ * takes the secondaries offline, which the CPU hotplug code turns into the
+ * S2R deep stop (stop bit, ACC_OVRD deep sleep, CYC_OVRD WFI mode 3); then,
+ * on the boot CPU with interrupts off, this driver
+ *
+ *   1. masks every AP wake source except the PMU's (source 54), so the RTC
+ *      alarm is the only way out (lid, keyboard, USB come later),
+ *   2. disables the AON watchdogs (WD0/WD1 control, the 0x23d2b8000 page),
+ *   3. writes PMU boot_stage 0x50,
+ *   4. parks the five clkgen muxes (P1-P5: set bit 31, clear [27:24], wait
+ *      for bit 30),
+ *   5. clears the counter blocks (P6/P7), the CPM gating words (P8), the
+ *      cluster power states (P9/P10) and the SIO AUTO_ENABLE bits (P11-P13),
+ *   6. starts the S2R timer (P15: 0x23d2c4000 = 1),
+ *   7. masks every AIC interrupt,
+ *   8. programs the PMU RTC alarm (0xd00c echo, 0xd008, 0xd00e = 0,
+ *      0xd000 = 0x41) through raw, polled SPMI commands,
+ *   9. starts the S2R timer twice more, as macOS does,
+ *  10. puts itself into the same deep WFI.
+ *
+ * Nothing prints after step 6. Each step leaves a letter in PMU scratch
+ * 0x9f0a (the byte m1n1's S2R work uses for stage markers), so the next
+ * boot can tell how far the entry got.
+ *
+ * This first stage has no resume: the wake comes back through the locked
+ * RVBAR into m1n1, which boots again from scratch. Resume (the m1n1 wake
+ * note at 0x9f04 pointing at cpu_resume) is the next stage; the finisher
+ * already runs under cpu_suspend() so that only the hand-back is missing.
+ *
+ * Every address here is t8103 data from those traces; nothing is taken
+ * from the device tree, which maps none of these windows.
+ */
+
+#define pr_fmt(fmt) "apple-s2r: " fmt
+
+#include <linux/bitfield.h>
+#include <linux/bits.h>
+#include <linux/delay.h>
+#include <linux/init.h>
+#include <linux/io.h>
+#include <linux/iopoll.h>
+#include <linux/kernel.h>
+#include <linux/moduleparam.h>
+#include <linux/of.h>
+#include <linux/suspend.h>
+
+#include <asm/cpuidle.h>
+#include <asm/suspend.h>
+#include <asm/sysreg.h>
+
+bool apple_cpu_hotplug_active(void);
+void apple_cpu_hotplug_set_s2r(bool on);
+
+/* clkgen (pmgr reg[2]) */
+#define T8103_CLKGEN			0x23b040000ULL
+static const u32 clkgen_muxes[] = { 0x140, 0x144, 0x148, 0x14c, 0x154 };
+#define MUX_ENABLE			BIT(31)
+#define MUX_BUSY			BIT(30)
+#define MUX_SEL				GENMASK(27, 24)
+
+/* PMGR (pmgr reg[0]) */
+#define T8103_PMGR			0x23b700000ULL
+#define T8103_PMGR_SIZE			0x80000
+#define PMGR_PS_SIO_BUSIF		0x1c0
+#define PMGR_PS_SIO			0x1c8
+#define PMGR_PS_SIO_CPU			0x1d0
+#define PMGR_PS_AUTO_ENABLE		BIT(28)
+#define PMGR_CLUSTER_PS(cl)		(0x18000 + 4 * (cl))
+#define PMGR_CLUSTER_PS_MASK		GENMASK(3, 0)
+static const u32 pmgr_cpm_gating[] = { 0x1c080, 0x1c088 };
+#define PMGR_CPM_GATING_ON		0x80000000
+static const u32 pmgr_counter_blocks[] = {
+	0x34000, 0x7c000, 0x78000, 0x48400, 0x48800, 0x48c00, 0x48000,
+};
+
+/* AON */
+#define T8103_AON_WAKE			0x23d004000ULL
+#define AON_WAKE_MASK(i)		(0x08 + 4 * (i))	/* 1 = masked */
+#define AON_WAKE_STATUS(i)		(0x1c + 4 * (i))
+#define AON_WAKE_WORDS			5
+#define WAKE_SRC_PMU			54			/* NUB.SPMI0Sw3IRQ */
+#define T8103_AON_WDT			0x23d2b0000ULL
+#define WDT_WD0_CTRL			0x0c
+#define WDT_WD1_CTRL			0x1c
+#define WDT_EXTRA_8008			0x8008
+#define WDT_EXTRA_800C			0x800c
+#define T8103_S2R_TIMER			0x23d2c4000ULL
+
+/* nub-spmi (gen1 register layout, as m1n1 src/spmi.c) */
+#define T8103_NUB_SPMI			0x23d0d9300ULL
+#define SPMI_STATUS			0x00
+#define SPMI_CMD			0x04
+#define SPMI_REPLY			0x08
+#define SPMI_STATUS_RX_EMPTY		BIT(24)
+#define SPMI_STATUS_TX_EMPTY		BIT(8)
+#define SPMI_CMD_EXTRA			GENMASK(31, 16)
+#define SPMI_CMD_ACTIVE			BIT(15)
+#define SPMI_CMD_ADDR			GENMASK(14, 8)
+#define SPMI_CMD_OPC			GENMASK(7, 0)
+#define SPMI_REPLY_ACK			BIT(15)
+#define SPMI_REPLY_ADDR			GENMASK(14, 8)
+#define SPMI_REPLY_OPC			GENMASK(7, 0)
+#define SPMI_OPC_EXT_WRITEL		0x30
+#define SPMI_OPC_EXT_READL		0x38
+#define PMU_SLAVE			0xf
+#define PMU_RTC_CTRL			0xd000
+#define PMU_RTC_NOW			0xd002		/* read 6 bytes; seconds in bytes 2..5 */
+#define PMU_RTC_ALARM			0xd008
+#define PMU_RTC_EVENT			0xd00c
+#define PMU_RTC_IRQ_MASK		0xd00e
+#define PMU_RTC_CTRL_ALARM_ON		0x41
+#define PMU_BOOT_STAGE			0x9f01
+#define PMU_BOOT_STAGE_SLEEP		0x50
+#define PMU_SCR_STAGE			0x9f0a
+
+/* AIC (AIC1 on t8103) */
+#define T8103_AIC			0x23b100000ULL
+#define AIC_INFO			0x0004
+#define AIC_INFO_NR_IRQ			GENMASK(15, 0)
+#define AIC_MASK_SET(w)			(0x4100 + 4 * (w))
+
+/* deep WFI (smp_apple_asm.S has the same values for the secondaries) */
+#define SYS_APL_CYC_OVRD		sys_reg(3, 5, 15, 5, 0)
+#define SYS_APL_ACC_OVRD		sys_reg(3, 5, 15, 6, 0)
+#define CYC_OVRD_MODES			GENMASK_ULL(25, 20)
+#define CYC_OVRD_S2R			(BIT_ULL(25) | BIT_ULL(24) | BIT_ULL(0))
+#define ACC_OVRD_S2R_CLR		((3ULL << 13) | (3ULL << 15) | (3ULL << 17) | (3ULL << 25))
+#define ACC_OVRD_S2R_SET		(BIT_ULL(34) | BIT_ULL(32) | (2ULL << 15) | (3ULL << 13) | \
+					 (3ULL << 17) | (3ULL << 25))
+
+static bool apple_s2r_enabled __ro_after_init;
+static unsigned int alarm_secs = 60;
+module_param(alarm_secs, uint, 0644);
+MODULE_PARM_DESC(alarm_secs, "PMU RTC alarm, seconds after the entry (0: none, wake by nothing)");
+static bool stop_cores = true;
+module_param(stop_cores, bool, 0644);
+MODULE_PARM_DESC(stop_cores, "power the secondaries down for real (off: they park, for pm_test runs)");
+
+static void __iomem *clkgen, *pmgr, *aon_wake, *aon_wdt, *s2r_timer, *spmi, *aic;
+
+static int __init apple_s2r_setup(char *arg)
+{
+	apple_s2r_enabled = !arg || !strcmp(arg, "1") || !strcmp(arg, "on");
+	return 0;
+}
+early_param("apple_s2r", apple_s2r_setup);
+
+/* ---- raw, polled SPMI (IRQs off, no locks, no printing) ---- */
+
+static int s2r_spmi_cmd(u8 opc, u16 extra, const u8 *in, size_t len_in, u8 *out, size_t len_out)
+{
+	u32 st, reply;
+	int i, j;
+
+	if (!(readl_relaxed(spmi + SPMI_STATUS) & SPMI_STATUS_TX_EMPTY))
+		return -EBUSY;
+	for (i = 0; i < 16 && !(readl_relaxed(spmi + SPMI_STATUS) & SPMI_STATUS_RX_EMPTY); i++)
+		readl_relaxed(spmi + SPMI_REPLY);	/* drop leftovers */
+
+	writel_relaxed(FIELD_PREP(SPMI_CMD_EXTRA, extra) | SPMI_CMD_ACTIVE |
+		       FIELD_PREP(SPMI_CMD_ADDR, PMU_SLAVE) | FIELD_PREP(SPMI_CMD_OPC, opc),
+		       spmi + SPMI_CMD);
+	for (i = 0; i < len_in;) {
+		u32 data = 0;
+
+		for (j = 0; j < 4 && i < len_in; j++)
+			data |= in[i++] << (8 * j);
+		writel_relaxed(data, spmi + SPMI_CMD);
+	}
+
+	if (readl_poll_timeout_atomic(spmi + SPMI_STATUS, st, !(st & SPMI_STATUS_RX_EMPTY), 10, 10000))
+		return -ETIMEDOUT;
+	reply = readl_relaxed(spmi + SPMI_REPLY);
+	if (FIELD_GET(SPMI_REPLY_OPC, reply) != opc || FIELD_GET(SPMI_REPLY_ADDR, reply) != PMU_SLAVE)
+		return -EIO;
+
+	for (i = 0; i < len_out;) {
+		u32 data;
+
+		if (readl_relaxed(spmi + SPMI_STATUS) & SPMI_STATUS_RX_EMPTY)
+			return -EIO;
+		data = readl_relaxed(spmi + SPMI_REPLY);
+		for (j = 0; j < 4 && i < len_out; j++)
+			out[i++] = data >> (8 * j);
+	}
+	if (!len_out && !(reply & SPMI_REPLY_ACK))
+		return -EIO;
+	return 0;
+}
+
+static int pmu_write(u16 reg, const u8 *buf, size_t len)
+{
+	return s2r_spmi_cmd(SPMI_OPC_EXT_WRITEL | (len - 1), reg, buf, len, NULL, 0);
+}
+
+static int pmu_read(u16 reg, u8 *buf, size_t len)
+{
+	return s2r_spmi_cmd(SPMI_OPC_EXT_READL | (len - 1), reg, NULL, 0, buf, len);
+}
+
+static void s2r_mark(u8 c)
+{
+	pmu_write(PMU_SCR_STAGE, &c, 1);
+}
+
+/* ---- the entry ---- */
+
+static void s2r_deep_wfi(void)
+{
+	u64 v;
+
+	v = read_sysreg_s(SYS_APL_ACC_OVRD);
+	write_sysreg_s((v & ~ACC_OVRD_S2R_CLR) | ACC_OVRD_S2R_SET, SYS_APL_ACC_OVRD);
+	isb();
+	v = read_sysreg_s(SYS_APL_CYC_OVRD);
+	write_sysreg_s((v & ~CYC_OVRD_MODES) | CYC_OVRD_S2R, SYS_APL_CYC_OVRD);
+	isb();
+	for (;;) {
+		dsb(sy);
+		isb();
+		wfi();
+	}
+}
+
+static int apple_s2r_finisher(unsigned long arg)
+{
+	u8 rtc[6], b;
+	u32 now, alarm, v, nr_irq;
+	int i;
+
+	s2r_mark('a');
+
+	/* 1. only the PMU (RTC alarm) may wake the AP */
+	for (i = 0; i < AON_WAKE_WORDS; i++) {
+		v = 0xffffffff;
+		if (i == WAKE_SRC_PMU / 32)
+			v &= ~BIT(WAKE_SRC_PMU % 32);
+		writel_relaxed(v, aon_wake + AON_WAKE_MASK(i));
+	}
+
+	/* 2. AON watchdogs off (macOS: WD0 CTRL and the 0x8008/0x800c words; WD1 too) */
+	writel_relaxed(0, aon_wdt + WDT_EXTRA_8008);
+	writel_relaxed(0, aon_wdt + WDT_EXTRA_800C);
+	writel_relaxed(0, aon_wdt + WDT_WD0_CTRL);
+	writel_relaxed(0, aon_wdt + WDT_WD1_CTRL);
+
+	/* 3. boot_stage: "asleep", so a reset during sleep is not a boot failure */
+	b = PMU_BOOT_STAGE_SLEEP;
+	pmu_write(PMU_BOOT_STAGE, &b, 1);
+	s2r_mark('b');
+
+	/* 4. park the clkgen muxes (P1-P5) */
+	for (i = 0; i < ARRAY_SIZE(clkgen_muxes); i++) {
+		void __iomem *r = clkgen + clkgen_muxes[i];
+
+		v = readl_relaxed(r);
+		writel_relaxed((v & ~MUX_SEL) | MUX_ENABLE, r);
+		readl_poll_timeout_atomic(r, v, !(v & MUX_BUSY), 1, 8000);
+	}
+	s2r_mark('c');
+
+	/* 5. counter blocks (P6/P7), CPM gating (P8), cluster PS (P9/P10), SIO (P11-P13) */
+	for (i = 0; i < ARRAY_SIZE(pmgr_counter_blocks); i++)
+		writel_relaxed(0, pmgr + pmgr_counter_blocks[i]);
+	for (i = 0; i < ARRAY_SIZE(pmgr_cpm_gating); i++)
+		writel_relaxed(PMGR_CPM_GATING_ON, pmgr + pmgr_cpm_gating[i]);
+	for (i = 0; i < 2; i++) {
+		v = readl_relaxed(pmgr + PMGR_CLUSTER_PS(i));
+		writel_relaxed(v & ~PMGR_CLUSTER_PS_MASK, pmgr + PMGR_CLUSTER_PS(i));
+	}
+	for (i = 0; i < 3; i++) {
+		static const u32 ps[] = { PMGR_PS_SIO, PMGR_PS_SIO_BUSIF, PMGR_PS_SIO_CPU };
+
+		v = readl_relaxed(pmgr + ps[i]);
+		writel_relaxed(v & ~PMGR_PS_AUTO_ENABLE, pmgr + ps[i]);
+	}
+	s2r_mark('d');
+
+	/* 6. the commit */
+	writel_relaxed(1, s2r_timer);
+	dsb(sy);
+	s2r_mark('e');
+
+	/* 7. mask every AIC interrupt */
+	nr_irq = FIELD_GET(AIC_INFO_NR_IRQ, readl_relaxed(aic + AIC_INFO));
+	for (i = 0; i < DIV_ROUND_UP(nr_irq, 32); i++)
+		writel_relaxed(0xffffffff, aic + AIC_MASK_SET(i));
+
+	/* 8. the PMU RTC alarm */
+	if (!pmu_read(PMU_RTC_EVENT, &b, 1) && b)
+		pmu_write(PMU_RTC_EVENT, &b, 1);
+	if (alarm_secs && !pmu_read(PMU_RTC_NOW, rtc, sizeof(rtc))) {
+		now = rtc[2] | (rtc[3] << 8) | (rtc[4] << 16) | ((u32)rtc[5] << 24);
+		alarm = now + alarm_secs;
+		pmu_write(PMU_RTC_ALARM, (u8 *)&alarm, 4);
+		b = 0;
+		pmu_write(PMU_RTC_IRQ_MASK, &b, 1);
+		b = PMU_RTC_CTRL_ALARM_ON;
+		pmu_write(PMU_RTC_CTRL, &b, 1);
+	}
+	s2r_mark('f');
+
+	/* 9. the commit, twice more */
+	writel_relaxed(1, s2r_timer);
+	writel_relaxed(1, s2r_timer);
+	dsb(sy);
+	s2r_mark('g');
+
+	/* 10. down */
+	s2r_deep_wfi();
+	return -EIO; /* not reached */
+}
+
+static int apple_s2r_valid(suspend_state_t state)
+{
+	return state == PM_SUSPEND_MEM;
+}
+
+static int apple_s2r_prepare(void)
+{
+	if (stop_cores)
+		apple_cpu_hotplug_set_s2r(true);
+	return 0;
+}
+
+static int apple_s2r_enter(suspend_state_t state)
+{
+	if (state != PM_SUSPEND_MEM)
+		return -EINVAL;
+	/* the wake reboots for now: cpu_suspend() keeps the resume path in place for later */
+	return cpu_suspend(0, apple_s2r_finisher);
+}
+
+static void apple_s2r_finish(void)
+{
+	apple_cpu_hotplug_set_s2r(false);
+}
+
+static const struct platform_suspend_ops apple_s2r_ops = {
+	.valid		= apple_s2r_valid,
+	.prepare	= apple_s2r_prepare,
+	.enter		= apple_s2r_enter,
+	.finish		= apple_s2r_finish,
+};
+
+static int __init apple_s2r_init(void)
+{
+	u32 st[AON_WAKE_WORDS];
+	int i;
+
+	if (!apple_s2r_enabled)
+		return 0;
+	if (!of_machine_is_compatible("apple,t8103")) {
+		pr_info("not a t8103, staying with s2idle\n");
+		return 0;
+	}
+	if (!apple_cpu_hotplug_active()) {
+		pr_warn("needs apple_cpu_hotplug=park (CPU offline); staying with s2idle\n");
+		return 0;
+	}
+
+	clkgen = ioremap(T8103_CLKGEN, SZ_4K);
+	pmgr = ioremap(T8103_PMGR, T8103_PMGR_SIZE);
+	aon_wake = ioremap(T8103_AON_WAKE, SZ_4K);
+	aon_wdt = ioremap(T8103_AON_WDT, SZ_64K);
+	s2r_timer = ioremap(T8103_S2R_TIMER, SZ_4K);
+	spmi = ioremap(T8103_NUB_SPMI, SZ_256);
+	aic = ioremap(T8103_AIC, SZ_64K);
+	if (!clkgen || !pmgr || !aon_wake || !aon_wdt || !s2r_timer || !spmi || !aic) {
+		pr_err("ioremap failed\n");
+		return -ENOMEM;
+	}
+
+	for (i = 0; i < AON_WAKE_WORDS; i++)
+		st[i] = readl_relaxed(aon_wake + AON_WAKE_STATUS(i));
+	pr_info("enabled: suspend-to-RAM for \"mem\" (the wake reboots); AP wake status at boot %08x %08x %08x %08x %08x\n",
+		st[0], st[1], st[2], st[3], st[4]);
+	suspend_set_ops(&apple_s2r_ops);
+	return 0;
+}
+late_initcall(apple_s2r_init);

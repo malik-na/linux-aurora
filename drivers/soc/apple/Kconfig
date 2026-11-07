@@ -47,6 +47,18 @@ config APPLE_MCC_KUNIT_TEST
 	  also cleans up the plane whose state is uncertain. These tests do not
 	  access physical hardware and are only useful for kernel developers.
 
+config APPLE_S2R
+	bool "Apple M1 (t8103) suspend-to-RAM, first stage (wake reboots)"
+	depends on ARCH_APPLE && ARM64 && SUSPEND && HOTPLUG_CPU
+	default n
+	help
+	  Opt-in suspend-to-RAM for the Apple M1 (t8103), following macOS's own
+	  sleep sequence on this SoC. Active only with apple_s2r=1 and
+	  apple_cpu_hotplug=park on the kernel command line. In this first stage
+	  the wake reboots the machine through m1n1.
+
+	  If unsure, say N.
+
 config APPLE_PMGR_MISC
 	bool "Apple SoC PMGR miscellaneous support"
 	depends on PM

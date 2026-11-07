@@ -34,6 +34,15 @@
 #define APPLE_CYC_OVRD_DIS_WFI_RET	(1 << 0)
 #define APPLE_CYC_OVRD_CORE_OFF		(APPLE_CYC_OVRD_FIQ_MODE_2 | APPLE_CYC_OVRD_IRQ_MODE_2 | \
 					 APPLE_CYC_OVRD_WFI_MODE_3 | APPLE_CYC_OVRD_DIS_WFI_RET)
+/* Suspend-to-RAM deep WFI, macOS 27 on t8103: CYC_OVRD = 0x3000001 (no IRQ/FIQ modes). */
+#define APPLE_CYC_OVRD_S2R		(APPLE_CYC_OVRD_WFI_MODE_3 | APPLE_CYC_OVRD_DIS_WFI_RET)
+/*
+ * Apple ACC_OVRD (per cluster): S3_5_C15_C6_0. macOS 27 arm64_prepare_for_sleep(deep) on t8103
+ * turns 0x180010102001c207 into 0x1800101526076207: bits 34 (deep sleep) and 32, [16:15] = 2,
+ * [14:13] = [18:17] = [26:25] = 3.
+ */
+#define APPLE_ACC_OVRD_S2R_CLR		((3 << 13) | (3 << 15) | (3 << 17) | (3 << 25))
+#define APPLE_ACC_OVRD_S2R_SET		((1 << 34) | (1 << 32) | (2 << 15) | (3 << 13) | (3 << 17) | (3 << 25))
 
 	.pushsection ".idmap.text", "a"
 /*
@@ -171,3 +180,52 @@ SYM_FUNC_START(apple_cpu_off_mmuoff)
 	wfi
 	b	1b
 SYM_FUNC_END(apple_cpu_off_mmuoff)
+
+/*
+ * apple_cpu_s2r_mmuoff(stop_reg_pa, flushed_pa, stop_bit) - MMU off, at its PA.
+ *
+ * Suspend-to-RAM: what macOS 27 does on every secondary before the commit
+ * (E1-E3 of the t8103 sleep sequence): clean L1, report it, request this
+ * core's stop in the PMGR CPU-start block, set ACC_OVRD's deep-sleep bits,
+ * CYC_OVRD = WFI mode 3 with no WFI return, and WFI. Unlike powerdown this
+ * is also used for the last core of a cluster: the SoC is about to power
+ * off, so the cluster going down with it is the point. Never returns; the
+ * core comes back (if at all) through its RVBAR into m1n1.
+ */
+SYM_FUNC_START(apple_cpu_s2r_mmuoff)
+	mov	x19, x0
+	mov	x20, x2
+	mov	x21, x1
+	mov	x0, #1
+	bl	apple_dcache_cisw_levels
+	ic	iallu
+	dsb	sy
+	isb
+
+	mov	x0, #1
+	str	x0, [x21]			// L1 is clean: tell cpu_kill()
+	dsb	sy
+
+	str	w20, [x19]			// request this core's stop
+	dsb	sy
+	isb
+
+	mrs	x0, s3_5_c15_c6_0		// ACC_OVRD: deep sleep
+	mov_q	x1, APPLE_ACC_OVRD_S2R_CLR
+	bic	x0, x0, x1
+	mov_q	x1, APPLE_ACC_OVRD_S2R_SET
+	orr	x0, x0, x1
+	msr	s3_5_c15_c6_0, x0
+	isb
+
+	mrs	x0, s3_5_c15_c5_0		// CYC_OVRD: WFI mode 3, no WFI return
+	bic	x0, x0, #APPLE_CYC_OVRD_MODES_MASK
+	mov_q	x1, APPLE_CYC_OVRD_S2R
+	orr	x0, x0, x1
+	msr	s3_5_c15_c5_0, x0
+	isb
+1:	dsb	sy
+	isb
+	wfi
+	b	1b
+SYM_FUNC_END(apple_cpu_s2r_mmuoff)
