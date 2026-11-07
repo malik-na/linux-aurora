@@ -424,14 +424,14 @@ static int __init apple_s2r_init(void)
 		return 0;
 	}
 
-	clkgen = ioremap(T8103_CLKGEN, SZ_4K);
-	pmgr = ioremap(T8103_PMGR, T8103_PMGR_SIZE);
-	aon_wake = ioremap(T8103_AON_WAKE, SZ_4K);
-	aon_wdt = ioremap(T8103_AON_WDT, SZ_64K);
-	s2r_timer = ioremap(T8103_S2R_TIMER, SZ_4K);
-	spmi = ioremap(T8103_NUB_SPMI, SZ_256);
-	spmi1 = ioremap(T8103_NUB_SPMI1, SZ_256);
-	aic = ioremap(T8103_AIC, SZ_64K);
+	clkgen = ioremap_np(T8103_CLKGEN, SZ_4K);
+	pmgr = ioremap_np(T8103_PMGR, T8103_PMGR_SIZE);
+	aon_wake = ioremap_np(T8103_AON_WAKE, SZ_4K);
+	aon_wdt = ioremap_np(T8103_AON_WDT, SZ_64K);
+	s2r_timer = ioremap_np(T8103_S2R_TIMER, SZ_4K);
+	spmi = ioremap_np(T8103_NUB_SPMI, SZ_256);
+	spmi1 = ioremap_np(T8103_NUB_SPMI1, SZ_256);
+	aic = ioremap_np(T8103_AIC, SZ_64K);
 	if (!clkgen || !pmgr || !aon_wake || !aon_wdt || !s2r_timer || !spmi || !spmi1 || !aic) {
 		pr_err("ioremap failed\n");
 		return -ENOMEM;
