@@ -207,6 +207,10 @@ static void s2r_write_retention_pattern(void)
 	iounmap(p);
 }
 
+static bool spmi_macos = true;
+module_param(spmi_macos, bool, 0644);
+MODULE_PARM_DESC(spmi_macos, "leave the nub-spmi IRQ words as macOS does at the commit (word 6 = 1 on both buses, others untouched); 0 = the old 'alarm only' setup");
+
 static bool mcc_flush = true;
 module_param(mcc_flush, bool, 0644);
 MODULE_PARM_DESC(mcc_flush, "turn the system-level cache off and flush it before the commit, as macOS does");
@@ -413,11 +417,22 @@ static int apple_s2r_finisher(unsigned long arg)
 	 * 5b. SPMI: only the PMU alarm (peripheral IRQ 2) may raise nub-spmi's line, which is
 	 * wake source 54; a vector left pending would wake the AP at once. nub-spmi1 fully off.
 	 */
-	for (i = 0; i < SPMI_IRQ_WORDS; i++) {
-		writel_relaxed(i == 0 ? BIT(SPMI_IRQ_PMU_ALARM) : 0, spmi + SPMI_IRQ_EN(i));
-		writel_relaxed(0, spmi1 + SPMI_IRQ_EN(i));
-		writel_relaxed(0xffffffff, spmi + SPMI_IRQ_ACK(i));
-		writel_relaxed(0xffffffff, spmi1 + SPMI_IRQ_ACK(i));
+	if (spmi_macos) {
+		/*
+		 * As macOS leaves it at the commit (try55 trace): only IRQ word 6 is written,
+		 * on both nub buses, enable = 1 and its bit 0 acked; the other words untouched.
+		 */
+		writel_relaxed(1, spmi + SPMI_IRQ_EN(6));
+		writel_relaxed(1, spmi1 + SPMI_IRQ_EN(6));
+		writel_relaxed(1, spmi + SPMI_IRQ_ACK(6));
+		writel_relaxed(1, spmi1 + SPMI_IRQ_ACK(6));
+	} else {
+		for (i = 0; i < SPMI_IRQ_WORDS; i++) {
+			writel_relaxed(i == 0 ? BIT(SPMI_IRQ_PMU_ALARM) : 0, spmi + SPMI_IRQ_EN(i));
+			writel_relaxed(0, spmi1 + SPMI_IRQ_EN(i));
+			writel_relaxed(0xffffffff, spmi + SPMI_IRQ_ACK(i));
+			writel_relaxed(0xffffffff, spmi1 + SPMI_IRQ_ACK(i));
+		}
 	}
 
 	/* 5c. the commit's RTC second, so the next boot can tell a real sleep from a WD2 reset */
@@ -463,9 +478,14 @@ static int apple_s2r_finisher(unsigned long arg)
 	s2r_mark('g');
 
 	/* 9b. ack whatever our own PMU commands left pending; report both clusters idle */
-	for (i = 0; i < SPMI_IRQ_WORDS; i++) {
-		writel_relaxed(0xffffffff, spmi + SPMI_IRQ_ACK(i));
-		writel_relaxed(0xffffffff, spmi1 + SPMI_IRQ_ACK(i));
+	if (spmi_macos) {
+		writel_relaxed(1, spmi + SPMI_IRQ_ACK(6));
+		writel_relaxed(1, spmi1 + SPMI_IRQ_ACK(6));
+	} else {
+		for (i = 0; i < SPMI_IRQ_WORDS; i++) {
+			writel_relaxed(0xffffffff, spmi + SPMI_IRQ_ACK(i));
+			writel_relaxed(0xffffffff, spmi1 + SPMI_IRQ_ACK(i));
+		}
 	}
 	writel_relaxed(0, pmgr + PMGR_CLUSTER_STATE(0));
 	writel_relaxed(0, pmgr + PMGR_CLUSTER_STATE(1));
