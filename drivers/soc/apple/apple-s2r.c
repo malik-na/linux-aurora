@@ -251,6 +251,10 @@ static const struct kernel_param_ops pmp_idle_test_ops = {
 module_param_cb(pmp_idle_test, &pmp_idle_test_ops, NULL, 0200);
 MODULE_PARM_DESC(pmp_idle_test, "write 1: idle the PMP and wake it again, without suspending");
 
+static bool macos_wake_mask = true;
+module_param(macos_wake_mask, bool, 0644);
+MODULE_PARM_DESC(macos_wake_mask, "AON wake masks as in the macOS run that woke (only 26/27/38/81 masked); 0 = only the PMU alarm unmasked");
+
 static bool spmi_macos = true;
 module_param(spmi_macos, bool, 0644);
 MODULE_PARM_DESC(spmi_macos, "leave the nub-spmi IRQ words as macOS does at the commit (word 6 = 1 on both buses, others untouched); 0 = the old 'alarm only' setup");
@@ -374,11 +378,22 @@ static int apple_s2r_finisher(unsigned long arg)
 
 	s2r_mark('a');
 
-	/* 1. only the PMU (RTC alarm) may wake the AP */
+	/*
+	 * 1. AON AP wake-source masks (1 = masked). macos_wake_mask: exactly the words of
+	 * the macOS-under-m1n1 run that woke (try62): only sources 26/27 (AOP outbox / AOP
+	 * CPUWakeupAP), 38 (masked by macOS itself) and 81 (SMC outbox) masked, all the rest
+	 * open. Otherwise: only the PMU (RTC alarm, source 54) may wake the AP.
+	 */
 	for (i = 0; i < AON_WAKE_WORDS; i++) {
-		v = 0xffffffff;
-		if (i == WAKE_SRC_PMU / 32)
-			v &= ~BIT(WAKE_SRC_PMU % 32);
+		static const u32 macos_mask[] = { 0x0c000000, 0x00000040, 0x00020000, 0, 0 };
+
+		if (macos_wake_mask && i < ARRAY_SIZE(macos_mask)) {
+			v = macos_mask[i];
+		} else {
+			v = 0xffffffff;
+			if (i == WAKE_SRC_PMU / 32)
+				v &= ~BIT(WAKE_SRC_PMU % 32);
+		}
 		writel_relaxed(v, aon_wake + AON_WAKE_MASK(i));
 	}
 
