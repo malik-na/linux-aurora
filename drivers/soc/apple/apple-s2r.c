@@ -248,6 +248,8 @@ static void s2r_deep_wfi(void)
 	}
 }
 
+static void s2r_arm_deadman(void);
+
 static int apple_s2r_finisher(unsigned long arg)
 {
 	u8 rtc[6], b;
@@ -273,11 +275,7 @@ static int apple_s2r_finisher(unsigned long arg)
 	writel_relaxed(0, aon_wdt + WDT_EXTRA_800C);
 	writel_relaxed(0, aon_wdt + WDT_WD0_CTRL);
 	writel_relaxed(0, aon_wdt + WDT_WD1_CTRL);
-	if (deadman_secs) {
-		writel_relaxed(0, aon_wdt + WDT_WD1_CNT);
-		writel_relaxed(min(deadman_secs, 178U) * 24000000U, aon_wdt + WDT_WD1_ALARM);
-		writel_relaxed(WDT_CTRL_RESET, aon_wdt + WDT_WD1_CTRL);
-	}
+	s2r_arm_deadman();	/* restart the dead-man's count at the commit */
 
 	/* 3. boot_stage: "asleep", so a reset during sleep is not a boot failure */
 	b = PMU_BOOT_STAGE_SLEEP;
@@ -399,9 +397,24 @@ static int apple_s2r_prepare(void)
 	return 0;
 }
 
+static void s2r_arm_deadman(void)
+{
+	if (!deadman_secs)
+		return;
+	writel_relaxed(0, aon_wdt + WDT_WD1_CTRL);
+	writel_relaxed(0, aon_wdt + WDT_WD1_CNT);
+	writel_relaxed(min(deadman_secs, 178U) * 24000000U, aon_wdt + WDT_WD1_ALARM);
+	writel_relaxed(WDT_CTRL_RESET, aon_wdt + WDT_WD1_CTRL);
+}
+
 static int apple_s2r_prepare_late(void)
 {
 	s2r_mark('N');	/* devices suspended (noirq), secondaries still online */
+	/*
+	 * apple_wdt has stopped WD1 by now (its suspend ran): arm it as the dead-man
+	 * already, so a hang while the secondaries go offline resets the SoC too.
+	 */
+	s2r_arm_deadman();
 	return 0;
 }
 
