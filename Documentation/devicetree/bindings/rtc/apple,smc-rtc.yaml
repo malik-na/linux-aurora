@@ -33,6 +33,9 @@ properties:
           PMU alarm compare value, a 32-bit count of whole seconds of the RTC
           counter without the offset.
       - description: PMU alarm mask byte.
+      - description:
+          PMU alarm event byte, bit 0 latched when the alarm fires, on PMUs
+          that keep the event apart from the control byte (t8103 Sera).
 
   nvmem-cell-names:
     oneOf:
@@ -43,11 +46,17 @@ properties:
           - const: rtc_ctrl
           - const: rtc_alarm
           - const: rtc_alarm_mask
+      - items:
+          - const: rtc_offset
+          - const: rtc_ctrl
+          - const: rtc_alarm
+          - const: rtc_alarm_mask
+          - const: rtc_alarm_event
 
   interrupts:
     maxItems: 1
     description:
-      The PMU's RTC alarm interrupt. Only used with the three alarm cells.
+      The PMU's RTC alarm interrupt. Only used with the alarm cells.
 
   wakeup-source: true
 
