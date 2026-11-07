@@ -138,6 +138,14 @@ static const u32 pmgr_counter_blocks[] = {
 
 /* AIC (AIC1 on t8103) */
 #define T8103_AIC			0x23b100000ULL
+#define T8103_MCC_GLOBAL		0x200100000ULL	/* /arm-io/mcc reg[0] */
+#define T8103_MCC_PLANES		0x200000000ULL	/* /arm-io/mcc reg[1] */
+#define MCC_BCAST_A			0x0c
+#define MCC_BCAST_B			0x14
+#define MCC_PLANE_CACHE_ENABLE		0x1c00
+#define MCC_PLANE_CACHE_STATUS(n)	(0x1c04 + (n) * 0x40000)
+#define MCC_PLANES			4
+#define MCC_STATUS_BUSY			(GENMASK(14, 10) | GENMASK(9, 5))	/* data, tag */
 #define AIC_INFO			0x0004
 #define AIC_INFO_NR_IRQ			GENMASK(15, 0)
 #define AIC_MASK_SET(w)			(0x4100 + 4 * (w))
@@ -160,6 +168,11 @@ module_param(stop_cores, bool, 0644);
 MODULE_PARM_DESC(stop_cores, "power the secondaries down for real (off: they park, for pm_test runs)");
 
 static void __iomem *clkgen, *pmgr, *aon_wake, *aon_wdt, *s2r_timer, *spmi, *spmi1, *aic;
+static void __iomem *mcc_glob, *mcc_planes;
+static bool mcc_flush = true;
+module_param(mcc_flush, bool, 0644);
+MODULE_PARM_DESC(mcc_flush, "turn the system-level cache off and flush it before the commit, as macOS does");
+
 static unsigned int wfi_return_secs = 30;
 module_param(wfi_return_secs, uint, 0644);
 MODULE_PARM_DESC(wfi_return_secs, "if the final wfi returns (the core was not power-gated), reset via WD1 after this long (0 = off)");
@@ -297,6 +310,26 @@ static int apple_s2r_finisher(unsigned long arg)
 	/* 3. boot_stage: "asleep", so a reset during sleep is not a boot failure */
 	b = PMU_BOOT_STAGE_SLEEP;
 	pmu_write(PMU_BOOT_STAGE, &b, 1);
+
+	/*
+	 * 3b. system-level cache off, as macOS's MCC quiesce does (M1-M4): broadcast on, all
+	 * ways off, broadcast off, then wait until every plane's tag and data flush is done.
+	 * Dirty SLC lines reach DRAM before the SoC goes down.
+	 */
+	if (mcc_flush) {
+		writel_relaxed(1, mcc_glob + MCC_BCAST_A);
+		writel_relaxed(1, mcc_glob + MCC_BCAST_B);
+		writel_relaxed(0, mcc_planes + MCC_PLANE_CACHE_ENABLE);
+		writel_relaxed(0, mcc_glob + MCC_BCAST_A);
+		writel_relaxed(0, mcc_glob + MCC_BCAST_B);
+		for (i = 0; i < MCC_PLANES; i++) {
+			int t;
+
+			for (t = 0; t < 1000000; t++)
+				if (!(readl_relaxed(mcc_planes + MCC_PLANE_CACHE_STATUS(i)) & MCC_STATUS_BUSY))
+					break;
+		}
+	}
 	s2r_mark('b');
 
 	/* 4. park the clkgen muxes (P1-P5) */
@@ -523,7 +556,10 @@ static int __init apple_s2r_init(void)
 	spmi = ioremap_np(T8103_NUB_SPMI, SZ_256);
 	spmi1 = ioremap_np(T8103_NUB_SPMI1, SZ_256);
 	aic = ioremap_np(T8103_AIC, SZ_64K);
-	if (!clkgen || !pmgr || !aon_wake || !aon_wdt || !s2r_timer || !spmi || !spmi1 || !aic) {
+	mcc_glob = ioremap_np(T8103_MCC_GLOBAL, SZ_4K);
+	mcc_planes = ioremap_np(T8103_MCC_PLANES, MCC_PLANE_CACHE_STATUS(MCC_PLANES - 1) + SZ_4K);
+	if (!clkgen || !pmgr || !aon_wake || !aon_wdt || !s2r_timer || !spmi || !spmi1 || !aic ||
+	    !mcc_glob || !mcc_planes) {
 		pr_err("ioremap failed\n");
 		return -ENOMEM;
 	}
