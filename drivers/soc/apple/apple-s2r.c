@@ -223,6 +223,34 @@ void apple_s2r_set_pmp_power(int (*fn)(bool idle))
 }
 EXPORT_SYMBOL_GPL(apple_s2r_set_pmp_power);
 
+/*
+ * Self-test of the PMP idle path without suspending: write 1 to
+ * /sys/module/apple_s2r/parameters/pmp_idle_test to idle the PMP (AP 0x201, IOP 0x201,
+ * each acked) and wake it again; both results go to the kernel log.
+ */
+static int pmp_idle_test_set(const char *val, const struct kernel_param *kp)
+{
+	int (*fn)(bool) = READ_ONCE(s2r_pmp_power);
+	int ri, rw;
+
+	if (!fn) {
+		pr_info("PMP idle test: no PMP hook registered\n");
+		return -ENODEV;
+	}
+	ri = fn(true);
+	pr_info("PMP idle test: idle (AP 0x201, IOP 0x201) -> %d\n", ri);
+	msleep(200);
+	rw = fn(false);
+	pr_info("PMP idle test: wake -> %d\n", rw);
+	return ri ?: rw;
+}
+
+static const struct kernel_param_ops pmp_idle_test_ops = {
+	.set = pmp_idle_test_set,
+};
+module_param_cb(pmp_idle_test, &pmp_idle_test_ops, NULL, 0200);
+MODULE_PARM_DESC(pmp_idle_test, "write 1: idle the PMP and wake it again, without suspending");
+
 static bool spmi_macos = true;
 module_param(spmi_macos, bool, 0644);
 MODULE_PARM_DESC(spmi_macos, "leave the nub-spmi IRQ words as macOS does at the commit (word 6 = 1 on both buses, others untouched); 0 = the old 'alarm only' setup");
@@ -452,12 +480,10 @@ static int apple_s2r_finisher(unsigned long arg)
 	}
 
 	/* 5c. the commit's RTC second, so the next boot can tell a real sleep from a WD2 reset */
+	/* results byte; bit 6 tells the stage-2 m1n1 it may run its retention probe */
+	b = s2r_handshake_bits | BIT(7) | (retention_pa ? BIT(6) : 0);
+	pmu_write(PMU_SCR_WAKE_MARK + 1, &b, 1);
 	if (!pmu_read(PMU_RTC_NOW, rtc, sizeof(rtc))) {
-		{
-			u8 hb = s2r_handshake_bits | BIT(7);
-
-			pmu_write(PMU_SCR_WAKE_MARK + 1, &hb, 1);
-		}
 		u8 note[5] = { 'L', rtc[2], rtc[3], rtc[4], rtc[5] };
 
 		pmu_write(PMU_SCR_NOTE, note, sizeof(note));
