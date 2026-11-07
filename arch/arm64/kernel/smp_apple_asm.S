@@ -206,10 +206,19 @@ SYM_FUNC_START(apple_cpu_s2r_mmuoff)
 	str	x0, [x21]			// L1 is clean: tell cpu_kill()
 	dsb	sy
 
-	str	w20, [x19]			// request this core's stop
+	and	x22, x20, #0xffff
+	str	w22, [x19]			// request this core's stop
 	dsb	sy
 	isb
 
+	/*
+	 * ACC_OVRD is per cluster: arm deep sleep only when bit 31 of the stop
+	 * argument says this cluster has no core left running (not CPU0's
+	 * cluster, whose deep bits CPU0 sets itself as the very last step).
+	 * Arming it under a running core lets the cluster power off when that
+	 * core next idles (the first run hung that way).
+	 */
+	tbz	x20, #31, 2f
 	mrs	x0, s3_5_c15_c6_0		// ACC_OVRD: deep sleep
 	mov_q	x1, APPLE_ACC_OVRD_S2R_CLR
 	bic	x0, x0, x1
@@ -217,6 +226,7 @@ SYM_FUNC_START(apple_cpu_s2r_mmuoff)
 	orr	x0, x0, x1
 	msr	s3_5_c15_c6_0, x0
 	isb
+2:
 
 	mrs	x0, s3_5_c15_c5_0		// CYC_OVRD: WFI mode 3, no WFI return
 	bic	x0, x0, #APPLE_CYC_OVRD_MODES_MASK

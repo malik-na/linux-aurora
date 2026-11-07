@@ -52,6 +52,7 @@
 #include <linux/kernel.h>
 #include <linux/moduleparam.h>
 #include <linux/of.h>
+#include <linux/smp.h>
 #include <linux/suspend.h>
 
 #include <asm/cpu_ops.h>
@@ -377,8 +378,18 @@ static int apple_s2r_valid(suspend_state_t state)
 	return state == PM_SUSPEND_MEM;
 }
 
+static u64 acc_ovrd_saved;
+
+static void s2r_save_acc(void *unused)
+{
+	if (smp_processor_id() == 0)
+		acc_ovrd_saved = read_sysreg_s(SYS_APL_ACC_OVRD);
+}
+
 static int apple_s2r_prepare(void)
 {
+	s2r_mark('P');	/* devices still awake, all CPUs online */
+	on_each_cpu(s2r_save_acc, NULL, 1);
 	pr_info("entering: cluster state E %#x P %#x, nub-spmi IRQ enable %#x pending %#x, alarm %u s, dead-man %u s\n",
 		readl_relaxed(pmgr + PMGR_CLUSTER_STATE(0)), readl_relaxed(pmgr + PMGR_CLUSTER_STATE(1)),
 		readl_relaxed(spmi + SPMI_IRQ_EN(0)), readl_relaxed(spmi + SPMI_IRQ_ACK(0)),
@@ -388,22 +399,33 @@ static int apple_s2r_prepare(void)
 	return 0;
 }
 
+static int apple_s2r_prepare_late(void)
+{
+	s2r_mark('N');	/* devices suspended (noirq), secondaries still online */
+	return 0;
+}
+
 static int apple_s2r_enter(suspend_state_t state)
 {
 	if (state != PM_SUSPEND_MEM)
 		return -EINVAL;
+	s2r_mark('E');	/* secondaries offline, IRQs off, syscore suspended */
 	/* the wake reboots for now: cpu_suspend() keeps the resume path in place for later */
 	return cpu_suspend(0, apple_s2r_finisher);
 }
 
 static void apple_s2r_finish(void)
 {
+	/* only reached when the suspend did not happen: undo the deep-sleep arming */
+	if (acc_ovrd_saved)
+		write_sysreg_s(acc_ovrd_saved, SYS_APL_ACC_OVRD);
 	apple_cpu_hotplug_set_s2r(false);
 }
 
 static const struct platform_suspend_ops apple_s2r_ops = {
 	.valid		= apple_s2r_valid,
 	.prepare	= apple_s2r_prepare,
+	.prepare_late	= apple_s2r_prepare_late,
 	.enter		= apple_s2r_enter,
 	.finish		= apple_s2r_finish,
 };

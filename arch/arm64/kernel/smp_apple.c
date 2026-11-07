@@ -222,6 +222,7 @@ struct apple_cpu {
 	bool boot_pending;		/* cpu_boot() done, cpu_postboot() not yet */
 	int state;			/* enum apple_cpu_state */
 	int down_mode;			/* APPLE_CPU_PARKED or APPLE_CPU_OFF */
+	bool s2r_deep;			/* S2R stop: last core of a cluster CPU0 is not in */
 	const char *park_reason;	/* why the last offline parked */
 	const char *stuck_reason;
 	struct apple_cpu_regs snap;	/* first boot: what m1n1 left */
@@ -763,6 +764,13 @@ static int apple_cpu_disable(unsigned int cpu)
 	if (READ_ONCE(apple_cpu_s2r_stop) && !ac->stuck) {
 		ac->park_reason = NULL;
 		ac->down_mode = APPLE_CPU_S2R;
+		/*
+		 * ACC_OVRD's deep-sleep bits are per cluster: only the last core of
+		 * a cluster may arm them, and never in CPU0's cluster (CPU0 arms
+		 * its own as the very last step of the suspend).
+		 */
+		ac->s2r_deep = apple_cpu_cluster(cpu) != apple_cpu_cluster(0) &&
+			       apple_cpu_last_in_cluster(cpu);
 		return 0;
 	}
 
@@ -843,7 +851,7 @@ static void apple_cpu_die(unsigned int cpu)
 	if (s2r)
 		jump(__pa_symbol(apple_cpu_s2r_mmuoff),
 		     T8103_CPU_START + CPU_START_STOP, flushed_pa,
-		     apple_cpu_bit(cpu));
+		     apple_cpu_bit(cpu) | (ac->s2r_deep ? BIT(31) : 0));
 	else if (off)
 		jump(__pa_symbol(apple_cpu_off_mmuoff),
 		     T8103_CPU_START + CPU_START_STOP, flushed_pa,
