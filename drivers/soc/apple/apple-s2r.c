@@ -182,6 +182,31 @@ void apple_s2r_note_smc(u8 bits)
 }
 EXPORT_SYMBOL_GPL(apple_s2r_note_smc);
 
+/*
+ * DRAM retention probe: with Linux kept below it (mem=), fill the page at retention_pa with
+ * a pattern at .prepare; the ESP stage-2 m1n1 counts the intact words on the next cold boot
+ * and reports 'R' / 'r' / 'X' at PMU 0x9f0b (see m1n1 s2r_retention_check()).
+ */
+static unsigned long retention_pa;
+module_param(retention_pa, ulong, 0644);
+MODULE_PARM_DESC(retention_pa, "physical page outside Linux's RAM to fill with the retention pattern (0 = off)");
+
+static void s2r_write_retention_pattern(void)
+{
+	void __iomem *p;
+	int i;
+
+	if (!retention_pa || pfn_valid(PHYS_PFN(retention_pa)))
+		return;
+	p = ioremap_np(retention_pa, SZ_4K);
+	if (!p)
+		return;
+	for (i = 0; i < 512; i++)
+		writeq_relaxed(0x6d31707772657421ULL ^ ((u64)i * 0x9e3779b97f4a7c15ULL), p + 8 * i);
+	dsb(sy);
+	iounmap(p);
+}
+
 static bool mcc_flush = true;
 module_param(mcc_flush, bool, 0644);
 MODULE_PARM_DESC(mcc_flush, "turn the system-level cache off and flush it before the commit, as macOS does");
@@ -469,6 +494,7 @@ static int apple_s2r_prepare(void)
 	u8 rtc[6];
 
 	s2r_mark('P');	/* devices suspended (normal phase), all CPUs online */
+	s2r_write_retention_pattern();
 	/* clear the wake-path breadcrumbs the ESP stage-2 m1n1 leaves at 0x9f0b..0x9f0c */
 	{
 		static const u8 zero[2];
