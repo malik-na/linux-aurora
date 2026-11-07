@@ -49,6 +49,13 @@ apple-sep-y := sep.o hwrng_shim.o store_shim.o bio_shim.o sha_shim.o \
 obj-$(CONFIG_APPLE_PMP) += apple-pmp.o
 apple-pmp-y := pmp.o pmp-export.o
 
+obj-$(CONFIG_APPLE_PMP_V1) += apple-pmp-v1.o
+apple-pmp-v1-y := pmp_v1.o
+obj-$(CONFIG_APPLE_PMP_V1_DT) += apple-pmp-v1-dt.o
+apple-pmp-v1-dt-y := pmp_v1_dt.o pmp-v1.dtbo.o
+# The setup code adds the interrupt parent from the base tree.
+DTC_FLAGS_pmp-v1 := -Wno-interrupts_property
+
 obj-$(CONFIG_APPLE_MCC) += apple-mcc.o
 apple-mcc-y := mcc.o
 

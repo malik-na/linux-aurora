@@ -219,6 +219,31 @@ config APPLE_PMP
 
 	  Say 'y' here if you have an Apple SoC.
 
+config APPLE_PMP_V1
+	tristate "Apple PMP v1 (M1) bring-up"
+	depends on ARCH_APPLE || COMPILE_TEST
+	depends on RUST
+	depends on OF_OVERLAY
+	select RUST_APPLE_RTKIT
+	select APPLE_PMP_V1_DT
+	default m if ARCH_APPLE
+	help
+	  Lab experiment: start the power management coprocessor (PMP)
+	  firmware that iBoot preloads on Apple M1 (t8103), run its
+	  startup handshake and report device power states to it.
+
+	  The module is not loaded automatically: load it with
+	  "modprobe apple-pmp-v1". It cannot be unloaded once the PMP
+	  runs; reboot to stop it.
+
+config APPLE_PMP_V1_DT
+	bool
+	help
+	  Built-in part of APPLE_PMP_V1: the device tree overlay that adds
+	  the PMP nodes when the module loads, the hold that keeps ps_pmp
+	  and ps_pms_sram on, and the apple_pmp_v1_hold=1 boot option that
+	  marks them always-on before the PMGR driver probes.
+
 config APPLE_CLPC
 	tristate "Apple host performance controller floors"
 	depends on ARCH_APPLE || COMPILE_TEST
