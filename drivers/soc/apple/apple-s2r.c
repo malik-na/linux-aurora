@@ -172,7 +172,7 @@ static void __iomem *mcc_glob, *mcc_planes;
 /*
  * Test bits stored in PMU 0x9f0c at the commit (m1n1 overwrites 0x9f0c only if the wake
  * reaches it): bit 0 MBSE slpw, 1 WKTP=2, 2 MBSE slpa, 3 SMC AP power 0x201 acked (set by
- * macsmc through apple_s2r_note_smc()), 4 every MCC plane flushed, 7 = record valid.
+ * macsmc through apple_s2r_note_smc()), 4 every MCC plane flushed, 5 PMP idled, 7 = record valid.
  */
 static u8 s2r_handshake_bits;
 
@@ -206,6 +206,22 @@ static void s2r_write_retention_pattern(void)
 	dsb(sy);
 	iounmap(p);
 }
+
+/*
+ * The PMP (power-management coprocessor), when the pmp_v1 module runs it: macOS idles it
+ * (SET_AP_POWER 0x201 then SET_IOP_POWER 0x201) between MBSE slpw and slpa. .prepare
+ * sits exactly there: after every device's .suspend (macsmc sends slpw), before
+ * .suspend_late (macsmc sends slpa). pmp_v1 registers the callback once its RTKit is up.
+ */
+static int (*s2r_pmp_power)(bool idle);
+static bool s2r_pmp_idled;
+
+void apple_s2r_set_pmp_power(int (*fn)(bool idle))
+{
+	WRITE_ONCE(s2r_pmp_power, fn);
+	pr_info("PMP power hook %s\n", fn ? "registered" : "removed");
+}
+EXPORT_SYMBOL_GPL(apple_s2r_set_pmp_power);
 
 static bool spmi_macos = true;
 module_param(spmi_macos, bool, 0644);
@@ -533,6 +549,21 @@ static int apple_s2r_prepare(void)
 	 * anywhere from here (late/noirq suspend, CPU offline, the commit) resets the SoC.
 	 * .finish runs on every exit after .prepare and gives WD1 back.
 	 */
+	{
+		int (*fn)(bool) = READ_ONCE(s2r_pmp_power);
+
+		s2r_pmp_idled = false;
+		s2r_handshake_bits &= ~BIT(5);
+		if (fn) {
+			int r = fn(true);
+
+			pr_info("PMP idle (AP 0x201, IOP 0x201): %d\n", r);
+			if (!r) {
+				s2r_pmp_idled = true;
+				s2r_handshake_bits |= BIT(5);
+			}
+		}
+	}
 	s2r_arm_deadman();
 	pr_info("entering: cluster state E %#x P %#x, nub-spmi IRQ enable %#x pending %#x, alarm %u s, dead-man %u s\n",
 		readl_relaxed(pmgr + PMGR_CLUSTER_STATE(0)), readl_relaxed(pmgr + PMGR_CLUSTER_STATE(1)),
@@ -588,6 +619,11 @@ static int apple_s2r_enter(suspend_state_t state)
 
 static void apple_s2r_finish(void)
 {
+	if (s2r_pmp_idled && READ_ONCE(s2r_pmp_power)) {
+		s2r_pmp_idled = false;
+		pr_info("PMP wake after an aborted entry: %d\n", s2r_pmp_power(false));
+	}
+
 	/* only reached when the suspend did not happen: undo the dead-man and the deep-sleep arming */
 	if (wd1_saved) {
 		writel_relaxed(0, aon_wdt + WDT_WD1_CTRL);

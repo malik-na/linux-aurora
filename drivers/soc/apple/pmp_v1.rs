@@ -892,6 +892,14 @@ impl platform::Driver for PmpDriver {
         }
 
         if data.state() == ST_READY {
+            // Let apple-s2r idle the PMP between MBSE slpw and slpa, as macOS does.
+            // The PmpData is leaked above, so the pointer stays valid for good.
+            PMP_FOR_S2R.store(&*data as *const PmpData as *mut PmpData, Ordering::Release);
+            // SAFETY: apple-s2r stores the function pointer; the callback only uses the
+            // leaked PmpData.
+            unsafe { apple_s2r_set_pmp_power(Some(pmp_s2r_power)) };
+            dev_info!(dev, "PMPv1: S2R idle hook registered\n");
+
             // SAFETY: The poll work is initialised and not yet queued, so its
             // timer is idle. A deferrable timer does not wake an idle CPU.
             unsafe {
@@ -912,7 +920,39 @@ impl platform::Driver for PmpDriver {
     }
 }
 
+/// The running PMP, for apple-s2r's idle/wake hook (set once at probe, never cleared).
+static PMP_FOR_S2R: core::sync::atomic::AtomicPtr<PmpData> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+/// apple-s2r hook: idle the PMP (AP 0x201, IOP 0x201) before a system sleep, or wake
+/// it again after an aborted entry. Called from the suspend path, process context.
+unsafe extern "C" fn pmp_s2r_power(idle: bool) -> core::ffi::c_int {
+    let p = PMP_FOR_S2R.load(Ordering::Acquire);
+    if p.is_null() {
+        return ENODEV.to_errno();
+    }
+    // SAFETY: set from a PmpData that probe leaked; it is never freed.
+    let data = unsafe { &*p };
+    let mut guard = data.rtkit.lock();
+    let r = match guard.as_mut().as_pin_mut() {
+        None => Err(ENODEV),
+        Some(rtk) => {
+            if idle {
+                rtk.idle()
+            } else {
+                rtk.wake()
+            }
+        }
+    };
+    match r {
+        Ok(()) => 0,
+        Err(e) => e.to_errno(),
+    }
+}
+
 extern "C" {
+    /// Built-in (apple-s2r.c): the S2R driver's PMP idle/wake hook.
+    fn apple_s2r_set_pmp_power(f: Option<unsafe extern "C" fn(bool) -> core::ffi::c_int>);
     /// Built-in (pmp_v1_dt.c): holds ps_pmp and ps_pms_sram on and adds the
     /// PMP nodes from the built-in overlay. Idempotent.
     fn apple_pmp_v1_dt_setup() -> core::ffi::c_int;

@@ -292,6 +292,13 @@ impl<T: Operations> RtKit<T> {
         self.retain_shared_buffers = true;
     }
 
+    /// Puts the coprocessor into idle (AP power 0x201, then IOP power 0x201, each acked),
+    /// as macOS does with the PMP before a system sleep. `wake` brings it back.
+    pub fn idle(self: Pin<&mut Self>) -> Result {
+        // SAFETY: `rtk` is valid and the mutable borrow excludes other callers.
+        to_result(unsafe { bindings::apple_rtkit_idle(self.rtk) })
+    }
+
     /// Boots (wakes up) the RTKit coprocessor.
     pub fn wake(self: Pin<&mut Self>) -> Result {
         // SAFETY: `rtk` is valid per the type invariant.
