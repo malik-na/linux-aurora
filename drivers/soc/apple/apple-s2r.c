@@ -54,12 +54,11 @@
 #include <linux/of.h>
 #include <linux/suspend.h>
 
+#include <asm/cpu_ops.h>
 #include <asm/cpuidle.h>
 #include <asm/suspend.h>
 #include <asm/sysreg.h>
 
-bool apple_cpu_hotplug_active(void);
-void apple_cpu_hotplug_set_s2r(bool on);
 
 /* clkgen (pmgr reg[2]) */
 #define T8103_CLKGEN			0x23b040000ULL
@@ -91,13 +90,21 @@ static const u32 pmgr_counter_blocks[] = {
 #define WAKE_SRC_PMU			54			/* NUB.SPMI0Sw3IRQ */
 #define T8103_AON_WDT			0x23d2b0000ULL
 #define WDT_WD0_CTRL			0x0c
+#define WDT_WD1_CNT			0x10
+#define WDT_WD1_ALARM			0x14
 #define WDT_WD1_CTRL			0x1c
+#define WDT_CTRL_RESET			BIT(2)
 #define WDT_EXTRA_8008			0x8008
 #define WDT_EXTRA_800C			0x800c
 #define T8103_S2R_TIMER			0x23d2c4000ULL
 
 /* nub-spmi (gen1 register layout, as m1n1 src/spmi.c) */
 #define T8103_NUB_SPMI			0x23d0d9300ULL
+#define T8103_NUB_SPMI1			0x23d0e1300ULL
+#define SPMI_IRQ_EN(w)			(0x20 + 4 * (w))	/* 1 = unmasked */
+#define SPMI_IRQ_ACK(w)			(0x60 + 4 * (w))	/* write 1 to clear */
+#define SPMI_IRQ_WORDS			9			/* 256 peripheral + 32 */
+#define SPMI_IRQ_PMU_ALARM		2			/* the RTC alarm, word 0 */
 #define SPMI_STATUS			0x00
 #define SPMI_CMD			0x04
 #define SPMI_REPLY			0x08
@@ -122,6 +129,10 @@ static const u32 pmgr_counter_blocks[] = {
 #define PMU_BOOT_STAGE			0x9f01
 #define PMU_BOOT_STAGE_SLEEP		0x50
 #define PMU_SCR_STAGE			0x9f0a
+#define PMU_SCR_NOTE			0x9f04	/* 'L' + commit RTC second (not m1n1's 'W') */
+
+/* per-cluster CPU state reported to PMP (pmgr + 0x38000): 0 = all idle */
+#define PMGR_CLUSTER_STATE(cl)		(0x38004 + 4 * (cl))
 
 /* AIC (AIC1 on t8103) */
 #define T8103_AIC			0x23b100000ULL
@@ -146,7 +157,11 @@ static bool stop_cores = true;
 module_param(stop_cores, bool, 0644);
 MODULE_PARM_DESC(stop_cores, "power the secondaries down for real (off: they park, for pm_test runs)");
 
-static void __iomem *clkgen, *pmgr, *aon_wake, *aon_wdt, *s2r_timer, *spmi, *aic;
+static void __iomem *clkgen, *pmgr, *aon_wake, *aon_wdt, *s2r_timer, *spmi, *spmi1, *aic;
+static unsigned int deadman_secs = 170;
+module_param(deadman_secs, uint, 0644);
+MODULE_PARM_DESC(deadman_secs, "arm watchdog 1 for this long across the sleep (max 178; 0 = off), "
+		 "so a wake that hangs in m1n1 still resets the SoC");
 
 static int __init apple_s2r_setup(char *arg)
 {
@@ -248,11 +263,20 @@ static int apple_s2r_finisher(unsigned long arg)
 		writel_relaxed(v, aon_wake + AON_WAKE_MASK(i));
 	}
 
-	/* 2. AON watchdogs off (macOS: WD0 CTRL and the 0x8008/0x800c words; WD1 too) */
+	/*
+	 * 2. AON watchdogs off as macOS does (WD0 CTRL, the 0x8008/0x800c words), except WD1:
+	 * the wake has no resume yet and lands in m1n1 without iBoot state, which can hang;
+	 * WD1 armed for deadman_secs (longer than the alarm) resets the SoC in that case.
+	 */
 	writel_relaxed(0, aon_wdt + WDT_EXTRA_8008);
 	writel_relaxed(0, aon_wdt + WDT_EXTRA_800C);
 	writel_relaxed(0, aon_wdt + WDT_WD0_CTRL);
 	writel_relaxed(0, aon_wdt + WDT_WD1_CTRL);
+	if (deadman_secs) {
+		writel_relaxed(0, aon_wdt + WDT_WD1_CNT);
+		writel_relaxed(min(deadman_secs, 178U) * 24000000U, aon_wdt + WDT_WD1_ALARM);
+		writel_relaxed(WDT_CTRL_RESET, aon_wdt + WDT_WD1_CTRL);
+	}
 
 	/* 3. boot_stage: "asleep", so a reset during sleep is not a boot failure */
 	b = PMU_BOOT_STAGE_SLEEP;
@@ -286,6 +310,24 @@ static int apple_s2r_finisher(unsigned long arg)
 	}
 	s2r_mark('d');
 
+	/*
+	 * 5b. SPMI: only the PMU alarm (peripheral IRQ 2) may raise nub-spmi's line, which is
+	 * wake source 54; a vector left pending would wake the AP at once. nub-spmi1 fully off.
+	 */
+	for (i = 0; i < SPMI_IRQ_WORDS; i++) {
+		writel_relaxed(i == 0 ? BIT(SPMI_IRQ_PMU_ALARM) : 0, spmi + SPMI_IRQ_EN(i));
+		writel_relaxed(0, spmi1 + SPMI_IRQ_EN(i));
+		writel_relaxed(0xffffffff, spmi + SPMI_IRQ_ACK(i));
+		writel_relaxed(0xffffffff, spmi1 + SPMI_IRQ_ACK(i));
+	}
+
+	/* 5c. the commit's RTC second, so the next boot can tell a real sleep from a WD2 reset */
+	if (!pmu_read(PMU_RTC_NOW, rtc, sizeof(rtc))) {
+		u8 note[5] = { 'L', rtc[2], rtc[3], rtc[4], rtc[5] };
+
+		pmu_write(PMU_SCR_NOTE, note, sizeof(note));
+	}
+
 	/* 6. the commit */
 	writel_relaxed(1, s2r_timer);
 	dsb(sy);
@@ -316,6 +358,15 @@ static int apple_s2r_finisher(unsigned long arg)
 	dsb(sy);
 	s2r_mark('g');
 
+	/* 9b. ack whatever our own PMU commands left pending; report both clusters idle */
+	for (i = 0; i < SPMI_IRQ_WORDS; i++) {
+		writel_relaxed(0xffffffff, spmi + SPMI_IRQ_ACK(i));
+		writel_relaxed(0xffffffff, spmi1 + SPMI_IRQ_ACK(i));
+	}
+	writel_relaxed(0, pmgr + PMGR_CLUSTER_STATE(0));
+	writel_relaxed(0, pmgr + PMGR_CLUSTER_STATE(1));
+	dsb(sy);
+
 	/* 10. down */
 	s2r_deep_wfi();
 	return -EIO; /* not reached */
@@ -328,6 +379,10 @@ static int apple_s2r_valid(suspend_state_t state)
 
 static int apple_s2r_prepare(void)
 {
+	pr_info("entering: cluster state E %#x P %#x, nub-spmi IRQ enable %#x pending %#x, alarm %u s, dead-man %u s\n",
+		readl_relaxed(pmgr + PMGR_CLUSTER_STATE(0)), readl_relaxed(pmgr + PMGR_CLUSTER_STATE(1)),
+		readl_relaxed(spmi + SPMI_IRQ_EN(0)), readl_relaxed(spmi + SPMI_IRQ_ACK(0)),
+		alarm_secs, deadman_secs);
 	if (stop_cores)
 		apple_cpu_hotplug_set_s2r(true);
 	return 0;
@@ -375,8 +430,9 @@ static int __init apple_s2r_init(void)
 	aon_wdt = ioremap(T8103_AON_WDT, SZ_64K);
 	s2r_timer = ioremap(T8103_S2R_TIMER, SZ_4K);
 	spmi = ioremap(T8103_NUB_SPMI, SZ_256);
+	spmi1 = ioremap(T8103_NUB_SPMI1, SZ_256);
 	aic = ioremap(T8103_AIC, SZ_64K);
-	if (!clkgen || !pmgr || !aon_wake || !aon_wdt || !s2r_timer || !spmi || !aic) {
+	if (!clkgen || !pmgr || !aon_wake || !aon_wdt || !s2r_timer || !spmi || !spmi1 || !aic) {
 		pr_err("ioremap failed\n");
 		return -ENOMEM;
 	}

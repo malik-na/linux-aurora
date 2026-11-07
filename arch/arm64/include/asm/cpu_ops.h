@@ -53,12 +53,14 @@ extern const struct cpu_operations *get_cpu_ops(int cpu);
 const struct cpu_operations * __init
 apple_cpu_hotplug_ops(const struct cpu_operations *ops);
 bool apple_cpu_hotplug_active(void);
+void apple_cpu_hotplug_set_s2r(bool on);
 #else
 static inline const struct cpu_operations *
 apple_cpu_hotplug_ops(const struct cpu_operations *ops)
 {
 	return ops;
 }
+static inline void apple_cpu_hotplug_set_s2r(bool on) { }
 static inline bool apple_cpu_hotplug_active(void)
 {
 	return false;

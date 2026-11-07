@@ -286,11 +286,6 @@ static bool apple_restarts_blocked;
  */
 static bool apple_cpu_s2r_stop;
 
-bool apple_cpu_hotplug_active(void)
-{
-	return apple_hp_active;
-}
-
 void apple_cpu_hotplug_set_s2r(bool on)
 {
 	WRITE_ONCE(apple_cpu_s2r_stop, on);
