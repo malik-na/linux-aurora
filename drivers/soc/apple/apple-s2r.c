@@ -169,6 +169,19 @@ MODULE_PARM_DESC(stop_cores, "power the secondaries down for real (off: they par
 
 static void __iomem *clkgen, *pmgr, *aon_wake, *aon_wdt, *s2r_timer, *spmi, *spmi1, *aic;
 static void __iomem *mcc_glob, *mcc_planes;
+/*
+ * Test bits stored in PMU 0x9f0c at the commit (m1n1 overwrites 0x9f0c only if the wake
+ * reaches it): bit 0 MBSE slpw, 1 WKTP=2, 2 MBSE slpa, 3 SMC AP power 0x201 acked (set by
+ * macsmc through apple_s2r_note_smc()), 4 every MCC plane flushed, 7 = record valid.
+ */
+static u8 s2r_handshake_bits;
+
+void apple_s2r_note_smc(u8 bits)
+{
+	s2r_handshake_bits = (s2r_handshake_bits & ~0x0f) | (bits & 0x0f);
+}
+EXPORT_SYMBOL_GPL(apple_s2r_note_smc);
+
 static bool mcc_flush = true;
 module_param(mcc_flush, bool, 0644);
 MODULE_PARM_DESC(mcc_flush, "turn the system-level cache off and flush it before the commit, as macOS does");
@@ -316,19 +329,31 @@ static int apple_s2r_finisher(unsigned long arg)
 	 * ways off, broadcast off, then wait until every plane's tag and data flush is done.
 	 * Dirty SLC lines reach DRAM before the SoC goes down.
 	 */
+	s2r_handshake_bits &= ~BIT(4);
 	if (mcc_flush) {
+		bool flushed = true;
+
 		writel_relaxed(1, mcc_glob + MCC_BCAST_A);
 		writel_relaxed(1, mcc_glob + MCC_BCAST_B);
+		readl_relaxed(mcc_glob + MCC_BCAST_B);
+		dsb(sy);
 		writel_relaxed(0, mcc_planes + MCC_PLANE_CACHE_ENABLE);
+		readl_relaxed(mcc_planes + MCC_PLANE_CACHE_ENABLE);
+		dsb(sy);
 		writel_relaxed(0, mcc_glob + MCC_BCAST_A);
 		writel_relaxed(0, mcc_glob + MCC_BCAST_B);
+		dsb(sy);
 		for (i = 0; i < MCC_PLANES; i++) {
 			int t;
 
 			for (t = 0; t < 1000000; t++)
 				if (!(readl_relaxed(mcc_planes + MCC_PLANE_CACHE_STATUS(i)) & MCC_STATUS_BUSY))
 					break;
+			if (t == 1000000)
+				flushed = false;
 		}
+		if (flushed)
+			s2r_handshake_bits |= BIT(4);
 	}
 	s2r_mark('b');
 
@@ -372,6 +397,11 @@ static int apple_s2r_finisher(unsigned long arg)
 
 	/* 5c. the commit's RTC second, so the next boot can tell a real sleep from a WD2 reset */
 	if (!pmu_read(PMU_RTC_NOW, rtc, sizeof(rtc))) {
+		{
+			u8 hb = s2r_handshake_bits | BIT(7);
+
+			pmu_write(PMU_SCR_WAKE_MARK + 1, &hb, 1);
+		}
 		u8 note[5] = { 'L', rtc[2], rtc[3], rtc[4], rtc[5] };
 
 		pmu_write(PMU_SCR_NOTE, note, sizeof(note));

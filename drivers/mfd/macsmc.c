@@ -549,6 +549,13 @@ static bool apple_smc_sleep_handshake = true;
 module_param_named(sleep_handshake, apple_smc_sleep_handshake, bool, 0644);
 MODULE_PARM_DESC(sleep_handshake, "send the macOS SMC sleep/wake handshake around deep (mem) suspend");
 
+#if IS_ENABLED(CONFIG_APPLE_S2R)
+void apple_s2r_note_smc(u8 bits);
+#else
+static inline void apple_s2r_note_smc(u8 bits) { }
+#endif
+static u8 apple_smc_handshake_bits;
+
 static bool apple_smc_deep_suspend(void)
 {
 	return apple_smc_sleep_handshake && pm_suspend_target_state == PM_SUSPEND_MEM;
@@ -562,6 +569,8 @@ static int apple_smc_suspend(struct device *dev)
 	if (!apple_smc_deep_suspend())
 		return 0;
 	ret = apple_smc_write_u32(smc, SMC_KEY(MBSE), SMC_KEY(slpw));
+	apple_smc_handshake_bits = ret ? 0 : BIT(0);
+	apple_s2r_note_smc(apple_smc_handshake_bits);
 	dev_info(dev, "sleep handshake: MBSE slpw (%d)\n", ret);
 	return 0;
 }
@@ -576,6 +585,8 @@ static int apple_smc_suspend_late(struct device *dev)
 	r1 = apple_smc_write_u8(smc, SMC_KEY(WKTP), 2);
 	r2 = apple_smc_write_u32(smc, SMC_KEY(MBSE), SMC_KEY(slpa));
 	r3 = apple_rtkit_set_ap_power(smc->rtk, SMC_AP_POWER_IDLE);
+	apple_smc_handshake_bits |= (r1 ? 0 : BIT(1)) | (r2 ? 0 : BIT(2)) | (r3 ? 0 : BIT(3));
+	apple_s2r_note_smc(apple_smc_handshake_bits);
 	dev_info(dev, "sleep handshake: WKTP=2 (%d), MBSE slpa (%d), AP power 0x201 (%d)\n",
 		 r1, r2, r3);
 	return 0;
