@@ -131,6 +131,7 @@ static const u32 pmgr_counter_blocks[] = {
 #define PMU_BOOT_STAGE_SLEEP		0x50
 #define PMU_SCR_STAGE			0x9f0a
 #define PMU_SCR_NOTE			0x9f04	/* 'L' + commit RTC second (not m1n1's 'W') */
+#define PMU_SCR_WAKE_MARK		0x9f0b	/* 0x9f0b..0x9f0c: the ESP stage-2 m1n1 wake breadcrumbs */
 
 /* per-cluster CPU state reported to PMP (pmgr + 0x38000): 0 = all idle */
 #define PMGR_CLUSTER_STATE(cl)		(0x38004 + 4 * (cl))
@@ -159,6 +160,10 @@ module_param(stop_cores, bool, 0644);
 MODULE_PARM_DESC(stop_cores, "power the secondaries down for real (off: they park, for pm_test runs)");
 
 static void __iomem *clkgen, *pmgr, *aon_wake, *aon_wdt, *s2r_timer, *spmi, *spmi1, *aic;
+static unsigned int wfi_return_secs = 30;
+module_param(wfi_return_secs, uint, 0644);
+MODULE_PARM_DESC(wfi_return_secs, "if the final wfi returns (the core was not power-gated), reset via WD1 after this long (0 = off)");
+
 static unsigned int deadman_secs = 170;
 module_param(deadman_secs, uint, 0644);
 MODULE_PARM_DESC(deadman_secs, "arm watchdog 1 for this long across the sleep (max 178; 0 = off), "
@@ -241,10 +246,22 @@ static void s2r_deep_wfi(void)
 	v = read_sysreg_s(SYS_APL_CYC_OVRD);
 	write_sysreg_s((v & ~CYC_OVRD_MODES) | CYC_OVRD_S2R, SYS_APL_CYC_OVRD);
 	isb();
-	for (;;) {
+	for (bool rearmed = false;;) {
 		dsb(sy);
 		isb();
 		wfi();
+		/*
+		 * A wfi that returns means this core was not power-gated (the SoC did not
+		 * take it down). Mark it once with its own WD1 time, so the reboot time
+		 * tells this case apart from every stage of the wake path.
+		 */
+		if (!rearmed && wfi_return_secs) {
+			writel_relaxed(0, aon_wdt + WDT_WD1_CTRL);
+			writel_relaxed(0, aon_wdt + WDT_WD1_CNT);
+			writel_relaxed(min(wfi_return_secs, 178U) * 24000000U, aon_wdt + WDT_WD1_ALARM);
+			writel_relaxed(WDT_CTRL_RESET, aon_wdt + WDT_WD1_CTRL);
+			rearmed = true;
+		}
 	}
 }
 
@@ -389,6 +406,12 @@ static int apple_s2r_prepare(void)
 	u8 rtc[6];
 
 	s2r_mark('P');	/* devices suspended (normal phase), all CPUs online */
+	/* clear the wake-path breadcrumbs the ESP stage-2 m1n1 leaves at 0x9f0b..0x9f0c */
+	{
+		static const u8 zero[2];
+
+		pmu_write(PMU_SCR_WAKE_MARK, zero, sizeof(zero));
+	}
 	on_each_cpu(s2r_save_acc, NULL, 1);
 	/* 'P' + the RTC second here; the commit overwrites it with 'L' + its second */
 	if (!pmu_read(PMU_RTC_NOW, rtc, sizeof(rtc))) {
