@@ -386,8 +386,22 @@ static void s2r_save_acc(void *unused)
 
 static int apple_s2r_prepare(void)
 {
-	s2r_mark('P');	/* devices still awake, all CPUs online */
+	u8 rtc[6];
+
+	s2r_mark('P');	/* devices suspended (normal phase), all CPUs online */
 	on_each_cpu(s2r_save_acc, NULL, 1);
+	/* 'P' + the RTC second here; the commit overwrites it with 'L' + its second */
+	if (!pmu_read(PMU_RTC_NOW, rtc, sizeof(rtc))) {
+		u8 note[5] = { 'P', rtc[2], rtc[3], rtc[4], rtc[5] };
+
+		pmu_write(PMU_SCR_NOTE, note, sizeof(note));
+	}
+	/*
+	 * apple_wdt's suspend has stopped WD1 by now: arm it as the dead-man, so a hang
+	 * anywhere from here (late/noirq suspend, CPU offline, the commit) resets the SoC.
+	 * .finish runs on every exit after .prepare and gives WD1 back.
+	 */
+	s2r_arm_deadman();
 	pr_info("entering: cluster state E %#x P %#x, nub-spmi IRQ enable %#x pending %#x, alarm %u s, dead-man %u s\n",
 		readl_relaxed(pmgr + PMGR_CLUSTER_STATE(0)), readl_relaxed(pmgr + PMGR_CLUSTER_STATE(1)),
 		readl_relaxed(spmi + SPMI_IRQ_EN(0)), readl_relaxed(spmi + SPMI_IRQ_ACK(0)),
@@ -397,10 +411,18 @@ static int apple_s2r_prepare(void)
 	return 0;
 }
 
+static u32 wd1_bite_saved;
+static bool wd1_saved;
+
+/* WD1 is also apple_wdt's timer: keep its BITE_TIME to give it back in .finish */
 static void s2r_arm_deadman(void)
 {
 	if (!deadman_secs)
 		return;
+	if (!wd1_saved) {
+		wd1_bite_saved = readl_relaxed(aon_wdt + WDT_WD1_ALARM);
+		wd1_saved = true;
+	}
 	writel_relaxed(0, aon_wdt + WDT_WD1_CTRL);
 	writel_relaxed(0, aon_wdt + WDT_WD1_CNT);
 	writel_relaxed(min(deadman_secs, 178U) * 24000000U, aon_wdt + WDT_WD1_ALARM);
@@ -410,11 +432,16 @@ static void s2r_arm_deadman(void)
 static int apple_s2r_prepare_late(void)
 {
 	s2r_mark('N');	/* devices suspended (noirq), secondaries still online */
-	/*
-	 * apple_wdt has stopped WD1 by now (its suspend ran): arm it as the dead-man
-	 * already, so a hang while the secondaries go offline resets the SoC too.
-	 */
-	s2r_arm_deadman();
+	return 0;
+}
+
+static int apple_s2r_begin(suspend_state_t state)
+{
+	/* the S2R stop's cluster logic assumes every secondary takes part */
+	if (!cpumask_equal(cpu_online_mask, cpu_present_mask)) {
+		pr_warn("not every CPU is online: refusing \"mem\"\n");
+		return -EBUSY;
+	}
 	return 0;
 }
 
@@ -429,7 +456,12 @@ static int apple_s2r_enter(suspend_state_t state)
 
 static void apple_s2r_finish(void)
 {
-	/* only reached when the suspend did not happen: undo the deep-sleep arming */
+	/* only reached when the suspend did not happen: undo the dead-man and the deep-sleep arming */
+	if (wd1_saved) {
+		writel_relaxed(0, aon_wdt + WDT_WD1_CTRL);
+		writel_relaxed(wd1_bite_saved, aon_wdt + WDT_WD1_ALARM);
+		wd1_saved = false;
+	}
 	if (acc_ovrd_saved)
 		write_sysreg_s(acc_ovrd_saved, SYS_APL_ACC_OVRD);
 	apple_cpu_hotplug_set_s2r(false);
@@ -437,6 +469,7 @@ static void apple_s2r_finish(void)
 
 static const struct platform_suspend_ops apple_s2r_ops = {
 	.valid		= apple_s2r_valid,
+	.begin		= apple_s2r_begin,
 	.prepare	= apple_s2r_prepare,
 	.prepare_late	= apple_s2r_prepare_late,
 	.enter		= apple_s2r_enter,
