@@ -54,6 +54,8 @@ const struct cpu_operations * __init
 apple_cpu_hotplug_ops(const struct cpu_operations *ops);
 bool apple_cpu_hotplug_active(void);
 void apple_cpu_hotplug_set_s2r(bool on);
+void apple_cpu_hotplug_set_s2r_hold(bool hold);
+void apple_cpu_s2r_release_all(void);
 #else
 static inline const struct cpu_operations *
 apple_cpu_hotplug_ops(const struct cpu_operations *ops)
@@ -61,6 +63,8 @@ apple_cpu_hotplug_ops(const struct cpu_operations *ops)
 	return ops;
 }
 static inline void apple_cpu_hotplug_set_s2r(bool on) { }
+static inline void apple_cpu_hotplug_set_s2r_hold(bool hold) { }
+static inline void apple_cpu_s2r_release_all(void) { }
 static inline bool apple_cpu_hotplug_active(void)
 {
 	return false;

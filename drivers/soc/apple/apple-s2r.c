@@ -163,6 +163,10 @@ static bool apple_s2r_enabled __ro_after_init;
 static unsigned int alarm_secs = 60;
 module_param(alarm_secs, uint, 0644);
 MODULE_PARM_DESC(alarm_secs, "PMU RTC alarm, seconds after the entry (0: none, wake by nothing)");
+static bool global_sleep = true;
+module_param(global_sleep, bool, 0644);
+MODULE_PARM_DESC(global_sleep, "secondaries hold in WFE after their stop request until after the commit, then every core enters the deep WFI together, as XNU and the macOS traces do (0: they go down before the finisher)");
+
 static bool stop_cores = true;
 module_param(stop_cores, bool, 0644);
 MODULE_PARM_DESC(stop_cores, "power the secondaries down for real (off: they park, for pm_test runs)");
@@ -548,6 +552,15 @@ static int apple_s2r_finisher(unsigned long arg)
 	writel_relaxed(0, pmgr + PMGR_CLUSTER_STATE(1));
 	dsb(sy);
 
+	/*
+	 * 9c. global sleep: release the secondaries held in WFE since their stop request;
+	 * each arms deep sleep and enters the deep WFI now, together with this core.
+	 */
+	if (stop_cores && global_sleep) {
+		s2r_mark('h');
+		apple_cpu_s2r_release_all();
+	}
+
 	/* 10. down */
 	s2r_deep_wfi();
 	return -EIO; /* not reached */
@@ -610,8 +623,10 @@ static int apple_s2r_prepare(void)
 		readl_relaxed(pmgr + PMGR_CLUSTER_STATE(0)), readl_relaxed(pmgr + PMGR_CLUSTER_STATE(1)),
 		readl_relaxed(spmi + SPMI_IRQ_EN(0)), readl_relaxed(spmi + SPMI_IRQ_ACK(0)),
 		alarm_secs, deadman_secs);
-	if (stop_cores)
+	if (stop_cores) {
+		apple_cpu_hotplug_set_s2r_hold(global_sleep);
 		apple_cpu_hotplug_set_s2r(true);
+	}
 	return 0;
 }
 
@@ -673,7 +688,9 @@ static void apple_s2r_finish(void)
 	}
 	if (acc_ovrd_saved)
 		write_sysreg_s(acc_ovrd_saved, SYS_APL_ACC_OVRD);
+	/* a held secondary stays held (marked stuck) after an abort: deep WFI under a running SoC hangs */
 	apple_cpu_hotplug_set_s2r(false);
+	apple_cpu_hotplug_set_s2r_hold(false);
 }
 
 static const struct platform_suspend_ops apple_s2r_ops = {

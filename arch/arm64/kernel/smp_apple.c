@@ -223,6 +223,7 @@ struct apple_cpu {
 	int state;			/* enum apple_cpu_state */
 	int down_mode;			/* APPLE_CPU_PARKED or APPLE_CPU_OFF */
 	bool s2r_deep;			/* S2R stop: last core of a cluster CPU0 is not in */
+	bool s2r_hold;			/* S2R stop: wait in WFE for CPU0's release (global sleep) */
 	const char *park_reason;	/* why the last offline parked */
 	const char *stuck_reason;
 	struct apple_cpu_regs snap;	/* first boot: what m1n1 left */
@@ -290,6 +291,51 @@ static bool apple_cpu_s2r_stop;
 void apple_cpu_hotplug_set_s2r(bool on)
 {
 	WRITE_ONCE(apple_cpu_s2r_stop, on);
+}
+
+/*
+ * S2R global sleep, as XNU does on H13 (__ARM_GLOBAL_SLEEP_BIT__, ml_arm_sleep()
+ * and arm64_stall_sleep) and as the macOS 27 traces show on t8103 (hv-try54/57:
+ * every secondary writes its CPU-start stop request about 40 ms before the commit,
+ * and only after CPU0's last pre-commit PMGR writes do all eight cores write
+ * ACC_OVRD and CYC_OVRD and WFI): with the hold on, a secondary taken down for S2R
+ * requests its stop and then waits in WFE, MMU off, until CPU0 sets the release
+ * word below after the commit. Then every core arms ACC_OVRD's deep-sleep bits
+ * itself and enters the deep WFI. Without the hold the secondaries go down at
+ * once and only the last core of a cluster other than CPU0's arms deep sleep.
+ *
+ * The word is read with the MMU off (Device, uncached): every write here is
+ * cleaned to the PoC. Non-static: smp_apple_asm.S takes its address (adr_l,
+ * which with the MMU off gives the PA).
+ */
+struct apple_cpu_s2r_release_word {
+	unsigned long go;
+} __aligned(SZ_128);
+
+struct apple_cpu_s2r_release_word apple_cpu_s2r_release
+	__section(".mmuoff.data.write");
+static bool apple_cpu_s2r_hold;
+
+static void apple_cpu_s2r_release_write(unsigned long go)
+{
+	unsigned long va = (unsigned long)&apple_cpu_s2r_release.go;
+
+	WRITE_ONCE(apple_cpu_s2r_release.go, go);
+	dcache_clean_inval_poc(va, va + sizeof(apple_cpu_s2r_release.go));
+	dsb(sy);
+}
+
+void apple_cpu_hotplug_set_s2r_hold(bool hold)
+{
+	WRITE_ONCE(apple_cpu_s2r_hold, hold);
+	apple_cpu_s2r_release_write(0);
+}
+
+/* CPU0, interrupts off, after the commit: let the held secondaries go down */
+void apple_cpu_s2r_release_all(void)
+{
+	apple_cpu_s2r_release_write(1);
+	sev();
 }
 
 static int __init apple_cpu_hotplug_setup(char *arg)
@@ -771,6 +817,7 @@ static int apple_cpu_disable(unsigned int cpu)
 		 */
 		ac->s2r_deep = apple_cpu_cluster(cpu) != apple_cpu_cluster(0) &&
 			       apple_cpu_last_in_cluster(cpu);
+		ac->s2r_hold = READ_ONCE(apple_cpu_s2r_hold);
 		return 0;
 	}
 
@@ -851,7 +898,8 @@ static void apple_cpu_die(unsigned int cpu)
 	if (s2r)
 		jump(__pa_symbol(apple_cpu_s2r_mmuoff),
 		     T8103_CPU_START + CPU_START_STOP, flushed_pa,
-		     apple_cpu_bit(cpu) | (ac->s2r_deep ? BIT(31) : 0));
+		     apple_cpu_bit(cpu) | (ac->s2r_deep ? BIT(31) : 0) |
+		     (ac->s2r_hold ? BIT(30) : 0));
 	else if (off)
 		jump(__pa_symbol(apple_cpu_off_mmuoff),
 		     T8103_CPU_START + CPU_START_STOP, flushed_pa,

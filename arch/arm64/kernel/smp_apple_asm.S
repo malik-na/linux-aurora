@@ -183,6 +183,8 @@ SYM_FUNC_END(apple_cpu_off_mmuoff)
 
 /*
  * apple_cpu_s2r_mmuoff(stop_reg_pa, flushed_pa, stop_bit) - MMU off, at its PA.
+ * stop_bit: bits 15:0 the core's stop bit, bit 30 hold for CPU0's release
+ * (global sleep), bit 31 arm ACC_OVRD's deep sleep.
  *
  * Suspend-to-RAM: what macOS 27 does on every secondary before the commit
  * (E1-E3 of the t8103 sleep sequence): clean L1, report it, request this
@@ -210,6 +212,21 @@ SYM_FUNC_START(apple_cpu_s2r_mmuoff)
 	str	w22, [x19]			// request this core's stop
 	dsb	sy
 	isb
+
+	/*
+	 * Global sleep (bit 30): hold here, stop already requested, until CPU0
+	 * sets apple_cpu_s2r_release after the commit (XNU's arm64_stall_sleep
+	 * loop), then arm ACC_OVRD's deep sleep on every core, as macOS does.
+	 * MMU off: the load is uncached, and adr_l gives the word's PA.
+	 */
+	tbz	x20, #30, 3f
+	adr_l	x23, apple_cpu_s2r_release
+4:	ldr	x0, [x23]
+	cbnz	x0, 5f
+	wfe
+	b	4b
+5:	orr	x20, x20, #(1 << 31)
+3:
 
 	/*
 	 * ACC_OVRD is per cluster: arm deep sleep only when bit 31 of the stop
