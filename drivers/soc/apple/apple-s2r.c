@@ -167,6 +167,8 @@ static bool global_sleep = true;
 module_param(global_sleep, bool, 0644);
 MODULE_PARM_DESC(global_sleep, "secondaries hold in WFE after their stop request until after the commit, then every core enters the deep WFI together, as XNU and the macOS traces do (0: they go down before the finisher)");
 
+static bool s2r_hold_armed;
+
 static bool stop_cores = true;
 module_param(stop_cores, bool, 0644);
 MODULE_PARM_DESC(stop_cores, "power the secondaries down for real (off: they park, for pm_test runs)");
@@ -537,6 +539,12 @@ static int apple_s2r_finisher(unsigned long arg)
 	writel_relaxed(1, s2r_timer);
 	dsb(sy);
 	s2r_mark('g');
+	/*
+	 * 'h': global sleep armed, release next. Marked here, before 9b's ack: every SPMI
+	 * command leaves a vector that must be acked before the deep WFI.
+	 */
+	if (s2r_hold_armed)
+		s2r_mark('h');
 
 	/* 9b. ack whatever our own PMU commands left pending; report both clusters idle */
 	if (spmi_macos) {
@@ -556,10 +564,8 @@ static int apple_s2r_finisher(unsigned long arg)
 	 * 9c. global sleep: release the secondaries held in WFE since their stop request;
 	 * each arms deep sleep and enters the deep WFI now, together with this core.
 	 */
-	if (stop_cores && global_sleep) {
-		s2r_mark('h');
+	if (s2r_hold_armed)
 		apple_cpu_s2r_release_all();
-	}
 
 	/* 10. down */
 	s2r_deep_wfi();
@@ -623,8 +629,10 @@ static int apple_s2r_prepare(void)
 		readl_relaxed(pmgr + PMGR_CLUSTER_STATE(0)), readl_relaxed(pmgr + PMGR_CLUSTER_STATE(1)),
 		readl_relaxed(spmi + SPMI_IRQ_EN(0)), readl_relaxed(spmi + SPMI_IRQ_ACK(0)),
 		alarm_secs, deadman_secs);
+	/* latched: the finisher releases only what cpu_die actually held */
+	s2r_hold_armed = stop_cores && global_sleep;
 	if (stop_cores) {
-		apple_cpu_hotplug_set_s2r_hold(global_sleep);
+		apple_cpu_hotplug_set_s2r_hold(s2r_hold_armed);
 		apple_cpu_hotplug_set_s2r(true);
 	}
 	return 0;
