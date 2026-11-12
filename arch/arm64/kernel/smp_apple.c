@@ -225,6 +225,7 @@ struct apple_cpu {
 	bool s2r_deep;			/* S2R stop: last core of a cluster CPU0 is not in */
 	bool s2r_hold;			/* S2R stop: wait in WFE for CPU0's release (global sleep) */
 	bool s2r_timers;		/* S2R stop: record and stop the four timers first */
+	bool s2r_woke;			/* S2R-stopped, and the SoC has woken since: restart it */
 	const char *park_reason;	/* why the last offline parked */
 	const char *stuck_reason;
 	struct apple_cpu_regs snap;	/* first boot: what m1n1 left */
@@ -392,6 +393,30 @@ u16 apple_cpu_s2r_timer_slot(unsigned int i)
 		return 0;
 	dcache_inval_poc(va, va + sizeof(apple_cpu_s2r_timers));
 	return READ_ONCE(apple_cpu_s2r_timers.slot[i]);
+}
+
+/*
+ * CPU0, after a wake from S2R (the SoC went through its power cut): every core
+ * that was stopped for it is off now and may be started again, through the
+ * cluster start word as at boot. Returns how many were marked.
+ */
+int apple_cpu_s2r_woke(void)
+{
+	unsigned int cpu;
+	int n = 0;
+
+	for_each_possible_cpu(cpu) {
+		struct apple_cpu *ac = &apple_cpus[cpu];
+
+		if (cpu == 0 || !ac->stuck || READ_ONCE(ac->state) != APPLE_CPU_S2R)
+			continue;
+		ac->stuck = false;
+		ac->stuck_reason = NULL;
+		ac->s2r_woke = true;
+		smp_store_release(&ac->state, APPLE_CPU_OFF);
+		n++;
+	}
+	return n;
 }
 
 /* CPU0, interrupts off, after the commit: let the held secondaries go down */
@@ -787,9 +812,11 @@ static int apple_cpu_boot(unsigned int cpu)
 	/*
 	 * m1n1 prints to uart0 on every RVBAR entry (m1n1 src/startup.c:221-229,
 	 * src/smp.c:107). Do not send the core there if uart0 is powered off:
-	 * leave it off rather than hang it in m1n1.
+	 * leave it off rather than hang it in m1n1. After an S2R wake the loader
+	 * is the one with the resume mailbox, which stays off the console after
+	 * the hand-over (its src/s2r.c), so the check does not apply.
 	 */
-	if (!apple_uart0_powered()) {
+	if (!ac->s2r_woke && !apple_uart0_powered()) {
 		pr_err("CPU%u: uart0 is powered off, not restarting through m1n1\n",
 		       cpu);
 		return -EIO;
@@ -813,6 +840,7 @@ static int apple_cpu_boot(unsigned int cpu)
 	smp_store_release(&ac->state, APPLE_CPU_STARTING);
 	ac->boot_pending = true;
 
+	ac->s2r_woke = false;
 	/* m1n1 smp_start_cpu(), src/smp.c:189-196 */
 	writel(apple_cpu_bit(cpu), apple_cpu_start + CPU_START_ALIVE);
 	writel(BIT(apple_cpu_core(cpu)),
