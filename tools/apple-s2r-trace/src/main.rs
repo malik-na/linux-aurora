@@ -388,13 +388,21 @@ fn deviations(cfg: &Cfg) {
         let (after, before) = if cfg.go_last { ("R23", "R24") } else { ("R24", "R26") };
         println!("mark-release-ack mmio32-write phys {:#x} 0x00000001 {after} {before}", SPMI[0] + 0x60 + 4 * 6);
     }
+    if cfg.timer_record {
+        println!("# timer_record: two scratch writes before the release (tick byte, results byte), each acknowledged at once.");
+        println!("# (The writes themselves cannot be named here: R38 fails once for each, by design, as for the mark.)");
+        let (after, before) = if cfg.go_last { ("R23", "R24") } else { ("R24", "R26") };
+        for n in 0..2 {
+            println!("timer-record-ack-{n} mmio32-write phys {:#x} 0x00000001 {after} {before}", SPMI[0] + 0x60 + 4 * 6);
+        }
+    }
 }
 
 fn usage() -> ExitCode {
     eprintln!(
         "usage: apple-s2r-trace [--alarm SECS] [--no-alarm] [--net-wd1 SECS] [--base-steps N] [--carry-over N]\n\
          \x20                      [--no-spmi-ack] [--no-spmi-setup] [--no-wake-mask] [--no-aop]\n\
-         \x20                      [--window-record] [--mark-release] [--go-last] [--watch MS] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
+         \x20                      [--window-record] [--mark-release] [--go-last] [--timer-record] [--wake-path] [--watch MS] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
     );
     ExitCode::from(2)
 }
@@ -448,6 +456,8 @@ fn main() -> ExitCode {
             "--window-record" => cfg.window_record = true,
             "--mark-release" => cfg.mark_release = true,
             "--go-last" => cfg.go_last = true,
+            "--timer-record" => cfg.timer_record = true,
+            "--wake-path" => cfg.wake_path = true,
             "--watch" => match num(args.get(i + 1)) {
                 Some(n) => {
                     cfg.watch_ms = n;

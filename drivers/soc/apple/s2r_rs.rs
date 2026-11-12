@@ -13,7 +13,9 @@
 //! to the chip from the moment interrupts are off, then returns and prints its trace.
 //! Dry is NOT dry before that moment: the Secure Enclave is really sent to sleep and the
 //! AOP is really told. So: one entry per boot, a dry one included, and a restart after it.
-//! A real entry does not return: the wake restarts the boot core in the boot loader.
+//! A real entry does not return: the wake restarts the boot core in the boot loader. With
+//! `apple_s2r_rs.wake_path=1` the boot core goes down through `cpu_suspend()` with its resume
+//! entry in the loader's mailbox, and the loader jumps back into the kernel there.
 //!
 //! C is used only where the kernel has no Rust binding yet (`s2r_rs_shim.c`).
 
@@ -68,6 +70,9 @@ extern "C" {
     fn s2r_rs_sep_dart_resume() -> c_int;
     fn s2r_rs_aop_power(state: u32) -> c_int;
     fn s2r_rs_spmi_unbound() -> bool;
+    fn s2r_rs_mbox_init() -> c_int;
+    fn s2r_rs_mbox_resumes() -> u64;
+    fn s2r_rs_suspend(finish: extern "C" fn() -> c_int) -> c_int;
 }
 
 /// The SPMI controller of the primary power chip. Commands go to this one only.
@@ -363,6 +368,100 @@ impl Bus for Hw {
         }
     }
 
+    fn timers(&mut self) -> (u8, u8) {
+        let (el, p, v, isr): (u64, u64, u64, u64);
+        // SAFETY: reads of this core's timer controls, its exception level and its pending
+        // interrupts; no memory, no flags.
+        unsafe {
+            core::arch::asm!(
+                "mrs {el}, CurrentEL",
+                "mrs {p}, cntp_ctl_el0",
+                "mrs {v}, cntv_ctl_el0",
+                "mrs {isr}, isr_el1",
+                el = out(reg) el, p = out(reg) p, v = out(reg) v, isr = out(reg) isr,
+                options(nomem, nostack, preserves_flags)
+            )
+        };
+        let (mut p2, mut v2) = (0u64, 0u64);
+        if (el >> 2) & 3 == 2 {
+            // SAFETY: as above; the EL02 names (CNTP_CTL_EL02, CNTV_CTL_EL02) exist at EL2
+            // with E2H set, which is how this kernel runs when it was started at EL2.
+            unsafe {
+                core::arch::asm!(
+                    "mrs {p}, s3_5_c14_c2_1",
+                    "mrs {v}, s3_5_c14_c3_1",
+                    p = out(reg) p2, v = out(reg) v2,
+                    options(nomem, nostack, preserves_flags)
+                )
+            };
+        }
+        // ENABLE is bit 0 and ISTATUS bit 2 of each control.
+        let two = |c: u64| (c & 1 | (c >> 1) & 2) as u8;
+        let timers = two(p) | two(v) << 2 | two(p2) << 4 | two(v2) << 6;
+        (timers, (isr >> 6 & 7) as u8)
+    }
+
+    fn off_deep(&mut self, acc: u64, cyc: u64) {
+        if self.writes_off() {
+            return;
+        }
+        // SAFETY: the boot core's last instructions before the wake: interrupts masked, the
+        // data cache off, the L1 data cache cleaned and invalidated by set and way (level 1
+        // only: the L2 stays to the hardware), the two override registers, the wait. Nothing
+        // here touches the stack once the cache is off. It does not return: the wake resets
+        // the core into the loader, which jumps to the resume entry in the mailbox. The
+        // scratch registers are passed as inputs: outputs are not allowed with `noreturn`,
+        // and nothing reads them after this.
+        unsafe {
+            core::arch::asm!(
+                "msr daifset, #0xf",
+                "mrs {t}, sctlr_el1",
+                "bic {t}, {t}, #4",
+                "msr sctlr_el1, {t}",
+                "isb",
+                "msr csselr_el1, xzr",
+                "isb",
+                "mrs {t}, ccsidr_el1",
+                "and {ls}, {t}, #7",
+                "add {ls}, {ls}, #4",
+                "ubfx {w}, {t}, #3, #10",
+                "ubfx {st}, {t}, #13, #15",
+                "clz {ws:w}, {w:w}",
+                "2:",
+                "mov {i}, {st}",
+                "3:",
+                "lsl {x}, {w}, {ws}",
+                "lsl {y}, {i}, {ls}",
+                "orr {x}, {x}, {y}",
+                "dc cisw, {x}",
+                "subs {i}, {i}, #1",
+                "b.ge 3b",
+                "subs {w}, {w}, #1",
+                "b.ge 2b",
+                "dsb sy",
+                "isb",
+                "msr s3_5_c15_c6_0, {acc}",
+                "msr s3_5_c15_c5_0, {cyc}",
+                "isb",
+                "4:",
+                "dsb sy",
+                "wfi",
+                "b 4b",
+                acc = in(reg) acc,
+                cyc = in(reg) cyc,
+                t = in(reg) 0u64,
+                ls = in(reg) 0u64,
+                w = in(reg) 0u64,
+                st = in(reg) 0u64,
+                ws = in(reg) 0u64,
+                i = in(reg) 0u64,
+                x = in(reg) 0u64,
+                y = in(reg) 0u64,
+                options(noreturn, nostack)
+            )
+        }
+    }
+
     fn sync(&mut self) {
         // SAFETY: a barrier only.
         unsafe { core::arch::asm!("dsb sy", options(nomem, nostack, preserves_flags)) };
@@ -393,6 +492,8 @@ struct Driver {
     sep_dart_quiesced: bool,
     /// False if a boot-time self-test was asked for and did not pass in full: no entry then.
     selftest_ok: bool,
+    /// The boot core came back through its resume entry in this transition.
+    resumed: bool,
 }
 
 struct Global(UnsafeCell<Option<Driver>>);
@@ -464,6 +565,7 @@ pub extern "C" fn s2r_rs_begin() -> c_int {
     d.hw.entered = false;
     d.hw.t_base = ticks();
     d.returned = false;
+    d.resumed = false;
     d.active = true;
     d.seq.begin(&mut d.hw);
     // Before any device callback runs: the Secure Enclave's DART is left alone from now on,
@@ -506,11 +608,49 @@ pub extern "C" fn s2r_rs_enter() -> c_int {
         return ENODEV.to_errno();
     };
     d.hw.entered = true;
+    if d.seq.wake_path() && !d.hw.dry {
+        // No borrow of the driver is held across cpu_suspend(): the entry takes its own.
+        return enter_wake_path();
+    }
     let r = d.seq.enter(&mut d.hw);
     // Only a stopped or a dry entry comes back here.
     d.returned = true;
     match r {
         Ok(()) => 0,
+        Err(_) => EIO.to_errno(),
+    }
+}
+
+/// The entry through cpu_suspend(); 0 once the boot core is back through its resume entry.
+fn enter_wake_path() -> c_int {
+    // SAFETY: the mailbox was found at init (the wake path is refused otherwise).
+    let before = unsafe { s2r_rs_mbox_resumes() };
+    // SAFETY: plain C call; `s2r_rs_finish` runs the entry on this core.
+    let r = unsafe { s2r_rs_suspend(s2r_rs_finish) };
+    let Some(d) = driver() else {
+        return ENODEV.to_errno();
+    };
+    if r != 0 {
+        d.returned = true;
+        return if r == 1 { 0 } else { r };
+    }
+    // Back through the resume entry: interrupts still off, the other cores down.
+    d.resumed = true;
+    d.seq.after_resume(&mut d.hw);
+    // SAFETY: as above.
+    let after = unsafe { s2r_rs_mbox_resumes() };
+    pr_info!("RESUMED through the loader's mailbox: resumes {} -> {}\n", before, after);
+    0
+}
+
+/// The entry, called by cpu_suspend() once the boot core's context is saved and its resume
+/// entry is in the mailbox. Returns only if the entry stopped (an error) or was dry (1).
+extern "C" fn s2r_rs_finish() -> c_int {
+    let Some(d) = driver() else {
+        return ENODEV.to_errno();
+    };
+    match d.seq.enter(&mut d.hw) {
+        Ok(()) => 1,
         Err(_) => EIO.to_errno(),
     }
 }
@@ -537,7 +677,9 @@ pub extern "C" fn s2r_rs_end() {
         d.sep_dart_quiesced = false;
     }
     d.active = false;
-    let what = if !d.returned {
+    let what = if d.resumed {
+        "resumed"
+    } else if !d.returned {
         "not reached (the transition ended before it)"
     } else if d.hw.dry {
         "dry"
@@ -596,9 +738,16 @@ impl kernel::Module for S2rModule {
             aop_notify: p(*module_parameters::aop_notify.value()),
             mark_release: p(*module_parameters::mark_release.value()),
             go_last: p(*module_parameters::go_last.value()),
+            timer_record: p(*module_parameters::timer_record.value()),
+            wake_path: p(*module_parameters::wake_path.value()),
             watch_ms: (*module_parameters::watch_ms.value()).min(2500),
         };
         let dry = p(*module_parameters::dry.value());
+        // SAFETY: plain C call, once, before anything uses the mailbox.
+        if cfg.wake_path && unsafe { s2r_rs_mbox_init() } != 0 {
+            pr_err!("wake_path=1 and no usable resume mailbox: staying with s2idle\n");
+            return Ok(S2rModule);
+        }
         // SAFETY: init runs once, before the suspend operations are registered.
         unsafe {
             *DRIVER.0.get() = Some(Driver {
@@ -619,12 +768,13 @@ impl kernel::Module for S2rModule {
                 returned: false,
                 sep_dart_quiesced: false,
                 selftest_ok: true,
+                resumed: false,
             });
         }
         // SAFETY: plain C call; the driver's state is in place.
         kernel::error::to_result(unsafe { s2r_rs_register_ops() })?;
         pr_info!(
-            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={}\n",
+            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={}\n",
             u8::from(dry),
             cfg.alarm_secs,
             u8::from(cfg.no_alarm_ok),
@@ -638,7 +788,9 @@ impl kernel::Module for S2rModule {
             u8::from(cfg.aop_notify),
             u8::from(cfg.mark_release),
             cfg.watch_ms,
-            u8::from(cfg.go_last)
+            u8::from(cfg.go_last),
+            u8::from(cfg.timer_record),
+            u8::from(cfg.wake_path)
         );
         let selftest = *module_parameters::pmu_selftest.value();
         if selftest != 0 {
@@ -788,6 +940,14 @@ module! {
         go_last: u8 {
             default: 0,
             description: "EXPERIMENT: write the S2R timer once, as the last register write, directly before the release (1)",
+        },
+        timer_record: u8 {
+            default: 0,
+            description: "Keep the boot core's timer controls and pending interrupts, read directly before the release, in the power chip's scratch (1)",
+        },
+        wake_path: u8 {
+            default: 0,
+            description: "Go down through cpu_suspend() with the boot core's resume entry in the loader's mailbox, L1 written back first (1); needs /chosen/asahi,s2r-mailbox",
         },
         watch_ms: u32 {
             default: 0,

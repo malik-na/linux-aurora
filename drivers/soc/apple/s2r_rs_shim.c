@@ -6,12 +6,15 @@
  * operations, the arch code that holds and releases the secondary cores, two
  * device lookups, and the two hooks that modules call (the system controller's
  * driver reports its sleep handshake, the AOP driver offers its "AP power"
- * call). No decision is taken here; the sequence is in s2r_seq.rs.
+ * call), and the wake path: the boot loader's resume mailbox and the kernel's
+ * cpu_suspend()/cpu_resume(). No decision is taken here; the sequence is in
+ * s2r_seq.rs.
  */
 #include <linux/cpumask.h>
 #include <linux/device.h>
 #include <linux/export.h>
 #include <linux/init.h>
+#include <linux/io.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
@@ -20,7 +23,11 @@
 #include <linux/string.h>
 #include <linux/suspend.h>
 
+#include <asm/cacheflush.h>
 #include <asm/cpu_ops.h>
+#include <asm/cputype.h>
+#include <asm/memory.h>
+#include <asm/suspend.h>
 
 /* s2r_rs.rs */
 int s2r_rs_begin(void);
@@ -41,6 +48,9 @@ int s2r_rs_sep_dart_quiesce(void);
 int s2r_rs_sep_dart_resume(void);
 int s2r_rs_aop_power(u32 state);
 bool s2r_rs_spmi_unbound(void);
+int s2r_rs_mbox_init(void);
+u64 s2r_rs_mbox_resumes(void);
+int s2r_rs_suspend(int (*finish)(void));
 
 /* called from modules */
 void apple_s2r_rs_note_smc(u8 bits);
@@ -222,3 +232,154 @@ void apple_s2r_rs_note_smc(u8 bits)
 	s2r_rs_note_smc_bits(bits);
 }
 EXPORT_SYMBOL_GPL(apple_s2r_rs_note_smc);
+
+/*
+ * The wake path. The second-stage loader (m1n1 with Ante042's S2R mailbox,
+ * commit 8b3c17d and after) publishes a mailbox in /chosen/asahi,s2r-mailbox.
+ * A core that is reset by the wake jumps to its slot's entry, once, with the
+ * MMU off; with no entry the boot core parks there and the others go back to
+ * the loader's spin table. Layout as in that loader's src/s2r.h (version 1).
+ */
+#define S2R_RS_MBOX_MAGIC	0x31584f424d523253ULL	/* "S2RMBOX1" */
+#define S2R_RS_MBOX_VERSION	1
+#define S2R_RS_MBOX_CPUS	32
+
+struct s2r_rs_mbox_cpu {
+	u64 mpidr;
+	u64 impl_reg;
+	u64 start_reg0;
+	u64 start_reg1;
+	u32 start_val0;
+	u32 start_val1;
+	u64 entry;
+	u64 resets;
+	u64 stage;
+};
+
+struct s2r_rs_mbox {
+	u64 magic;
+	u32 version;
+	u32 ncpus;
+	u64 rvbar;
+	u64 quiet;
+	u64 boot_mpidr;
+	u64 resumes;
+	u64 reserved[2];
+	struct s2r_rs_mbox_cpu cpu[S2R_RS_MBOX_CPUS];
+};
+
+static struct s2r_rs_mbox *s2r_rs_mbox;
+static struct s2r_rs_mbox_cpu *s2r_rs_slot;
+static int (*s2r_rs_finish)(void);
+
+static void s2r_rs_mbox_inval(void)
+{
+	unsigned long va = (unsigned long)s2r_rs_mbox;
+
+	dcache_inval_poc(va, va + sizeof(*s2r_rs_mbox));
+}
+
+static void s2r_rs_slot_clean(void)
+{
+	unsigned long va = (unsigned long)s2r_rs_slot;
+
+	dcache_clean_inval_poc(va, va + sizeof(*s2r_rs_slot));
+}
+
+/* Finds the mailbox and the boot core's slot; 0 if the wake path can be used. */
+int s2r_rs_mbox_init(void)
+{
+	struct device_node *chosen;
+	u64 pa, mpidr;
+	u32 i;
+	int ret;
+
+	chosen = of_find_node_by_path("/chosen");
+	if (!chosen)
+		return -ENODEV;
+	ret = of_property_read_u64(chosen, "asahi,s2r-mailbox", &pa);
+	of_node_put(chosen);
+	if (ret) {
+		pr_err("apple_s2r_rs: wake path: no /chosen/asahi,s2r-mailbox (%d)\n", ret);
+		return -ENODEV;
+	}
+	s2r_rs_mbox = memremap(pa, sizeof(*s2r_rs_mbox), MEMREMAP_WB);
+	if (!s2r_rs_mbox)
+		return -ENOMEM;
+	s2r_rs_mbox_inval();
+	if (s2r_rs_mbox->magic != S2R_RS_MBOX_MAGIC ||
+	    s2r_rs_mbox->version != S2R_RS_MBOX_VERSION ||
+	    !s2r_rs_mbox->ncpus || s2r_rs_mbox->ncpus > S2R_RS_MBOX_CPUS) {
+		pr_err("apple_s2r_rs: wake path: mailbox at %#llx not valid (magic %#llx version %u cpus %u)\n",
+		       pa, s2r_rs_mbox->magic, s2r_rs_mbox->version, s2r_rs_mbox->ncpus);
+		goto out;
+	}
+	mpidr = read_cpuid_mpidr() & 0xffffff;
+	if (mpidr != s2r_rs_mbox->boot_mpidr) {
+		pr_err("apple_s2r_rs: wake path: running on %#llx, the loader booted on %#llx\n",
+		       mpidr, s2r_rs_mbox->boot_mpidr);
+		goto out;
+	}
+	for (i = 0; i < s2r_rs_mbox->ncpus; i++)
+		if (s2r_rs_mbox->cpu[i].mpidr == mpidr)
+			s2r_rs_slot = &s2r_rs_mbox->cpu[i];
+	if (!s2r_rs_slot) {
+		pr_err("apple_s2r_rs: wake path: no slot for %#llx\n", mpidr);
+		goto out;
+	}
+	if (s2r_rs_slot->entry) {
+		pr_err("apple_s2r_rs: wake path: the boot core's slot holds an entry already (%#llx)\n",
+		       s2r_rs_slot->entry);
+		goto out;
+	}
+	pr_info("apple_s2r_rs: wake path: mailbox at %#llx, %u cpus, rvbar %#llx, boot core %#llx in slot %ld, resumes %llu, resume entry will be %#lx\n",
+		pa, s2r_rs_mbox->ncpus, s2r_rs_mbox->rvbar, mpidr,
+		(long)(s2r_rs_slot - s2r_rs_mbox->cpu), s2r_rs_mbox->resumes,
+		(unsigned long)__pa_symbol(cpu_resume));
+	return 0;
+out:
+	s2r_rs_slot = NULL;
+	memunmap(s2r_rs_mbox);
+	s2r_rs_mbox = NULL;
+	return -EINVAL;
+}
+
+/* The loader's count of resume jumps since it published the mailbox. */
+u64 s2r_rs_mbox_resumes(void)
+{
+	if (!s2r_rs_mbox)
+		return 0;
+	s2r_rs_mbox_inval();
+	return READ_ONCE(s2r_rs_mbox->resumes);
+}
+
+/*
+ * Called by cpu_suspend() once this core's context is saved: the resume entry
+ * goes into the boot core's slot (cleaned to memory), then the whole entry
+ * runs. That returns only if it stopped before the cluster words or was dry;
+ * then the entry is taken out again, since the loader would use it on any
+ * later reset.
+ */
+static int s2r_rs_finisher(unsigned long arg)
+{
+	int ret;
+
+	WRITE_ONCE(s2r_rs_slot->entry, __pa_symbol(cpu_resume));
+	s2r_rs_slot_clean();
+	ret = s2r_rs_finish();
+	WRITE_ONCE(s2r_rs_slot->entry, 0);
+	s2r_rs_slot_clean();
+	return ret ? ret : 1;
+}
+
+/*
+ * The entry through the wake path. 0: this core came back through its resume
+ * entry. Otherwise what the entry returned (never 0).
+ */
+int s2r_rs_suspend(int (*finish)(void))
+{
+	if (!s2r_rs_slot)
+		return -ENODEV;
+	s2r_rs_finish = finish;
+	return cpu_suspend(0, s2r_rs_finisher);
+}

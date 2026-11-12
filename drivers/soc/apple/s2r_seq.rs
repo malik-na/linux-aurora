@@ -558,6 +558,22 @@ pub trait Bus {
     fn wfi(&mut self);
     /// A full barrier (`dsb sy`) where the carried-over cache flush had one.
     fn sync(&mut self) {}
+    /// The running core's timers and pending interrupts, as read: (timers, pending). Timers:
+    /// two bits each, ENABLE then ISTATUS, for CNTP_CTL_EL0, CNTV_CTL_EL0, CNTP_CTL_EL02 and
+    /// CNTV_CTL_EL02 from bit 0 up (the last two read 0 below EL2). Pending: ISR_EL1's F, I
+    /// and A as bits 0 to 2.
+    fn timers(&mut self) -> (u8, u8) {
+        (0, 0)
+    }
+    /// The wake path's final wait of the boot core: data cache off and its L1 written back
+    /// and invalidated by set and way, then the two override registers, then the wait, with
+    /// no stack in between (the L2 still holds what L1 wrote back to it). Does not return on
+    /// the machine; the resume entry left in the loader's mailbox brings the core back.
+    fn off_deep(&mut self, acc: u64, cyc: u64) {
+        self.sys_write(SysReg::AccOvrd, acc);
+        self.sys_write(SysReg::CycOvrd, cyc);
+        self.wfi();
+    }
     /// Keep one record.
     fn trace(&mut self, rec: Rec);
     /// Dry run: the bus performs no write, so a poll is read once and not waited for.
@@ -601,6 +617,12 @@ pub struct Cfg {
     /// after it. The wake-status words latch at that write, so nothing can be kept of them:
     /// the record's count byte reads 0xfe.
     pub go_last: bool,
+    /// Directly before the release: the boot core's timers and pending interrupts as read,
+    /// kept in the scratch (the tick byte and the results byte's bits 4 to 6).
+    pub timer_record: bool,
+    /// The wake path: the boot core goes down through the kernel's cpu_suspend() with its
+    /// resume entry in the loader's mailbox, and its final wait writes its L1 back first.
+    pub wake_path: bool,
     /// DIAGNOSTIC, not an entry into sleep: after the release the boot core does not wait
     /// but watches for this many milliseconds (wake status, cluster words, the engine's
     /// progress word), keeping what it sees in the scratch; then it waits after all.
@@ -624,6 +646,8 @@ impl Cfg {
         aop_notify: true,
         mark_release: false,
         go_last: false,
+        timer_record: false,
+        wake_path: false,
         watch_ms: 0,
     };
 }
@@ -1406,6 +1430,34 @@ impl Seq {
         }
     }
 
+    /// The boot core's final routine on the wake path: as [`Self::final_routine`], with the
+    /// records made first and the writes and the wait in one piece behind the L1 write-back.
+    fn final_routine_off<B: Bus>(b: &mut B) {
+        let acc = b.sys_read(SysReg::AccOvrd);
+        Self::rec(b, 0, Kind::SysRead, 0, acc, 0);
+        let cyc = b.sys_read(SysReg::CycOvrd);
+        Self::rec(b, 0, Kind::SysRead, 1, cyc, 0);
+        Self::rec(b, 0, Kind::SysWrite, 0, acc_deep(acc), 0);
+        Self::rec(b, 0, Kind::SysWrite, 1, cyc_deep(cyc), 0);
+        Self::rec(b, 0, Kind::Wfi, 0, 0, 0);
+        b.off_deep(acc_deep(acc), cyc_deep(cyc));
+    }
+
+    /// Whether the run goes down through the wake path.
+    pub fn wake_path(&self) -> bool {
+        self.cfg.wake_path
+    }
+
+    /// After the boot core came back through its resume entry: the stage byte 'U' and the
+    /// power chip's clock second (low three bytes, over the found bytes) in the scratch.
+    pub fn after_resume<B: Bus>(&mut self, b: &mut B) {
+        let mut rtc = [0u8; 6];
+        if Self::pmu_read(b, PMU_RTC_NOW, &mut rtc).is_ok() {
+            self.late_write(b, PMU_FOUND, &[rtc[2], rtc[3], rtc[4]]);
+        }
+        self.late_write(b, PMU_STAGE, &[b'U']);
+    }
+
     /// One core's final routine: ACC_OVRD, CYC_OVRD, the wait. Does not return on the machine.
     pub fn final_routine<B: Bus>(b: &mut B, cpu: u8) {
         let acc = b.sys_read(SysReg::AccOvrd);
@@ -1432,6 +1484,12 @@ impl Seq {
             self.undo(b, e);
             return Err(e);
         }
+        if self.cfg.timer_record {
+            // What could still wake or stop the boot core, read as late as possible.
+            let (timers, pending) = b.timers();
+            self.late_write(b, PMU_TICKS, &[timers]);
+            self.late_write(b, PMU_RESULTS, &[0x80 | self.smc_bits | (pending & 7) << 4]);
+        }
         if self.cfg.mark_release {
             // The boot core got as far as the release: said before it, where a restart
             // right after it cannot take the mark back.
@@ -1446,7 +1504,11 @@ impl Seq {
         if self.cfg.watch_ms != 0 {
             self.watch(b);
         }
-        Self::final_routine(b, 0);
+        if self.cfg.wake_path {
+            Self::final_routine_off(b);
+        } else {
+            Self::final_routine(b, 0);
+        }
         Ok(())
     }
 }
