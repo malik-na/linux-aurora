@@ -52,6 +52,7 @@ bool s2r_rs_spmi_unbound(void);
 int s2r_rs_mbox_init(void);
 u64 s2r_rs_mbox_resumes(void);
 int s2r_rs_suspend(int (*finish)(void));
+int s2r_rs_wake_slot(u64 cpu0, u64 loader_boot, const u64 *mpidr, const u64 *entry, u32 n);
 
 /* called from modules */
 void apple_s2r_rs_note_smc(u8 bits);
@@ -290,6 +291,7 @@ static void s2r_rs_slot_clean(void)
 /* Finds the mailbox and the boot core's slot; 0 if the wake path can be used. */
 int s2r_rs_mbox_init(void)
 {
+	u64 slot_mpidr[S2R_RS_MBOX_CPUS], slot_entry[S2R_RS_MBOX_CPUS];
 	struct device_node *chosen;
 	u64 pa, mpidr;
 	u32 i;
@@ -317,23 +319,18 @@ int s2r_rs_mbox_init(void)
 	}
 	/* CPU 0's hardware id: this init may run on any core. */
 	mpidr = cpu_logical_map(0) & 0xffffff;
-	if (mpidr != s2r_rs_mbox->boot_mpidr) {
-		pr_err("apple_s2r_rs: wake path: CPU 0 is %#llx, the loader booted on %#llx\n",
-		       mpidr, s2r_rs_mbox->boot_mpidr);
+	for (i = 0; i < s2r_rs_mbox->ncpus; i++) {
+		slot_mpidr[i] = s2r_rs_mbox->cpu[i].mpidr;
+		slot_entry[i] = s2r_rs_mbox->cpu[i].entry;
+	}
+	ret = s2r_rs_wake_slot(mpidr, s2r_rs_mbox->boot_mpidr, slot_mpidr, slot_entry,
+			       s2r_rs_mbox->ncpus);
+	if (ret < 0) {
+		pr_err("apple_s2r_rs: wake path: refused (%d: 1 CPU 0 is not the loader's boot core, 2 no slot, 3 slot holds an entry): CPU 0 %#llx, loader's boot core %#llx\n",
+		       -ret, mpidr, s2r_rs_mbox->boot_mpidr);
 		goto out;
 	}
-	for (i = 0; i < s2r_rs_mbox->ncpus; i++)
-		if (s2r_rs_mbox->cpu[i].mpidr == mpidr)
-			s2r_rs_slot = &s2r_rs_mbox->cpu[i];
-	if (!s2r_rs_slot) {
-		pr_err("apple_s2r_rs: wake path: no slot for %#llx\n", mpidr);
-		goto out;
-	}
-	if (s2r_rs_slot->entry) {
-		pr_err("apple_s2r_rs: wake path: the boot core's slot holds an entry already (%#llx)\n",
-		       s2r_rs_slot->entry);
-		goto out;
-	}
+	s2r_rs_slot = &s2r_rs_mbox->cpu[ret];
 	pr_info("apple_s2r_rs: wake path: mailbox at %#llx, %u cpus, rvbar %#llx, boot core %#llx in slot %ld, resumes %llu, resume entry will be %#lx\n",
 		pa, s2r_rs_mbox->ncpus, s2r_rs_mbox->rvbar, mpidr,
 		(long)(s2r_rs_slot - s2r_rs_mbox->cpu), s2r_rs_mbox->resumes,

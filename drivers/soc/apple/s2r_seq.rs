@@ -309,6 +309,32 @@ pub fn spmi_cmd<I: SpmiIo>(io: &mut I, reg: u16, tx: &[u8], rx: &mut [u8]) -> Re
     Ok(())
 }
 
+/// Why the wake path cannot use the loader's mailbox (the numbers are what the C side prints).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WakeRefuse {
+    /// Logical CPU 0 is not the core the loader booted on.
+    NotBootCore = 1,
+    /// No slot of the mailbox is CPU 0's.
+    NoSlot = 2,
+    /// CPU 0's slot holds a resume entry already.
+    Busy = 3,
+}
+
+/// The boot core's slot in the loader's mailbox, from the slots' (MPIDR, entry) pairs.
+/// `cpu0` is logical CPU 0's hardware id (affinity bits), NEVER the id of the core the
+/// caller runs on: the driver's init runs on any core (run 8's first boot ran it on
+/// 0x10103 and refused the mailbox).
+pub fn wake_slot(cpu0: u64, loader_boot: u64, slots: &[(u64, u64)]) -> Result<usize, WakeRefuse> {
+    if cpu0 != loader_boot {
+        return Err(WakeRefuse::NotBootCore);
+    }
+    let i = slots.iter().position(|(m, _)| *m == cpu0).ok_or(WakeRefuse::NoSlot)?;
+    if slots[i].1 != 0 {
+        return Err(WakeRefuse::Busy);
+    }
+    Ok(i)
+}
+
 /// System registers the final routine writes.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SysReg {

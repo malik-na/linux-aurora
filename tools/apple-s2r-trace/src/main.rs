@@ -602,6 +602,22 @@ mod tests {
 
     /// The Secure Enclave's power word can be read and never written; nothing outside the
     /// ranges passes.
+    /// Run 8's first boot: the driver's init ran on core 0x10103 while the loader booted on
+    /// 0x0. The decision takes CPU 0's id, so where the init runs cannot matter; a CPU 0 that
+    /// is not the loader's boot core, a missing slot and a slot with an entry are refused.
+    #[test]
+    fn wake_slot_is_cpu0s() {
+        let slots = [(0x0, 0), (0x1, 0), (0x2, 0), (0x3, 0), (0x10100, 0), (0x10101, 0), (0x10102, 0), (0x10103, 0)];
+        let running = 0x10103u64;
+        assert_eq!(wake_slot(0x0, 0x0, &slots), Ok(0));
+        // What the first build did: the running core in place of CPU 0.
+        assert_eq!(wake_slot(running, 0x0, &slots), Err(WakeRefuse::NotBootCore));
+        assert_eq!(wake_slot(0x0, 0x0, &slots[1..]), Err(WakeRefuse::NoSlot));
+        let mut busy = slots;
+        busy[0].1 = 0x1234_0000;
+        assert_eq!(wake_slot(0x0, 0x0, &busy), Err(WakeRefuse::Busy));
+    }
+
     #[test]
     fn register_ranges() {
         assert!(region_of(SEP_PS, 4, false).is_some());

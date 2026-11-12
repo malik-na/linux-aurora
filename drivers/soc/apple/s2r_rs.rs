@@ -621,6 +621,22 @@ pub extern "C" fn s2r_rs_enter() -> c_int {
     }
 }
 
+/// The boot core's slot for the C side's mailbox check (see [`s2r_seq::wake_slot`]): its index,
+/// or minus the reason.
+#[no_mangle]
+pub extern "C" fn s2r_rs_wake_slot(cpu0: u64, loader_boot: u64, mpidr: *const u64, entry: *const u64, n: u32) -> c_int {
+    let mut slots = [(0u64, 0u64); 32];
+    let n = (n as usize).min(slots.len());
+    for (i, slot) in slots.iter_mut().enumerate().take(n) {
+        // SAFETY: the caller passes two arrays of at least `n` entries.
+        *slot = unsafe { (*mpidr.add(i), *entry.add(i)) };
+    }
+    match s2r_seq::wake_slot(cpu0, loader_boot, &slots[..n]) {
+        Ok(i) => i as c_int,
+        Err(e) => -(e as c_int),
+    }
+}
+
 /// The entry through cpu_suspend(); 0 once the boot core is back through its resume entry.
 fn enter_wake_path() -> c_int {
     // SAFETY: the mailbox was found at init (the wake path is refused otherwise).
