@@ -336,7 +336,7 @@ fn spmi_frames() {
 /// `--deviations` file: every write (and the one read) that the run makes beyond the
 /// sequence as read, with the place it stands at.
 fn deviations(cfg: &Cfg) {
-    println!("# Named deviations of a run with: net_wd1_secs={} carry_over={} spmi_ack={}", cfg.net_wd1_secs, cfg.carry_over, cfg.spmi_ack as u8);
+    println!("# Named deviations of a run with: net_wd1_secs={} carry_over={} spmi_ack={} mark_release={}", cfg.net_wd1_secs, cfg.carry_over, cfg.spmi_ack as u8, cfg.mark_release as u8);
     println!("# Printed by tools/apple-s2r-trace --print-deviations from the driver's own constants.");
     println!("# name kind target key value after before");
     if cfg.net_wd1_secs != 0 {
@@ -372,13 +372,18 @@ fn deviations(cfg: &Cfg) {
             println!("carry-cluster-state-{i} mmio32-write phys {a:#x} 0x00000000 R24 R26");
         }
     }
+    if cfg.mark_release && cfg.spmi_ack {
+        println!("# The mark before the release is a power-chip command; the vector it leaves is acknowledged at once.");
+        println!("# (The mark itself, a second scratch write in the last stage, cannot be named here: R38 fails once, by design.)");
+        println!("mark-release-ack mmio32-write phys {:#x} 0x00000001 R24 R26", SPMI[0] + 0x60 + 4 * 6);
+    }
 }
 
 fn usage() -> ExitCode {
     eprintln!(
         "usage: apple-s2r-trace [--alarm SECS] [--no-alarm] [--net-wd1 SECS] [--base-steps N] [--carry-over N]\n\
          \x20                      [--no-spmi-ack] [--no-spmi-setup] [--no-wake-mask] [--no-aop]\n\
-         \x20                      [--window-record] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
+         \x20                      [--window-record] [--mark-release] [--watch MS] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
     );
     ExitCode::from(2)
 }
@@ -430,6 +435,14 @@ fn main() -> ExitCode {
             "--no-wake-mask" => cfg.wake_mask = None,
             "--no-aop" => cfg.aop_notify = false,
             "--window-record" => cfg.window_record = true,
+            "--mark-release" => cfg.mark_release = true,
+            "--watch" => match num(args.get(i + 1)) {
+                Some(n) => {
+                    cfg.watch_ms = n;
+                    i += 1;
+                }
+                None => return usage(),
+            },
             "--print-deviations" => print_dev = true,
             "--spmi-frames" => {
                 spmi_frames();

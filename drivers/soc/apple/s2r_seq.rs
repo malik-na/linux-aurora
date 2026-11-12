@@ -49,11 +49,17 @@ const WD0_CTL: u64 = WDT + 0x0c;
 const WD1_CNT: u64 = WDT + 0x10;
 const WD1_ALARM: u64 = WDT + 0x14;
 const WD1_CTL: u64 = WDT + 0x1c;
+const WD2_ALARM: u64 = WDT + 0x24;
 const WD2_CTL: u64 = WDT + 0x2c;
 const WDT_DEADLINE: u64 = WDT + 0x8008;
 const WDT_CFG: u64 = WDT + 0x800c;
 /// Five wake-mask words (1 = masked).
 pub const WAKE_MASK: u64 = 0x2_3d00_4008;
+/// Five wake-status words. They latch at the first S2R-timer write: what reads set after
+/// it is what stood pending and unmasked at that moment.
+pub const WAKE_STATUS: u64 = 0x2_3d00_401c;
+/// The chip's own sleep engine: its progress word.
+pub const ENG_PROGRESS: u64 = WDT + 0x8028;
 /// The two SPMI controllers the power chips sit on.
 pub const SPMI: [u64; 2] = [0x2_3d0d_9300, 0x2_3d0e_1300];
 const SPMI_IRQ_EN: u64 = 0x20;
@@ -137,9 +143,13 @@ const PMU_BOOT_STAGE: u16 = 0x9f01;
 const PMU_NOTE: u16 = 0x9f04;
 const PMU_STAGE: u16 = 0x9f0a;
 const PMU_RESULTS: u16 = 0x9f0c;
+/// Eight bytes that survive a restart: the last stage's one record (and a watching run's
+/// latest sample).
 const PMU_RECORD: u16 = 0x9f10;
-const PMU_CHOICES: u16 = 0x9f1a;
-const PMU_WINDOW: u16 = 0x9f1c;
+/// One byte: a watching run's elapsed time in 10 ms steps.
+const PMU_TICKS: u16 = 0x9f1a;
+/// Three bytes written before the last stage: what the entry found.
+const PMU_FOUND: u16 = 0x9f1c;
 const PMU_RTC_CTRL: u16 = 0xd000;
 const PMU_RTC_NOW: u16 = 0xd002;
 const PMU_RTC_ALARM: u16 = 0xd008;
@@ -578,6 +588,12 @@ pub struct Cfg {
     pub window_record: bool,
     /// Tell the always-on processor "AP power 0x201" and wait for its answer.
     pub aop_notify: bool,
+    /// One more scratch write, the stage byte 'R', directly before the release.
+    pub mark_release: bool,
+    /// DIAGNOSTIC, not an entry into sleep: after the release the boot core does not wait
+    /// but watches for this many milliseconds (wake status, cluster words, the engine's
+    /// progress word), keeping what it sees in the scratch; then it waits after all.
+    pub watch_ms: u32,
 }
 
 impl Cfg {
@@ -595,6 +611,8 @@ impl Cfg {
         wake_mask: Some(WAKE_MASK_RECORDED),
         window_record: false,
         aop_notify: true,
+        mark_release: false,
+        watch_ms: 0,
     };
 }
 
@@ -641,6 +659,8 @@ pub struct Seq {
     cpu_slots: u32,
     alarm: u32,
     cmd_us: u32,
+    /// The wake-status words as read right after the first timer write.
+    status: [u32; 5],
 }
 
 impl Seq {
@@ -657,6 +677,7 @@ impl Seq {
             cpu_slots: 0,
             alarm: 0,
             cmd_us: 0,
+            status: [0; 5],
         }
     }
 
@@ -919,28 +940,14 @@ impl Seq {
             Self::r32(b, WD1_ALARM),
             Self::r32(b, WD1_CTL),
         ]);
-        let wd1 = self.saved.wdt.map_or(0, |w| w[4]);
-        // Our record, in the scratch bytes that survive a restart: what the entry found.
-        let record = [
-            0xa0 | if self.aop_told { 1 } else { 0 } | if self.cfg.net_wd1_secs != 0 { 2 } else { 0 },
-            self.cmd_us as u8,
-            (self.cmd_us >> 8) as u8,
-            wd1 as u8,
-            Self::r32(b, SEP_PS) as u8,
-            Self::r32(b, AOP_ASC + 0x44) as u8,
-            Self::r32(b, AOP_ASC + 0x48) as u8,
-            (cyc >> 24) as u8,
-        ];
-        // Bits 3:0 base steps, 6:4 carried-over steps, 7 the recorded state around the entry
-        // (SPMI words set up and acknowledged, wake masks).
-        let state = self.cfg.spmi_setup && self.cfg.spmi_ack && self.cfg.wake_mask.is_some();
-        let choices = (self.cfg.base_steps as u8 & 0xf)
-            | (self.cfg.carry_over as u8 & 7) << 4
-            | if state { 0x80 } else { 0 };
+        // What the entry found, in scratch bytes that survive a restart: one command's time
+        // (capped), the Secure Enclave word's low byte, the AOP's status. The record and the
+        // tick byte of the last stage are cleared so that nothing of an earlier run stands.
+        let found = [self.cmd_us.min(255) as u8, Self::r32(b, SEP_PS) as u8, Self::r32(b, AOP_ASC + 0x48) as u8];
         Self::pmu_write(b, PMU_NOTE, &now.to_le_bytes()).map_err(|e| Self::fail(b, e, 0x9f04, 1))?;
-        Self::pmu_write(b, PMU_RECORD, &record).map_err(|e| Self::fail(b, e, 0x9f10, 1))?;
-        Self::pmu_write(b, PMU_CHOICES, &[choices]).map_err(|e| Self::fail(b, e, 0x9f1a, 1))?;
-        Self::pmu_write(b, PMU_WINDOW, &[0, 0, 0]).map_err(|e| Self::fail(b, e, 0x9f1c, 1))?;
+        Self::pmu_write(b, PMU_RECORD, &[0; 8]).map_err(|e| Self::fail(b, e, 0x9f10, 1))?;
+        Self::pmu_write(b, PMU_TICKS, &[0]).map_err(|e| Self::fail(b, e, 0x9f1a, 1))?;
+        Self::pmu_write(b, PMU_FOUND, &found).map_err(|e| Self::fail(b, e, 0x9f1c, 1))?;
         Self::pmu_write(b, PMU_RESULTS, &[0x80 | self.smc_bits])
             .map_err(|e| Self::fail(b, e, 0x9f0c, 1))?;
         Self::pmu_write(b, PMU_STAGE, &[b'r']).map_err(|e| Self::fail(b, e, 0x9f0a, 1))?;
@@ -986,6 +993,83 @@ impl Seq {
             return Err(Self::fail(b, Fail::Precheck, 2, 0));
         }
         Ok(())
+    }
+
+    /// How many bits are set in the five wake-status words, and the first four by source
+    /// number (0xff where there is none).
+    fn sources(status: &[u32; 5]) -> (u8, [u8; 4]) {
+        let mut n = 0u32;
+        let mut first = [0xffu8; 4];
+        for (i, word) in status.iter().enumerate() {
+            for bit in 0..32 {
+                if word >> bit & 1 != 0 {
+                    if (n as usize) < first.len() {
+                        first[n as usize] = (32 * i + bit) as u8;
+                    }
+                    n += 1;
+                }
+            }
+        }
+        (n.min(255) as u8, first)
+    }
+
+    /// One scratch write in a place where the acknowledges have already been made: the
+    /// vector our own command leaves is acknowledged again right after it.
+    fn late_write<B: Bus>(&self, b: &mut B, reg: u16, bytes: &[u8]) {
+        let _ = Self::pmu_write(b, reg, bytes);
+        if self.cfg.spmi_ack {
+            Self::w32(b, SPMI[0] + SPMI_IRQ_ACK + 4 * 6, 1);
+        }
+    }
+
+    /// DIAGNOSTIC: the other cores have been released; the boot core stays up and watches.
+    /// Every 10 ms the tick byte is brought up to date, and whenever what it sees changes
+    /// the record is rewritten: byte 0 0xc0, byte 1 the tick of this sample, bytes 2-3 the
+    /// low bytes of the E and P cluster words, byte 4 the top byte of the engine's progress
+    /// word, byte 5 how many wake sources read set, byte 6 the first of them by number,
+    /// byte 7 watchdog 2 (which the engine arms when one of its blocks starts): control's
+    /// low nibble in the high nibble, its alarm in whole seconds (capped at 15) in the low.
+    /// After a restart the tick byte says when it came, to 10 ms, and the record what
+    /// stood then. Only power-manager and always-on words are read: a cluster's own block
+    /// is gone with its cores.
+    fn watch<B: Bus>(&mut self, b: &mut B) {
+        let t0 = b.now_us();
+        let end = u64::from(self.cfg.watch_ms) * 1000;
+        let mut tick = 0u8;
+        let mut last = [0u8; 6];
+        let mut first = true;
+        self.late_write(b, PMU_STAGE, &[b'W']);
+        loop {
+            let t = b.now_us() - t0;
+            let mut status = [0u32; 5];
+            for (i, word) in status.iter_mut().enumerate() {
+                *word = b.r32(WAKE_STATUS + 4 * i as u64);
+            }
+            let (n, src) = Self::sources(&status);
+            let wd2 = ((b.r32(WD2_CTL) & 0xf) << 4) | (b.r32(WD2_ALARM) / 24_000_000).min(15);
+            let seen = [
+                b.r32(CLUSTER_PS[0]) as u8,
+                b.r32(CLUSTER_PS[1]) as u8,
+                (b.r32(ENG_PROGRESS) >> 24) as u8,
+                n,
+                src[0],
+                wd2 as u8,
+            ];
+            let now_tick = (t / 10_000).min(255) as u8;
+            if first || seen != last {
+                first = false;
+                last = seen;
+                self.late_write(b, PMU_RECORD, &[0xc0, now_tick, seen[0], seen[1], seen[2], seen[3], seen[4], seen[5]]);
+            }
+            if now_tick != tick {
+                tick = now_tick;
+                self.late_write(b, PMU_TICKS, &[tick]);
+            }
+            if t >= end || b.dry() {
+                break;
+            }
+        }
+        self.late_write(b, PMU_STAGE, &[b'S']);
     }
 
     fn spmi_ack<B: Bus>(b: &mut B) {
@@ -1143,8 +1227,11 @@ impl Seq {
         for a in SIO_PS {
             Self::rmw32(b, a, 1 << 28, 0);
         }
-        // 3f. The S2R timer, first time.
+        // 3f. The S2R timer, first time. The wake-status words latch at this write.
         Self::w32(b, S2R_TIMER, 1);
+        for (i, word) in self.status.iter_mut().enumerate() {
+            *word = Self::r32(b, WAKE_STATUS + 4 * i as u64);
+        }
 
         // 4. Interrupt controller: every interrupt masked, every CPU slot set and drained.
         for w in 0..u64::from(self.irq_words) {
@@ -1181,12 +1268,15 @@ impl Seq {
             flags |= 2;
         }
         if self.cfg.window_record {
-            // The measured window, kept where a reset does not lose it: the time from the
-            // first cluster word to here in units of 16 us, and what went wrong on the way
-            // (bit 0 a drain hit its cap, bit 1 a power-chip command failed; bit 2, not a
-            // fault: the cache flush completed). What follows is register writes only.
+            // The last stage's one record, kept where a reset does not lose it. Byte 0: 0x80
+            // and what went wrong on the way (bit 0 a drain hit its cap, bit 1 a power-chip
+            // command failed; bit 2, not a fault: the cache flush completed). Bytes 1-2: the
+            // time from the first cluster word to here in units of 16 us. Byte 3: how many
+            // wake sources read set after the first timer write; bytes 4-7: the first four
+            // of them by number (0xff: none). What follows is register writes only.
             let units = ((b.now_us() - t0) / 16).min(0xffff) as u16;
-            let _ = Self::pmu_write(b, PMU_WINDOW, &[units as u8, (units >> 8) as u8, 0x80 | flags]);
+            let (n, src) = Self::sources(&self.status);
+            let _ = Self::pmu_write(b, PMU_RECORD, &[0x80 | flags, units as u8, (units >> 8) as u8, n, src[0], src[1], src[2], src[3]]);
         }
         // Carried over from the recorded runs: every command of ours leaves a vector in the
         // SPMI controller; all pending ones are acknowledged after the last command.
@@ -1302,8 +1392,16 @@ impl Seq {
             self.undo(b, e);
             return Err(e);
         }
+        if self.cfg.mark_release {
+            // The boot core got as far as the release: said before it, where a restart
+            // right after it cannot take the mark back.
+            self.late_write(b, PMU_STAGE, &[b'R']);
+        }
         Self::rec(b, 0, Kind::Release, 0, 0, 0);
         b.release();
+        if self.cfg.watch_ms != 0 {
+            self.watch(b);
+        }
         Self::final_routine(b, 0);
         Ok(())
     }

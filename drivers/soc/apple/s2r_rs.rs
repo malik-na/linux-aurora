@@ -575,6 +575,8 @@ impl kernel::Module for S2rModule {
             wake_mask: if p(*module_parameters::wake_mask.value()) { Some(s2r_seq::WAKE_MASK_RECORDED) } else { None },
             window_record: p(*module_parameters::window_record.value()),
             aop_notify: p(*module_parameters::aop_notify.value()),
+            mark_release: p(*module_parameters::mark_release.value()),
+            watch_ms: (*module_parameters::watch_ms.value()).min(2500),
         };
         let dry = p(*module_parameters::dry.value());
         // SAFETY: init runs once, before the suspend operations are registered.
@@ -602,7 +604,7 @@ impl kernel::Module for S2rModule {
         // SAFETY: plain C call; the driver's state is in place.
         kernel::error::to_result(unsafe { s2r_rs_register_ops() })?;
         pr_info!(
-            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={}\n",
+            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={}\n",
             u8::from(dry),
             cfg.alarm_secs,
             u8::from(cfg.no_alarm_ok),
@@ -613,7 +615,9 @@ impl kernel::Module for S2rModule {
             u8::from(cfg.spmi_ack),
             u8::from(cfg.wake_mask.is_some()),
             u8::from(cfg.window_record),
-            u8::from(cfg.aop_notify)
+            u8::from(cfg.aop_notify),
+            u8::from(cfg.mark_release),
+            cfg.watch_ms
         );
         let selftest = *module_parameters::pmu_selftest.value();
         if selftest != 0 {
@@ -755,6 +759,14 @@ module! {
         aop_notify: u8 {
             default: 1,
             description: "Send the AOP \"AP power 0x201\" and wait for its answer (1)",
+        },
+        mark_release: u8 {
+            default: 0,
+            description: "Write the stage byte 'R' to the power chip's scratch directly before the release (1)",
+        },
+        watch_ms: u32 {
+            default: 0,
+            description: "DIAGNOSTIC, not an entry into sleep: after the release the boot core watches for this many ms (max 2500) and keeps what it sees in the scratch, then waits",
         },
     },
 }
