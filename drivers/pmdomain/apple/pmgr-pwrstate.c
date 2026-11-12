@@ -15,6 +15,8 @@
 #include <linux/pm_domain.h>
 #include <linux/regmap.h>
 #include <linux/mfd/syscon.h>
+#include <linux/moduleparam.h>
+#include <linux/string.h>
 #include <linux/reset-controller.h>
 #include <linux/module.h>
 #include <linux/soc/apple/pmgr-pwrstate.h>
@@ -60,6 +62,30 @@ struct apple_pmgr_ps {
 
 #define genpd_to_apple_pmgr_ps(_genpd) container_of(_genpd, struct apple_pmgr_ps, genpd)
 #define rcdev_to_apple_pmgr_ps(_rcdev) container_of(_rcdev, struct apple_pmgr_ps, rcdev)
+
+/*
+ * Labels of domains to treat as apple,always-on, comma separated: the device
+ * tree on Apple machines comes from the boot loader, so a kernel's own .dtb
+ * cannot add the property (run 20: ps_fpwm1, which suspend leaves busy).
+ */
+static char always_on[128];
+module_param_string(always_on, always_on, sizeof(always_on), 0444);
+MODULE_PARM_DESC(always_on, "Comma-separated domain labels kept on as if apple,always-on");
+
+static bool apple_pmgr_ps_forced_on(const char *name)
+{
+	const char *p = always_on;
+	size_t n = strlen(name);
+
+	while (*p) {
+		const char *e = strchrnul(p, ',');
+
+		if (e - p == n && !strncmp(p, name, n))
+			return true;
+		p = *e ? e + 1 : e;
+	}
+	return false;
+}
 
 static int apple_pmgr_ps_set(struct generic_pm_domain *genpd, u32 pstate, bool auto_enable)
 {
@@ -395,7 +421,10 @@ static int apple_pmgr_ps_probe(struct platform_device *pdev)
 			dev_warn(dev, "firmware-owned domain %s does not read as on\n", name);
 		ps->genpd.flags |= GENPD_FLAG_ALWAYS_ON;
 		active = true;
-	} else if (of_property_read_bool(node, "apple,always-on")) {
+	} else if (of_property_read_bool(node, "apple,always-on") ||
+		   apple_pmgr_ps_forced_on(name)) {
+		if (!of_property_read_bool(node, "apple,always-on"))
+			dev_info(dev, "domain %s kept on by always_on=\n", name);
 		ps->always_on = true;
 		ps->genpd.flags |= GENPD_FLAG_ALWAYS_ON;
 		if (!active) {
