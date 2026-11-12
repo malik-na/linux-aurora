@@ -203,11 +203,11 @@ pub const AOP_QUEUE_START: u8 = 0xa3;
 /// Wake masks of the recorded runs that stayed down (sources 26, 27, 38 and 81 masked).
 pub const WAKE_MASK_RECORDED: [u32; 5] = [0x0c00_0000, 0x0000_0040, 0x0002_0000, 0, 0];
 
-/// Named sources only (a set bit masks): of this M1's sixteen named wake sources (its own
-/// device tree's ap-wake-sources) the thirteen the recorded mask leaves open stay open (12, 14,
-/// 40, 47, 49, 50, 54 the alarm's line, 64, 76, 131-134); 26, 27 and 81 stay masked; every
-/// source without a name is masked, the five that stand at the timer write among them.
-pub const WAKE_MASK_NAMED_ONLY: [u32; 5] = [0xffff_afff, 0xffb9_7eff, 0xffff_effe, 0xffff_ffff, 0xffff_ff87];
+/// Named sources only (a set bit masks), as the reference builds its mask: every one of this
+/// M1's sixteen named wake sources (its own device tree's ap-wake-sources: 12, 14, 26, 27, 40,
+/// 47, 49, 50, 54 the alarm's line, 64, 76, 81, 131-134) open, every source without a name
+/// masked, the five that stand at the timer write among them.
+pub const WAKE_MASK_NAMED_ONLY: [u32; 5] = [0xf3ff_afff, 0xffb9_7eff, 0xfffd_effe, 0xffff_ffff, 0xffff_ff87];
 
 /// `base_steps` bit: switch APSC off on both clusters (bit 22, wait bit 7 clear).
 pub const BASE_APSC: u32 = 1 << 0;

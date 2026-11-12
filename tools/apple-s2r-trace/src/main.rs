@@ -726,23 +726,22 @@ mod tests {
         }
     }
 
-    /// The named-only wake mask (a set bit masks, ledger 58(a)): of this M1's sixteen named
-    /// wake sources (ledger 110) the thirteen that the recorded mask leaves open stay open,
-    /// 26, 27 and 81 stay masked as in the recorded mask, and every source without a name
-    /// (38 and the five that stand at the timer write, 23, 25, 78, 80, 105, among them) is
-    /// masked.
+    /// The named-only wake mask (a set bit masks, ledger 58(a)): all sixteen of this M1's
+    /// named wake sources (ledger 110) open, as the reference opens every named source; every
+    /// source without a name (38 and the five that stand at the timer write, 23, 25, 78, 80,
+    /// 105, among them) masked.
     #[test]
     fn wake_mask_named_only() {
         let named = [12u32, 14, 26, 27, 40, 47, 49, 50, 54, 64, 76, 81, 131, 132, 133, 134];
-        let masked_named = [26u32, 27, 81];
+        let masked_named: [u32; 0] = [];
         let bit = |w: &[u32; 5], n: u32| w[(n / 32) as usize] >> (n % 32) & 1;
         for n in 0..160 {
             let want = if named.contains(&n) && !masked_named.contains(&n) { 0 } else { 1 };
             assert_eq!(bit(&WAKE_MASK_NAMED_ONLY, n), want, "source {n}");
         }
-        // Every source the recorded mask masks stays masked.
+        // Every source the recorded mask masks stays masked, but the three named ones.
         for n in 0..160 {
-            if bit(&WAKE_MASK_RECORDED, n) == 1 {
+            if bit(&WAKE_MASK_RECORDED, n) == 1 && !named.contains(&n) {
                 assert_eq!(bit(&WAKE_MASK_NAMED_ONLY, n), 1, "source {n}");
             }
         }
