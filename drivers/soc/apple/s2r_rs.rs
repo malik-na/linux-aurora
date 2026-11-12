@@ -77,6 +77,7 @@ extern "C" {
     fn s2r_rs_sec_timers() -> u32;
     fn s2r_rs_sec_timer_slot(i: u32) -> u16;
     fn s2r_rs_cpus_woke() -> c_int;
+    fn s2r_rs_boot_ccsidr() -> u64;
     // s2r_rs_off.S
     fn apple_s2r_rs_off_deep(acc_ovrd: u64, cyc_ovrd: u64) -> c_int;
 }
@@ -795,6 +796,18 @@ impl kernel::Module for S2rModule {
             watch_ms: (*module_parameters::watch_ms.value()).min(2500),
         };
         let dry = p(*module_parameters::dry.value());
+        if cfg.wake_path {
+            // SAFETY: plain C call. What the boot core's set/way loop will walk (s2r_rs_off.S),
+            // on record before any entry.
+            let c = unsafe { s2r_rs_boot_ccsidr() };
+            pr_info!(
+                "boot core L1D CCSIDR {:#x}: line {} bytes, {} ways, {} sets\n",
+                c,
+                16u64 << (c & 7),
+                ((c >> 3) & 0x3ff) + 1,
+                ((c >> 13) & 0x7fff) + 1
+            );
+        }
         // SAFETY: plain C call, once, before anything uses the mailbox.
         if cfg.wake_path && unsafe { s2r_rs_mbox_init() } != 0 {
             pr_err!("wake_path=1 and no usable resume mailbox: staying with s2idle\n");

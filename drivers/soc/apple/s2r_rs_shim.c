@@ -20,6 +20,7 @@
 #include <linux/platform_device.h>
 #include <linux/printk.h>
 #include <linux/soc/apple/dart.h>
+#include <linux/smp.h>
 #include <linux/string.h>
 #include <linux/suspend.h>
 
@@ -56,6 +57,7 @@ void s2r_rs_sec_timer_stop(bool on);
 u32 s2r_rs_sec_timers(void);
 u16 s2r_rs_sec_timer_slot(unsigned int i);
 int s2r_rs_cpus_woke(void);
+u64 s2r_rs_boot_ccsidr(void);
 int s2r_rs_wake_slot(u64 cpu0, u64 loader_boot, const u64 *mpidr, const u64 *entry, u32 n);
 
 /* called from modules */
@@ -412,4 +414,20 @@ u16 s2r_rs_sec_timer_slot(unsigned int i)
 int s2r_rs_cpus_woke(void)
 {
 	return apple_cpu_s2r_woke();
+}
+
+static void s2r_rs_read_ccsidr(void *out)
+{
+	write_sysreg(0, csselr_el1);		/* level 1, data */
+	isb();
+	*(u64 *)out = read_sysreg(ccsidr_el1);
+}
+
+/* The boot core's L1 data cache geometry (CCSIDR_EL1), read on CPU 0 itself. */
+u64 s2r_rs_boot_ccsidr(void)
+{
+	u64 v = 0;
+
+	smp_call_function_single(0, s2r_rs_read_ccsidr, &v, 1);
+	return v;
 }
