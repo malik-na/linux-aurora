@@ -374,6 +374,8 @@ struct Driver {
     /// The entry stopped or was dry: the AP stays up.
     returned: bool,
     sep_dart_quiesced: bool,
+    /// False if a boot-time self-test was asked for and did not pass in full: no entry then.
+    selftest_ok: bool,
 }
 
 struct Global(UnsafeCell<Option<Driver>>);
@@ -430,6 +432,10 @@ pub extern "C" fn s2r_rs_begin() -> c_int {
     let Some(d) = driver() else {
         return ENODEV.to_errno();
     };
+    if !d.selftest_ok {
+        pr_err!("the boot-time self-test of the power-chip access was asked for and did not pass: refusing \"mem\"\n");
+        return EIO.to_errno();
+    }
     // SAFETY: plain C call.
     if !unsafe { s2r_rs_all_online() } {
         pr_warn!("not every core is online: refusing \"mem\"\n");
@@ -590,6 +596,7 @@ impl kernel::Module for S2rModule {
                 active: false,
                 returned: false,
                 sep_dart_quiesced: false,
+                selftest_ok: true,
             });
         }
         // SAFETY: plain C call; the driver's state is in place.
@@ -613,13 +620,27 @@ impl kernel::Module for S2rModule {
             // Two users of one command queue is how a wrong power-chip write happens: the
             // self-test runs only while the controller's own driver is not bound.
             // SAFETY: plain C call.
-            if !unsafe { s2r_rs_spmi_unbound() } {
-                pr_warn!("selftest: NOT RUN: the SPMI controller's own driver is bound (or its device was not found)\n");
-            } else if let Some(d) = driver() {
-                pr_info!("selftest: the SPMI controller's own driver is not bound\n");
-                pmu_selftest(&mut d.hw, selftest >= 2);
+            let unbound = unsafe { s2r_rs_spmi_unbound() };
+            if let Some(d) = driver() {
+                if unbound {
+                    pr_info!("selftest: the SPMI controller's own driver is not bound\n");
+                    d.selftest_ok = pmu_selftest(&mut d.hw, selftest >= 2);
+                } else {
+                    pr_warn!("selftest: NOT RUN: the SPMI controller's own driver is bound (or its device was not found)\n");
+                    d.selftest_ok = false;
+                }
+                pr_info!("selftest: {}\n", if d.selftest_ok { "passed; an entry is allowed" } else { "NOT passed; every entry in this boot is refused" });
             }
         }
+        // The run's choices as the driver holds them, readable from the running kernel
+        // (Rust module parameters do not appear in sysfs). Never removed: the driver is
+        // built in.
+        let dir = kernel::debugfs::Dir::new(c"apple_s2r_rs");
+        for (name, value) in [(c"alarm_secs", cfg.alarm_secs), (c"dry", u32::from(dry)), (c"net_wd1_secs", cfg.net_wd1_secs)] {
+            let file = KBox::pin_init(dir.read_only_file(name, value), GFP_KERNEL)?;
+            core::mem::forget(file);
+        }
+        core::mem::forget(dir);
         Ok(S2rModule)
     }
 }
@@ -631,8 +652,9 @@ impl kernel::Module for S2rModule {
 /// the same bytes read through the kernel's own path. Only if every read came back, and
 /// only if asked for: one write of our stage byte, with its read-back. Also shown: what one
 /// polled command leaves pending in the controllers' interrupt words, and how the words the
-/// entry may write read as found.
-fn pmu_selftest(hw: &mut Hw, write: bool) {
+/// entry may write read as found. Returns whether everything asked for came back right; if
+/// not, the driver refuses every entry in this boot.
+fn pmu_selftest(hw: &mut Hw, write: bool) -> bool {
     let pending = |hw: &mut Hw, bus: usize| -> [u32; 9] {
         let mut p = [0u32; 9];
         for (w, x) in p.iter_mut().enumerate() {
@@ -657,12 +679,14 @@ fn pmu_selftest(hw: &mut Hw, write: bool) {
     let mut results = [0u8; 1];
     let r_results = hw.pmu_read(0x9f0c, &mut results);
     pr_info!("selftest: polled read of 0x9f0c: {:?} value {:02x}\n", r_results, results[0]);
+    let mut ok = r.is_ok() && r_note.is_ok() && r_results.is_ok();
     if write {
-        if r.is_ok() && r_note.is_ok() && r_results.is_ok() {
+        if ok {
             let w = hw.pmu_write(0x9f0a, &[b't']);
             let mut back = [0u8; 1];
             let r = hw.pmu_read(0x9f0a, &mut back);
             pr_info!("selftest: polled write of 0x9f0a = 0x74: {:?}; read back {:?} value {:#04x}\n", w, r, back[0]);
+            ok = w.is_ok() && r.is_ok() && back[0] == b't';
         } else {
             pr_warn!("selftest: NO WRITE: a read did not come back\n");
         }
@@ -671,6 +695,7 @@ fn pmu_selftest(hw: &mut Hw, write: bool) {
         let v = hw.rd(a);
         pr_info!("selftest: as found {:#x} = {:#010x}\n", a, v);
     }
+    ok
 }
 
 module! {
