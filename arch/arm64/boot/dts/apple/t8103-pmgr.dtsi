@@ -251,6 +251,11 @@
 		#power-domain-cells = <0>;
 		#reset-cells = <0>;
 		label = "fpwm1";
+		/*
+		 * Kept on through system sleep: switched off by suspend it stays busy
+		 * (0xa00) and the S2R sequencer waits on its busy bit (run 19).
+		 */
+		apple,always-on;
 	};
 
 	ps_fpwm2: power-controller@1e8 {
