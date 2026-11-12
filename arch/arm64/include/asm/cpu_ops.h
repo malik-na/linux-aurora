@@ -56,6 +56,8 @@ bool apple_cpu_hotplug_active(void);
 void apple_cpu_hotplug_set_s2r(bool on);
 void apple_cpu_hotplug_set_s2r_hold(bool hold);
 void apple_cpu_s2r_release_all(void);
+void apple_cpu_hotplug_set_s2r_timer_stop(bool on);
+u32 apple_cpu_s2r_timers_read(void);
 void apple_dcache_cisw_levels(unsigned long levels);
 #else
 static inline const struct cpu_operations *
@@ -66,6 +68,8 @@ apple_cpu_hotplug_ops(const struct cpu_operations *ops)
 static inline void apple_cpu_hotplug_set_s2r(bool on) { }
 static inline void apple_cpu_hotplug_set_s2r_hold(bool hold) { }
 static inline void apple_cpu_s2r_release_all(void) { }
+static inline void apple_cpu_hotplug_set_s2r_timer_stop(bool on) { }
+static inline u32 apple_cpu_s2r_timers_read(void) { return 0; }
 static inline void apple_dcache_cisw_levels(unsigned long levels) { }
 static inline bool apple_cpu_hotplug_active(void)
 {

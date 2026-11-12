@@ -224,6 +224,7 @@ struct apple_cpu {
 	int down_mode;			/* APPLE_CPU_PARKED or APPLE_CPU_OFF */
 	bool s2r_deep;			/* S2R stop: last core of a cluster CPU0 is not in */
 	bool s2r_hold;			/* S2R stop: wait in WFE for CPU0's release (global sleep) */
+	bool s2r_timers;		/* S2R stop: record and stop the four timers first */
 	const char *park_reason;	/* why the last offline parked */
 	const char *stuck_reason;
 	struct apple_cpu_regs snap;	/* first boot: what m1n1 left */
@@ -329,6 +330,52 @@ void apple_cpu_hotplug_set_s2r_hold(bool hold)
 {
 	WRITE_ONCE(apple_cpu_s2r_hold, hold);
 	apple_cpu_s2r_release_write(0);
+}
+
+/*
+ * Timer stop for the secondaries (the Rust driver's timer_stop): with it set, a
+ * secondary taken down for S2R records its four timer controls in its slot below
+ * (index cluster * 4 + core; bit 8 set = recorded, low byte two bits per timer,
+ * ENABLE then ISTATUS, for CNTP_CTL_EL0, CNTV_CTL_EL0, CNTP_CTL_EL02, CNTV_CTL_EL02)
+ * and writes them 0, before it holds. Written with the MMU off (non-cacheable): CPU0
+ * cleans the slots before and invalidates them before it reads them.
+ */
+static bool apple_cpu_s2r_timer_stop;
+
+struct apple_cpu_s2r_timer_slots {
+	u16 slot[8];
+} __aligned(SZ_128);
+
+struct apple_cpu_s2r_timer_slots apple_cpu_s2r_timers
+	__section(".mmuoff.data.write");
+
+void apple_cpu_hotplug_set_s2r_timer_stop(bool on)
+{
+	unsigned long va = (unsigned long)&apple_cpu_s2r_timers;
+
+	WRITE_ONCE(apple_cpu_s2r_timer_stop, on);
+	memset(&apple_cpu_s2r_timers, 0, sizeof(apple_cpu_s2r_timers));
+	dcache_clean_inval_poc(va, va + sizeof(apple_cpu_s2r_timers));
+	dsb(sy);
+}
+
+/* CPU0: the OR of the recorded secondaries' bytes, and their count in bits 15:8. */
+u32 apple_cpu_s2r_timers_read(void)
+{
+	unsigned long va = (unsigned long)&apple_cpu_s2r_timers;
+	u32 or = 0, n = 0;
+	int i;
+
+	dcache_inval_poc(va, va + sizeof(apple_cpu_s2r_timers));
+	for (i = 0; i < ARRAY_SIZE(apple_cpu_s2r_timers.slot); i++) {
+		u16 v = READ_ONCE(apple_cpu_s2r_timers.slot[i]);
+
+		if (v & BIT(8)) {
+			or |= v & 0xff;
+			n++;
+		}
+	}
+	return or | n << 8;
 }
 
 /* CPU0, interrupts off, after the commit: let the held secondaries go down */
@@ -818,6 +865,7 @@ static int apple_cpu_disable(unsigned int cpu)
 		ac->s2r_deep = apple_cpu_cluster(cpu) != apple_cpu_cluster(0) &&
 			       apple_cpu_last_in_cluster(cpu);
 		ac->s2r_hold = READ_ONCE(apple_cpu_s2r_hold);
+		ac->s2r_timers = READ_ONCE(apple_cpu_s2r_timer_stop);
 		return 0;
 	}
 
@@ -899,7 +947,7 @@ static void apple_cpu_die(unsigned int cpu)
 		jump(__pa_symbol(apple_cpu_s2r_mmuoff),
 		     T8103_CPU_START + CPU_START_STOP, flushed_pa,
 		     apple_cpu_bit(cpu) | (ac->s2r_deep ? BIT(31) : 0) |
-		     (ac->s2r_hold ? BIT(30) : 0));
+		     (ac->s2r_hold ? BIT(30) : 0) | (ac->s2r_timers ? BIT(29) : 0));
 	else if (off)
 		jump(__pa_symbol(apple_cpu_off_mmuoff),
 		     T8103_CPU_START + CPU_START_STOP, flushed_pa,

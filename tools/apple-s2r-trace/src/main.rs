@@ -42,6 +42,8 @@ struct Model {
     out: Vec<Rec>,
     /// The boot core's timers as the record reads them (two bits each, ENABLE then ISTATUS).
     timers: u8,
+    /// What the secondaries recorded: the OR of their timer bytes, how many recorded.
+    sec: (u8, u8),
 }
 
 impl Model {
@@ -95,6 +97,7 @@ impl Model {
             refused: None,
             out: Vec::new(),
             timers: 0,
+            sec: (0, 0),
         }
     }
 
@@ -131,6 +134,10 @@ impl Bus for Model {
     fn timers_stop(&mut self) {
         self.t += 4 * SYSREG_US;
         self.timers = 0;
+    }
+    fn sec_timers(&mut self) -> (u8, u8) {
+        self.t += 2;
+        self.sec
     }
     fn r32(&mut self, a: u64) -> u32 {
         if !self.allowed(a, 4, false) {
@@ -412,13 +419,18 @@ fn deviations(cfg: &Cfg) {
         let (after, before) = if cfg.go_last { ("R23", "R24") } else { ("R24", "R26") };
         println!("timer-stop-ack mmio32-write phys {:#x} 0x00000001 {after} {before}", SPMI[0] + 0x60 + 4 * 6);
     }
+    if cfg.sec_timer_stop {
+        println!("# sec_timer_stop: what the secondaries recorded, one more scratch write (0x9f1d-1e), acknowledged at once.");
+        let (after, before) = if cfg.go_last { ("R23", "R24") } else { ("R24", "R26") };
+        println!("sec-timer-ack mmio32-write phys {:#x} 0x00000001 {after} {before}", SPMI[0] + 0x60 + 4 * 6);
+    }
 }
 
 fn usage() -> ExitCode {
     eprintln!(
         "usage: apple-s2r-trace [--alarm SECS] [--no-alarm] [--net-wd1 SECS] [--base-steps N] [--carry-over N]\n\
          \x20                      [--no-spmi-ack] [--no-spmi-setup] [--no-wake-mask] [--no-aop]\n\
-         \x20                      [--window-record] [--mark-release] [--go-last] [--timer-record] [--wake-path] [--timer-stop] [--watch MS] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
+         \x20                      [--window-record] [--mark-release] [--go-last] [--timer-record] [--wake-path] [--timer-stop] [--sec-timer-stop] [--watch MS] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
     );
     ExitCode::from(2)
 }
@@ -475,6 +487,7 @@ fn main() -> ExitCode {
             "--timer-record" => cfg.timer_record = true,
             "--wake-path" => cfg.wake_path = true,
             "--timer-stop" => cfg.timer_stop = true,
+            "--sec-timer-stop" => cfg.sec_timer_stop = true,
             "--watch" => match num(args.get(i + 1)) {
                 Some(n) => {
                     cfg.watch_ms = n;
@@ -668,6 +681,42 @@ mod tests {
                 assert_eq!(m.timers, 0xf3, "not stopped");
                 // The found byte: one power-chip command's time.
                 assert_eq!(u64::from(m.pmu[&0x9f1c]), PMU_CMD_US.min(255));
+            }
+        }
+    }
+
+    /// Run 10's seam: with the secondaries' timer stop, what they recorded (the OR of their
+    /// timer bytes, how many) goes to 0x9f1d-1e directly before the release; without it
+    /// those two found bytes stay as the entry found them.
+    #[test]
+    fn sec_timer_stop_records_the_secondaries() {
+        for stop in [false, true] {
+            let mut cfg = Cfg::DEFAULT;
+            cfg.alarm_secs = 60;
+            cfg.net_wd1_secs = 170;
+            cfg.window_record = true;
+            cfg.mark_release = true;
+            cfg.timer_record = true;
+            cfg.wake_path = true;
+            cfg.timer_stop = true;
+            cfg.sec_timer_stop = stop;
+            let mut m = Model::new();
+            m.timers = 0xf3;
+            m.sec = (0x33, 7);
+            let mut seq = Seq::new(cfg);
+            seq.begin(&mut m);
+            seq.note_smc(&mut m, SMC_SLPW);
+            assert!(seq.prepare(&mut m).is_ok());
+            seq.note_smc(&mut m, SMC_SLPW | SMC_WKTP | SMC_SLPA | SMC_AP_POWER);
+            assert!(seq.enter(&mut m).is_ok());
+            assert_eq!(m.pmu[&0x9f1c], 0x00);
+            assert_eq!(m.pmu[&0x9f0a], b'R');
+            if stop {
+                assert_eq!((m.pmu[&0x9f1d], m.pmu[&0x9f1e]), (0x33, 7));
+            } else {
+                // As found: the Secure Enclave word's low byte (the model's word still reads
+                // on when the entry looks) and the AOP's status.
+                assert_eq!((m.pmu[&0x9f1d], m.pmu[&0x9f1e]), (0xff, 0x2c));
             }
         }
     }

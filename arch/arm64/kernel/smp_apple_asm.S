@@ -216,6 +216,53 @@ SYM_FUNC_START(apple_cpu_s2r_mmuoff)
 	isb
 
 	/*
+	 * Bit 29 (the S2R timer stop): record this core's four timer controls in its
+	 * slot of apple_cpu_s2r_timers (index cluster * 4 + core; two bits per timer,
+	 * ENABLE then ISTATUS; bit 8 = recorded), then write them 0. A timer that
+	 * stands pending can keep a core from powering down.
+	 */
+	tbz	x20, #29, 6f
+	mov	x1, #0x100
+	mrs	x0, cntp_ctl_el0
+	and	x2, x0, #1
+	orr	x1, x1, x2
+	ubfx	x2, x0, #2, #1
+	orr	x1, x1, x2, lsl #1
+	mrs	x0, cntv_ctl_el0
+	and	x2, x0, #1
+	orr	x1, x1, x2, lsl #2
+	ubfx	x2, x0, #2, #1
+	orr	x1, x1, x2, lsl #3
+	mrs	x0, CurrentEL
+	cmp	x0, #(2 << 2)
+	b.ne	7f
+	mrs_s	x0, SYS_CNTP_CTL_EL02
+	and	x2, x0, #1
+	orr	x1, x1, x2, lsl #4
+	ubfx	x2, x0, #2, #1
+	orr	x1, x1, x2, lsl #5
+	mrs_s	x0, SYS_CNTV_CTL_EL02
+	and	x2, x0, #1
+	orr	x1, x1, x2, lsl #6
+	ubfx	x2, x0, #2, #1
+	orr	x1, x1, x2, lsl #7
+	msr_s	SYS_CNTP_CTL_EL02, xzr
+	msr_s	SYS_CNTV_CTL_EL02, xzr
+7:	msr	cntp_ctl_el0, xzr
+	msr	cntv_ctl_el0, xzr
+	isb
+	mrs	x0, mpidr_el1
+	ubfx	x2, x0, #8, #8			// cluster
+	and	x0, x0, #0xff			// core
+	add	x0, x0, x2, lsl #2
+	cmp	x0, #8
+	b.hs	6f
+	adr_l	x2, apple_cpu_s2r_timers
+	strh	w1, [x2, x0, lsl #1]
+	dsb	sy
+6:
+
+	/*
 	 * Global sleep (bit 30): hold here, stop already requested, until CPU0
 	 * sets apple_cpu_s2r_release after the commit (XNU's arm64_stall_sleep
 	 * loop), then arm ACC_OVRD's deep sleep on every core, as macOS does.

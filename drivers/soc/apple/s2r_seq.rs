@@ -594,6 +594,11 @@ pub trait Bus {
     /// The running core's four timer controls (CNTP/CNTV_CTL_EL0, and at EL2 the EL02 pair)
     /// written 0: none is enabled and none can stand pending afterwards.
     fn timers_stop(&mut self) {}
+    /// What the secondaries recorded of their timers before they stopped them (with the
+    /// secondaries' timer stop on): the OR of their timer bytes, and how many recorded.
+    fn sec_timers(&mut self) -> (u8, u8) {
+        (0, 0)
+    }
     /// The wake path's final wait of the boot core: data cache off and its L1 written back
     /// and invalidated by set and way, then the two override registers, then the wait, with
     /// no stack in between (the L2 still holds what L1 wrote back to it). Does not return on
@@ -656,6 +661,10 @@ pub struct Cfg {
     /// controls written 0, read again, and what reads then kept in 0x9f1c (run 8 read three
     /// of them enabled and pending there; the reference stops them before its final wait).
     pub timer_stop: bool,
+    /// The seven secondaries record and stop their four timers on their way down, before
+    /// they hold; the boot core keeps the OR of their timer bytes in 0x9f1d and how many
+    /// recorded in 0x9f1e, directly before the release.
+    pub sec_timer_stop: bool,
     /// DIAGNOSTIC, not an entry into sleep: after the release the boot core does not wait
     /// but watches for this many milliseconds (wake status, cluster words, the engine's
     /// progress word), keeping what it sees in the scratch; then it waits after all.
@@ -682,6 +691,7 @@ impl Cfg {
         timer_record: false,
         wake_path: false,
         timer_stop: false,
+        sec_timer_stop: false,
         watch_ms: 0,
     };
 }
@@ -1477,6 +1487,11 @@ impl Seq {
         b.off_deep(acc_deep(acc), cyc_deep(cyc));
     }
 
+    /// Whether the secondaries stop their timers on their way down.
+    pub fn sec_timer_stop(&self) -> bool {
+        self.cfg.sec_timer_stop
+    }
+
     /// Whether the run goes down through the wake path.
     pub fn wake_path(&self) -> bool {
         self.cfg.wake_path
@@ -1528,6 +1543,10 @@ impl Seq {
             b.timers_stop();
             let (after, _) = b.timers();
             self.late_write(b, PMU_FOUND, &[after]);
+        }
+        if self.cfg.sec_timer_stop {
+            let (or, n) = b.sec_timers();
+            self.late_write(b, PMU_FOUND + 1, &[or, n]);
         }
         if self.cfg.mark_release {
             // The boot core got as far as the release: said before it, where a restart

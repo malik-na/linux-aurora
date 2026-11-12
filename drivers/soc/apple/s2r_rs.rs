@@ -73,6 +73,8 @@ extern "C" {
     fn s2r_rs_mbox_init() -> c_int;
     fn s2r_rs_mbox_resumes() -> u64;
     fn s2r_rs_suspend(finish: extern "C" fn() -> c_int) -> c_int;
+    fn s2r_rs_sec_timer_stop(on: bool);
+    fn s2r_rs_sec_timers() -> u32;
 }
 
 /// The SPMI controller of the primary power chip. Commands go to this one only.
@@ -401,6 +403,12 @@ impl Bus for Hw {
         (timers, (isr >> 6 & 7) as u8)
     }
 
+    fn sec_timers(&mut self) -> (u8, u8) {
+        // SAFETY: plain C call; it reads the secondaries' slots.
+        let v = unsafe { s2r_rs_sec_timers() };
+        (v as u8, (v >> 8) as u8)
+    }
+
     fn timers_stop(&mut self) {
         if self.writes_off() {
             return;
@@ -610,8 +618,11 @@ pub extern "C" fn s2r_rs_begin() -> c_int {
         return ret;
     }
     d.sep_dart_quiesced = true;
-    // SAFETY: plain C call.
-    unsafe { s2r_rs_hold_cores(true) };
+    // SAFETY: plain C calls; the timer stop is read when each secondary is taken down.
+    unsafe {
+        s2r_rs_sec_timer_stop(d.seq.sec_timer_stop());
+        s2r_rs_hold_cores(true)
+    };
     0
 }
 
@@ -711,8 +722,11 @@ pub extern "C" fn s2r_rs_end() {
         return;
     }
     d.hw.entered = false;
-    // SAFETY: plain C call.
-    unsafe { s2r_rs_hold_cores(false) };
+    // SAFETY: plain C calls.
+    unsafe {
+        s2r_rs_hold_cores(false);
+        s2r_rs_sec_timer_stop(false)
+    };
     d.seq.unprepare(&mut d.hw);
     // The Secure Enclave's DART is given back to its driver only if no sleep message was
     // sent in this boot and its power word reads "on" now; in every other case it stays
@@ -787,6 +801,7 @@ impl kernel::Module for S2rModule {
             timer_record: p(*module_parameters::timer_record.value()),
             wake_path: p(*module_parameters::wake_path.value()),
             timer_stop: p(*module_parameters::timer_stop.value()),
+            sec_timer_stop: p(*module_parameters::sec_timer_stop.value()),
             watch_ms: (*module_parameters::watch_ms.value()).min(2500),
         };
         let dry = p(*module_parameters::dry.value());
@@ -821,7 +836,7 @@ impl kernel::Module for S2rModule {
         // SAFETY: plain C call; the driver's state is in place.
         kernel::error::to_result(unsafe { s2r_rs_register_ops() })?;
         pr_info!(
-            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={}\n",
+            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={}\n",
             u8::from(dry),
             cfg.alarm_secs,
             u8::from(cfg.no_alarm_ok),
@@ -838,7 +853,8 @@ impl kernel::Module for S2rModule {
             u8::from(cfg.go_last),
             u8::from(cfg.timer_record),
             u8::from(cfg.wake_path),
-            u8::from(cfg.timer_stop)
+            u8::from(cfg.timer_stop),
+            u8::from(cfg.sec_timer_stop)
         );
         let selftest = *module_parameters::pmu_selftest.value();
         if selftest != 0 {
@@ -1000,6 +1016,10 @@ module! {
         timer_stop: u8 {
             default: 0,
             description: "Directly before the release: the boot core's four timer controls written 0, read again into the scratch's 0x9f1c (1)",
+        },
+        sec_timer_stop: u8 {
+            default: 0,
+            description: "The secondaries record and stop their four timers on their way down; the OR of their bytes and their count go to 0x9f1d-1e before the release (1)",
         },
         watch_ms: u32 {
             default: 0,
