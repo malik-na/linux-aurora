@@ -78,6 +78,7 @@ extern "C" {
     fn s2r_rs_sec_timer_slot(i: u32) -> u16;
     fn s2r_rs_cpus_woke() -> c_int;
     fn s2r_rs_boot_ccsidr() -> u64;
+    fn s2r_rs_set_deep(on: bool);
     // s2r_rs_off.S
     fn apple_s2r_rs_off_deep(acc_ovrd: u64, cyc_ovrd: u64) -> c_int;
 }
@@ -583,6 +584,9 @@ pub extern "C" fn s2r_rs_begin() -> c_int {
         return ret;
     }
     d.sep_dart_quiesced = true;
+    // SAFETY: plain C call. The display driver's suspend (later in this transition) parks
+    // its coprocessors only while this is set.
+    unsafe { s2r_rs_set_deep(d.seq.cfg.disp_park && !d.hw.dry) };
     // SAFETY: plain C calls; the timer stop is read when each secondary is taken down.
     unsafe {
         s2r_rs_sec_timer_stop(d.seq.sec_timer_stop());
@@ -708,7 +712,8 @@ pub extern "C" fn s2r_rs_end() {
     // SAFETY: plain C calls.
     unsafe {
         s2r_rs_hold_cores(false);
-        s2r_rs_sec_timer_stop(false)
+        s2r_rs_sec_timer_stop(false);
+        s2r_rs_set_deep(false)
     };
     d.seq.unprepare(&mut d.hw);
     // The Secure Enclave's DART is given back to its driver only if no sleep message was
@@ -779,6 +784,7 @@ impl kernel::Module for S2rModule {
             wake_mask: match *module_parameters::wake_mask.value() {
                 0 => None,
                 2 => Some(s2r_seq::WAKE_MASK_NAMED_ONLY),
+                3 => Some(s2r_seq::WAKE_MASK_NAMED_NO_MBOX),
                 _ => Some(s2r_seq::WAKE_MASK_RECORDED),
             },
             window_record: p(*module_parameters::window_record.value()),
@@ -790,6 +796,7 @@ impl kernel::Module for S2rModule {
             timer_stop: p(*module_parameters::timer_stop.value()),
             sec_timer_stop: p(*module_parameters::sec_timer_stop.value()),
             aop_queue_stop: p(*module_parameters::aop_queue_stop.value()),
+            disp_park: p(*module_parameters::disp_park.value()),
             disp_gpu_check: p(*module_parameters::disp_gpu_check.value()),
             aic_restore: p(*module_parameters::aic_restore.value()),
             wake_restore: p(*module_parameters::wake_restore.value()),
@@ -839,7 +846,7 @@ impl kernel::Module for S2rModule {
         // SAFETY: plain C call; the driver's state is in place.
         kernel::error::to_result(unsafe { s2r_rs_register_ops() })?;
         pr_info!(
-            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={}\n",
+            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={}\n",
             u8::from(dry),
             cfg.alarm_secs,
             u8::from(cfg.no_alarm_ok),
@@ -861,7 +868,8 @@ impl kernel::Module for S2rModule {
             u8::from(cfg.aop_queue_stop),
             u8::from(cfg.disp_gpu_check),
             u8::from(cfg.aic_restore),
-            u8::from(cfg.wake_restore)
+            u8::from(cfg.wake_restore),
+            u8::from(cfg.disp_park)
         );
         let selftest = *module_parameters::pmu_selftest.value();
         if selftest != 0 {
@@ -994,7 +1002,7 @@ module! {
         },
         wake_mask: u8 {
             default: 1,
-            description: "Wake masks before the last stage: those of the recorded runs that stayed down (1), named sources only (2), or as found (0)",
+            description: "Wake masks before the last stage: those of the recorded runs that stayed down (1), named sources only (2), named only but the AOP / SMC mailbox lines masked (3), or as found (0)",
         },
         window_record: u8 {
             default: 0,
@@ -1027,6 +1035,10 @@ module! {
         sec_timer_stop: u8 {
             default: 0,
             description: "The secondaries record and stop their four timers on their way down; the OR of their bytes and their count go to 0x9f1d-1e before the release (1)",
+        },
+        disp_park: u8 {
+            default: 0,
+            description: "ALL port: the display driver parks its coprocessors (RTKit idle, no wakeup path) during a real transition; a DCP word fully on before the cluster words refuses the entry (1)",
         },
         aop_queue_stop: u8 {
             default: 0,

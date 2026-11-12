@@ -419,6 +419,11 @@ fn deviations(cfg: &Cfg) {
         let (after, before) = if cfg.go_last { ("R23", "R24") } else { ("R24", "R26") };
         println!("timer-stop-ack mmio32-write phys {:#x} 0x00000001 {after} {before}", SPMI[0] + 0x60 + 4 * 6);
     }
+    if cfg.disp_park {
+        println!("# disp_park: the two DCPs' actual states before the release, one more scratch write (0x9f17), acknowledged at once.");
+        let (after, before) = if cfg.go_last { ("R23", "R24") } else { ("R24", "R26") };
+        println!("disp-park-ack mmio32-write phys {:#x} 0x00000001 {after} {before}", SPMI[0] + 0x60 + 4 * 6);
+    }
     if cfg.sec_timer_stop {
         println!("# sec_timer_stop: what the secondaries recorded, one more scratch write (0x9f1d-1e), acknowledged at once.");
         let (after, before) = if cfg.go_last { ("R23", "R24") } else { ("R24", "R26") };
@@ -430,7 +435,7 @@ fn usage() -> ExitCode {
     eprintln!(
         "usage: apple-s2r-trace [--alarm SECS] [--no-alarm] [--net-wd1 SECS] [--base-steps N] [--carry-over N]\n\
          \x20                      [--no-spmi-ack] [--no-spmi-setup] [--no-wake-mask] [--wake-mask-named-only] [--no-aop]\n\
-         \x20                      [--window-record] [--mark-release] [--go-last] [--timer-record] [--wake-path] [--timer-stop] [--sec-timer-stop] [--aop-queue-stop] [--disp-gpu-check] [--aic-restore] [--wake-restore] [--watch MS] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
+         \x20                      [--window-record] [--mark-release] [--go-last] [--timer-record] [--wake-path] [--timer-stop] [--sec-timer-stop] [--aop-queue-stop] [--disp-park] [--wake-mask-no-mbox] [--disp-gpu-check] [--aic-restore] [--wake-restore] [--watch MS] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
     );
     ExitCode::from(2)
 }
@@ -490,6 +495,8 @@ fn main() -> ExitCode {
             "--timer-stop" => cfg.timer_stop = true,
             "--sec-timer-stop" => cfg.sec_timer_stop = true,
             "--aop-queue-stop" => cfg.aop_queue_stop = true,
+            "--disp-park" => cfg.disp_park = true,
+            "--wake-mask-no-mbox" => cfg.wake_mask = Some(WAKE_MASK_NAMED_NO_MBOX),
             "--disp-gpu-check" => cfg.disp_gpu_check = true,
             "--aic-restore" => cfg.aic_restore = true,
             "--wake-restore" => cfg.wake_restore = true,
@@ -820,6 +827,27 @@ mod tests {
         assert_eq!(m.reg[&(AIC + 0x3000 + 4 * 5)], 0x3, "AIC target back");
         assert_eq!(m.reg[&(AIC + 0x4180)], 0x0000_ff00, "AIC mask clear word");
         assert_eq!(m.pmu[&0x9f0a], b'U');
+    }
+
+    /// Run 15's seam: with the display park, a DCP word that reads fully on before the
+    /// cluster words refuses the entry; parked (actual 4 here), the entry goes on and the two
+    /// DCPs' actual states land in RECORD byte 7 (0x9f17), disp0_cpu0 high, dispext_cpu0 low.
+    #[test]
+    fn disp_park_refuses_and_records() {
+        let mut cfg = all_cfg();
+        cfg.disp_park = true;
+        cfg.aop_queue_stop = false;
+        let mut m = Model::new();
+        m.reg.insert(PMGR + 0x1_0018, 0x1400_02ff);
+        let (_, r) = enter_all(&mut m, cfg);
+        assert_eq!(r, Err(Fail::Precheck));
+        let mut m = Model::new();
+        m.reg.insert(PMGR + 0x1_0018, 0x1404_024f);
+        m.reg.insert(PMGR + 0x378, 0x1404_020f);
+        let (_, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok());
+        assert_eq!(m.pmu[&0x9f17], 0x40);
+        assert_eq!(m.refused, None);
     }
 
     #[test]

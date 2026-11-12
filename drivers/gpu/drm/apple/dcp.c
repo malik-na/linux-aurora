@@ -4899,8 +4899,49 @@ static void dcp_hold_for_sleep(struct apple_dcp *dcp)
 	dcp->rx_held = true;
 }
 
+#if IS_ENABLED(CONFIG_APPLE_S2R_RS)
+bool apple_s2r_rs_deep_sleep(void);
+#else
+static inline bool apple_s2r_rs_deep_sleep(void) { return false; }
+#endif
+
+/*
+ * A deep system sleep (the t8103 suspend-to-RAM driver says so): the chip's own
+ * way down waits for the display blocks to power off, which they cannot while
+ * the coprocessor runs. Instead of holding it for the sleep, stop presenting,
+ * let the queue settle, and put the coprocessor to RTKit idle (AP and IOP power
+ * 0x201, state retained). Returns true if it is parked; then the device is not
+ * made a wakeup path, so nothing keeps its power domains on.
+ */
+static bool dcp_s2r_park(struct apple_dcp *dcp)
+{
+	int ret;
+
+	if (!apple_s2r_rs_deep_sleep() || IS_ERR_OR_NULL(dcp->rtk) || READ_ONCE(dcp->crashed))
+		return false;
+	iomfb_pause_presentation(dcp, true);
+	if (iomfb_queue_settle(dcp, msecs_to_jiffies(500)))
+		dev_warn(dcp->dev, "deep sleep: display updates still pending\n");
+	ret = apple_rtkit_idle(dcp->rtk);
+	dev_info(dcp->dev, "deep sleep: coprocessor to RTKit idle: %d\n", ret);
+	if (ret) {
+		iomfb_pause_presentation(dcp, false);
+		return false;
+	}
+	dcp->s2r_parked = true;
+	return true;
+}
+
 static void dcp_release_after_sleep(struct apple_dcp *dcp)
 {
+	if (dcp->s2r_parked) {
+		int ret = apple_rtkit_wake(dcp->rtk);
+
+		dcp->s2r_parked = false;
+		dev_info(dcp->dev, "after deep sleep: coprocessor woken: %d\n", ret);
+		iomfb_pause_presentation(dcp, false);
+		return;
+	}
 	if (!dcp->rx_held)
 		return;
 	dcp->rx_held = false;
@@ -5020,7 +5061,8 @@ static int dcp_platform_suspend(struct device *dev)
 			dcp_enable_typec_work(dcp);
 			return ret;
 		}
-		device_set_wakeup_path(dev);
+		if (!dcp_s2r_park(dcp))
+			device_set_wakeup_path(dev);
 		return 0;
 	}
 
@@ -5051,9 +5093,11 @@ static int dcp_platform_suspend(struct device *dev)
 	 * domains to stay on. We need this as we do not support full
 	 * shutdown properly yet.
 	 */
-	device_set_wakeup_path(dev);
 	/* Last: the steps above still talk to the coprocessor. */
-	dcp_hold_for_sleep(dcp);
+	if (!dcp_s2r_park(dcp)) {
+		device_set_wakeup_path(dev);
+		dcp_hold_for_sleep(dcp);
+	}
 
 	return 0;
 }

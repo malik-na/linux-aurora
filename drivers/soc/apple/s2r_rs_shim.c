@@ -58,6 +58,8 @@ u32 s2r_rs_sec_timers(void);
 u16 s2r_rs_sec_timer_slot(unsigned int i);
 int s2r_rs_cpus_woke(void);
 u64 s2r_rs_boot_ccsidr(void);
+void s2r_rs_set_deep(bool on);
+bool apple_s2r_rs_deep_sleep(void);
 int s2r_rs_wake_slot(u64 cpu0, u64 loader_boot, const u64 *mpidr, const u64 *entry, u32 n);
 
 /* called from modules */
@@ -431,3 +433,20 @@ u64 s2r_rs_boot_ccsidr(void)
 	smp_call_function_single(0, s2r_rs_read_ccsidr, &v, 1);
 	return v;
 }
+
+/*
+ * Set from "begin" to "end" of a real (not dry) transition with disp_park on:
+ * the display driver then parks its coprocessors instead of holding them.
+ */
+static bool s2r_rs_deep;
+
+void s2r_rs_set_deep(bool on)
+{
+	WRITE_ONCE(s2r_rs_deep, on);
+}
+
+bool apple_s2r_rs_deep_sleep(void)
+{
+	return READ_ONCE(s2r_rs_deep);
+}
+EXPORT_SYMBOL_GPL(apple_s2r_rs_deep_sleep);

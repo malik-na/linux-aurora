@@ -193,6 +193,8 @@ const AIC_TARGET: u64 = AIC + 0x3000;
 /// The GPU's power word (GFX) and the display words (RMX, DISP0_FE, DISPEXT_FE, DISPEXT_CPU0,
 /// DISP0_CPU0, DISPDFR_FE, DISPDFR_BE): this M1's device tree.
 const GFX_PS: u64 = PMGR + 0x3f8;
+const DISP0_CPU0_PS: u64 = PMGR + 0x1_0018;
+const DISPEXT_CPU0_PS: u64 = PMGR + 0x378;
 const DISP_WORDS: [u64; 7] = [PMGR + 0x350, PMGR + 0x360, PMGR + 0x368, PMGR + 0x378, PMGR + 0x1_0018, PMGR + 0x3a8, PMGR + 0x3b0];
 const AIC_MASK_CLR: u64 = AIC + 0x4180;
 /// The ALL port's AOP marker for a queue operation (aop.rs `QUEUE_OP`).
@@ -208,6 +210,10 @@ pub const WAKE_MASK_RECORDED: [u32; 5] = [0x0c00_0000, 0x0000_0040, 0x0002_0000,
 /// 47, 49, 50, 54 the alarm's line, 64, 76, 81, 131-134) open, every source without a name
 /// masked, the five that stand at the timer write among them.
 pub const WAKE_MASK_NAMED_ONLY: [u32; 5] = [0xf3ff_afff, 0xffb9_7eff, 0xfffd_effe, 0xffff_ffff, 0xffff_ff87];
+
+/// Named-only, but the three named lines the recorded mask masks (26 AOP.OutboxNotEmpty, 27
+/// AOP.CPUWakeupAP, 81 SMC.OutboxNotEmpty) masked as there (penguin's reading after run 14).
+pub const WAKE_MASK_NAMED_NO_MBOX: [u32; 5] = [0xffff_afff, 0xffb9_7eff, 0xffff_effe, 0xffff_ffff, 0xffff_ff87];
 
 /// `base_steps` bit: switch APSC off on both clusters (bit 22, wait bit 7 clear).
 pub const BASE_APSC: u32 = 1 << 0;
@@ -718,6 +724,10 @@ pub struct Cfg {
     /// ALL port (A): the AOP's service queues stopped (0xa4) 50 ms before its AP power 0x201,
     /// started again (0xa3) after its 0x20.
     pub aop_queue_stop: bool,
+    /// ALL port (C): the display driver parks its coprocessors (RTKit idle, no wakeup path)
+    /// during the transition; before the cluster words the two DCP words must not read fully
+    /// on, and just before the release their actual states go to RECORD byte 7.
+    pub disp_park: bool,
     /// ALL port (C, D): before the last stage the display words and the GPU word are read into
     /// the trace; a GPU domain that does not read off refuses the entry.
     pub disp_gpu_check: bool,
@@ -756,6 +766,7 @@ impl Cfg {
         timer_stop: false,
         sec_timer_stop: false,
         aop_queue_stop: false,
+        disp_park: false,
         disp_gpu_check: false,
         aic_restore: false,
         wake_restore: false,
@@ -1200,6 +1211,15 @@ impl Seq {
             let gfx = Self::r32(b, GFX_PS);
             if (gfx >> 4) & 0xf != 0 {
                 return Err(Self::fail(b, Fail::Precheck, GFX_PS, gfx.into()));
+            }
+        }
+        // ALL port (C): parked display coprocessors let their domains drop below fully on.
+        if self.cfg.disp_park {
+            for a in [DISP0_CPU0_PS, DISPEXT_CPU0_PS] {
+                let v = Self::r32(b, a);
+                if (v >> 4) & 0xf == 0xf {
+                    return Err(Self::fail(b, Fail::Precheck, a, v.into()));
+                }
             }
         }
         // ALL port (F, H): what a wake has to put back, read plainly (not traced: reads only,
@@ -1742,6 +1762,15 @@ impl Seq {
             let (timers, pending) = b.timers();
             self.late_write(b, PMU_TICKS, &[timers]);
             self.late_write(b, PMU_RESULTS, &[0x80 | self.smc_bits | (pending & 7) << 4]);
+        }
+        if self.cfg.disp_park {
+            // The display words as the release finds them; the two DCPs' actual states kept.
+            for a in DISP_WORDS {
+                Self::r32(b, a);
+            }
+            let d0 = (Self::r32(b, DISP0_CPU0_PS) >> 4) & 0xf;
+            let de = (Self::r32(b, DISPEXT_CPU0_PS) >> 4) & 0xf;
+            self.late_write(b, PMU_RECORD + 7, &[(d0 << 4 | de) as u8]);
         }
         if self.cfg.timer_stop {
             b.timers_stop();

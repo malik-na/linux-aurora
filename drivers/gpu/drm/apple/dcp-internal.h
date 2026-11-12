@@ -425,6 +425,8 @@ struct apple_dcp {
 	bool pipe_enabled_h17p;
 	/* Messages from the coprocessor are held in the mailbox for sleep. */
 	bool rx_held;
+	/* Put to RTKit idle for a deep system sleep (dcp_s2r_park()). */
+	bool s2r_parked;
 
 	/* eDP display without DP-HDMI conversion */
 	bool main_display;
