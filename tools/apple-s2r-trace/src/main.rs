@@ -430,7 +430,7 @@ fn usage() -> ExitCode {
     eprintln!(
         "usage: apple-s2r-trace [--alarm SECS] [--no-alarm] [--net-wd1 SECS] [--base-steps N] [--carry-over N]\n\
          \x20                      [--no-spmi-ack] [--no-spmi-setup] [--no-wake-mask] [--wake-mask-named-only] [--no-aop]\n\
-         \x20                      [--window-record] [--mark-release] [--go-last] [--timer-record] [--wake-path] [--timer-stop] [--sec-timer-stop] [--watch MS] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
+         \x20                      [--window-record] [--mark-release] [--go-last] [--timer-record] [--wake-path] [--timer-stop] [--sec-timer-stop] [--aop-queue-stop] [--disp-gpu-check] [--aic-restore] [--wake-restore] [--watch MS] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
     );
     ExitCode::from(2)
 }
@@ -489,6 +489,10 @@ fn main() -> ExitCode {
             "--wake-path" => cfg.wake_path = true,
             "--timer-stop" => cfg.timer_stop = true,
             "--sec-timer-stop" => cfg.sec_timer_stop = true,
+            "--aop-queue-stop" => cfg.aop_queue_stop = true,
+            "--disp-gpu-check" => cfg.disp_gpu_check = true,
+            "--aic-restore" => cfg.aic_restore = true,
+            "--wake-restore" => cfg.wake_restore = true,
             "--watch" => match num(args.get(i + 1)) {
                 Some(n) => {
                     cfg.watch_ms = n;
@@ -742,6 +746,81 @@ mod tests {
                 assert_eq!(bit(&WAKE_MASK_NAMED_ONLY, n), 1, "source {n}");
             }
         }
+    }
+
+    fn all_cfg() -> Cfg {
+        let mut cfg = Cfg::DEFAULT;
+        cfg.alarm_secs = 60;
+        cfg.net_wd1_secs = 170;
+        cfg.window_record = true;
+        cfg.mark_release = true;
+        cfg.timer_record = true;
+        cfg.wake_path = true;
+        cfg.timer_stop = true;
+        cfg.sec_timer_stop = true;
+        cfg.wake_mask = Some(WAKE_MASK_NAMED_ONLY);
+        cfg.aop_queue_stop = true;
+        cfg.disp_gpu_check = true;
+        cfg.aic_restore = true;
+        cfg.wake_restore = true;
+        cfg
+    }
+
+    fn enter_all(m: &mut Model, cfg: Cfg) -> (Seq, Result<(), Fail>) {
+        let mut seq = Seq::new(cfg);
+        seq.begin(m);
+        seq.note_smc(m, SMC_SLPW);
+        let r = seq.prepare(m);
+        if r.is_err() {
+            return (seq, r);
+        }
+        seq.note_smc(m, SMC_SLPW | SMC_WKTP | SMC_SLPA | SMC_AP_POWER);
+        let r = seq.enter(m);
+        (seq, r)
+    }
+
+    /// ALL port (D): a GPU domain that reads on refuses the entry before the last stage;
+    /// one that reads off lets it through.
+    #[test]
+    fn all_gpu_on_refuses() {
+        let mut m = Model::new();
+        m.reg.insert(PMGR + 0x3f8, 0x0f00_23ff);
+        let (_, r) = enter_all(&mut m, all_cfg());
+        assert_eq!(r, Err(Fail::Precheck));
+        let mut m = Model::new();
+        m.reg.insert(PMGR + 0x3f8, 0x0f00_2300);
+        let (_, r) = enter_all(&mut m, all_cfg());
+        assert!(r.is_ok());
+        assert_eq!(m.refused, None);
+    }
+
+    /// ALL port (H, F, G): after a wake, a power word that read on at the entry and reads off
+    /// now is raised; one that was off stays off; the P cluster word is raised; the interrupt
+    /// controller's saved target and mask words are written back.
+    #[test]
+    fn all_wake_restore() {
+        let mut m = Model::new();
+        let on = PS_WORDS[10];
+        let off = PS_WORDS[20];
+        m.reg.insert(on, 0x0f00_00ff);
+        m.reg.insert(off, 0x0f00_0000);
+        m.reg.insert(AIC + 0x3000 + 4 * 5, 0x3);
+        m.reg.insert(AIC + 0x4100, 0xffff_00ff);
+        let (mut seq, r) = enter_all(&mut m, all_cfg());
+        assert!(r.is_ok());
+        // The power cut, as far as the model goes: the word reads off, the interrupt
+        // controller forgot its state, the P cluster is down.
+        m.reg.insert(on, 0x0f00_0000);
+        m.reg.insert(AIC + 0x3000 + 4 * 5, 0);
+        seq.after_resume(&mut m);
+        // The model has no hardware behind the target nibble: the restore wrote it, and
+        // counts the word as not come up.
+        assert_eq!(m.reg[&on] & 0xf, 0xf, "raised");
+        assert_eq!(m.reg[&off] & 0xf, 0x0, "was off: left off");
+        assert_eq!(m.reg[&CLUSTER_PS[1]] & 0xf, 0xf, "P cluster raised");
+        assert_eq!(m.reg[&(AIC + 0x3000 + 4 * 5)], 0x3, "AIC target back");
+        assert_eq!(m.reg[&(AIC + 0x4180)], 0x0000_ff00, "AIC mask clear word");
+        assert_eq!(m.pmu[&0x9f0a], b'U');
     }
 
     #[test]

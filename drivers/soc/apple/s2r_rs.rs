@@ -76,6 +76,7 @@ extern "C" {
     fn s2r_rs_sec_timer_stop(on: bool);
     fn s2r_rs_sec_timers() -> u32;
     fn s2r_rs_sec_timer_slot(i: u32) -> u16;
+    fn s2r_rs_cpus_woke() -> c_int;
 }
 
 /// The SPMI controller of the primary power chip. Commands go to this one only.
@@ -346,6 +347,15 @@ impl Bus for Hw {
         } else {
             Err(())
         }
+    }
+
+    fn aop_queues(&mut self, op: u8) -> i32 {
+        // SAFETY: plain C call into the AOP driver's hook (aop.rs: QUEUE_OP | op).
+        unsafe { s2r_rs_aop_power(0x5a51_0000 | u32::from(op)) }
+    }
+
+    fn sleep_ms(&mut self, ms: u32) {
+        fsleep(Delta::from_millis(ms.into()));
     }
 
     fn parked_mask(&mut self) -> u8 {
@@ -699,6 +709,17 @@ fn enter_wake_path() -> c_int {
     // SAFETY: as above.
     let after = unsafe { s2r_rs_mbox_resumes() };
     pr_info!("RESUMED through the loader's mailbox: resumes {} -> {}\n", before, after);
+    if d.seq.cfg.wake_restore {
+        // SAFETY: plain C call; the cores stopped for the sleep may be started again.
+        let n = unsafe { s2r_rs_cpus_woke() };
+        pr_info!(
+            "after the wake: P cluster up {}, power words raised {}, stayed off {}, cores to restart {}\n",
+            d.seq.wake_p_up,
+            d.seq.wake_raised,
+            d.seq.wake_stuck,
+            n
+        );
+    }
     if d.seq.sec_timer_stop() {
         for i in 0..8u32 {
             // SAFETY: plain C call.
@@ -815,6 +836,10 @@ impl kernel::Module for S2rModule {
             wake_path: p(*module_parameters::wake_path.value()),
             timer_stop: p(*module_parameters::timer_stop.value()),
             sec_timer_stop: p(*module_parameters::sec_timer_stop.value()),
+            aop_queue_stop: p(*module_parameters::aop_queue_stop.value()),
+            disp_gpu_check: p(*module_parameters::disp_gpu_check.value()),
+            aic_restore: p(*module_parameters::aic_restore.value()),
+            wake_restore: p(*module_parameters::wake_restore.value()),
             watch_ms: (*module_parameters::watch_ms.value()).min(2500),
         };
         let dry = p(*module_parameters::dry.value());
@@ -849,7 +874,7 @@ impl kernel::Module for S2rModule {
         // SAFETY: plain C call; the driver's state is in place.
         kernel::error::to_result(unsafe { s2r_rs_register_ops() })?;
         pr_info!(
-            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={}\n",
+            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={}\n",
             u8::from(dry),
             cfg.alarm_secs,
             u8::from(cfg.no_alarm_ok),
@@ -867,7 +892,11 @@ impl kernel::Module for S2rModule {
             u8::from(cfg.timer_record),
             u8::from(cfg.wake_path),
             u8::from(cfg.timer_stop),
-            u8::from(cfg.sec_timer_stop)
+            u8::from(cfg.sec_timer_stop),
+            u8::from(cfg.aop_queue_stop),
+            u8::from(cfg.disp_gpu_check),
+            u8::from(cfg.aic_restore),
+            u8::from(cfg.wake_restore)
         );
         let selftest = *module_parameters::pmu_selftest.value();
         if selftest != 0 {
@@ -1033,6 +1062,22 @@ module! {
         sec_timer_stop: u8 {
             default: 0,
             description: "The secondaries record and stop their four timers on their way down; the OR of their bytes and their count go to 0x9f1d-1e before the release (1)",
+        },
+        aop_queue_stop: u8 {
+            default: 0,
+            description: "ALL port: stop the AOP's started service queues (0xa4) 50 ms before its AP power 0x201; start them (0xa3) after its 0x20 (1)",
+        },
+        disp_gpu_check: u8 {
+            default: 0,
+            description: "ALL port: display and GPU power words into the trace before the last stage; a GPU domain not off refuses the entry (1)",
+        },
+        aic_restore: u8 {
+            default: 0,
+            description: "ALL port: the interrupt controller's target and mask words saved before the last stage, written back after a wake (1)",
+        },
+        wake_restore: u8 {
+            default: 0,
+            description: "ALL port: after a wake, the last stage's words back (watchdog net kept), the P cluster up, the power words that were on raised, the stopped cores free to start (1)",
         },
         watch_ms: u32 {
             default: 0,

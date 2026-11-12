@@ -166,6 +166,40 @@ pub const AP_POWER_MSG: u64 = 0x00b0_0000_0000_0000;
 /// AP power value for sleep.
 pub const AP_POWER_SLEEP: u32 = 0x201;
 
+/// The power manager's power-state words that are raised again after a wake if they read on at the entry: every
+/// word of this M1's own device tree (its pmgr device table, private/component-map.json) inside the PMGR block,
+/// without the Secure Enclave's (read only, always) and without the cores' own, in the table's order (parents first).
+pub const PS_WORDS: [u64; 114] = [
+    0x2_3b70_0040, 0x2_3b70_0048, 0x2_3b70_0100, 0x2_3b70_0108, 0x2_3b70_0110, 0x2_3b70_0118, 0x2_3b70_0120,
+    0x2_3b70_0128, 0x2_3b70_0130, 0x2_3b70_0138, 0x2_3b70_0140, 0x2_3b70_0148, 0x2_3b70_0150, 0x2_3b70_0158,
+    0x2_3b70_0160, 0x2_3b70_0168, 0x2_3b70_0170, 0x2_3b70_0178, 0x2_3b70_0180, 0x2_3b70_0188, 0x2_3b70_0190,
+    0x2_3b70_0198, 0x2_3b70_01a0, 0x2_3b70_01a8, 0x2_3b70_01b0, 0x2_3b70_01b8, 0x2_3b70_01c0, 0x2_3b70_01c8,
+    0x2_3b70_01d0, 0x2_3b70_01d8, 0x2_3b70_01e0, 0x2_3b70_01e8, 0x2_3b70_01f0, 0x2_3b70_01f8, 0x2_3b70_0200,
+    0x2_3b70_0208, 0x2_3b70_0210, 0x2_3b70_0218, 0x2_3b70_0220, 0x2_3b70_0228, 0x2_3b70_0230, 0x2_3b70_0238,
+    0x2_3b70_0240, 0x2_3b70_0248, 0x2_3b70_0250, 0x2_3b70_0258, 0x2_3b70_0268, 0x2_3b70_0270, 0x2_3b70_0278,
+    0x2_3b70_0280, 0x2_3b70_0288, 0x2_3b70_0290, 0x2_3b70_0298, 0x2_3b70_02a0, 0x2_3b70_02a8, 0x2_3b70_02b0,
+    0x2_3b70_02b8, 0x2_3b70_02c0, 0x2_3b70_02c8, 0x2_3b70_02d0, 0x2_3b70_02d8, 0x2_3b70_02e0, 0x2_3b70_02e8,
+    0x2_3b70_02f0, 0x2_3b70_02f8, 0x2_3b70_0300, 0x2_3b70_0310, 0x2_3b70_0308, 0x2_3b70_0318, 0x2_3b70_0340,
+    0x2_3b70_0348, 0x2_3b70_0350, 0x2_3b70_0358, 0x2_3b70_0360, 0x2_3b70_0368, 0x2_3b70_0378, 0x2_3b70_03c0,
+    0x2_3b70_03c8, 0x2_3b70_03d0, 0x2_3b70_03d8, 0x2_3b70_03e0, 0x2_3b70_03e8, 0x2_3b70_03f0, 0x2_3b70_03f8,
+    0x2_3b70_0400, 0x2_3b70_0408, 0x2_3b70_0410, 0x2_3b70_0418, 0x2_3b70_0470, 0x2_3b70_8000, 0x2_3b70_8008,
+    0x2_3b70_8010, 0x2_3b70_8018, 0x2_3b70_8020, 0x2_3b70_c000, 0x2_3b71_0018, 0x2_3b70_0260, 0x2_3b70_0320,
+    0x2_3b70_0330, 0x2_3b70_0328, 0x2_3b70_0338, 0x2_3b70_03a8, 0x2_3b70_03b0, 0x2_3b70_0420, 0x2_3b70_0428,
+    0x2_3b70_0430, 0x2_3b70_0438, 0x2_3b70_0440, 0x2_3b70_0448, 0x2_3b70_0450, 0x2_3b70_0458, 0x2_3b70_0460,
+    0x2_3b70_0468, 0x2_3b70_03b8,
+];
+
+const AIC_TARGET: u64 = AIC + 0x3000;
+/// The GPU's power word (GFX) and the display words (RMX, DISP0_FE, DISPEXT_FE, DISPEXT_CPU0,
+/// DISP0_CPU0, DISPDFR_FE, DISPDFR_BE): this M1's device tree.
+const GFX_PS: u64 = PMGR + 0x3f8;
+const DISP_WORDS: [u64; 7] = [PMGR + 0x350, PMGR + 0x360, PMGR + 0x368, PMGR + 0x378, PMGR + 0x1_0018, PMGR + 0x3a8, PMGR + 0x3b0];
+const AIC_MASK_CLR: u64 = AIC + 0x4180;
+/// The ALL port's AOP marker for a queue operation (aop.rs `QUEUE_OP`).
+pub const AOP_QUEUE_STOP: u8 = 0xa4;
+/// Its restart.
+pub const AOP_QUEUE_START: u8 = 0xa3;
+
 /// Wake masks of the recorded runs that stayed down (sources 26, 27, 38 and 81 masked).
 pub const WAKE_MASK_RECORDED: [u32; 5] = [0x0c00_0000, 0x0000_0040, 0x0002_0000, 0, 0];
 
@@ -600,6 +634,13 @@ pub trait Bus {
     /// The running core's four timer controls (CNTP/CNTV_CTL_EL0, and at EL2 the EL02 pair)
     /// written 0: none is enabled and none can stand pending afterwards.
     fn timers_stop(&mut self) {}
+    /// Send the AOP's service queues `op` (stop 0xa4, start 0xa3); how many sends it took,
+    /// or a negative error.
+    fn aop_queues(&mut self, _op: u8) -> i32 {
+        0
+    }
+    /// Sleep (process context only).
+    fn sleep_ms(&mut self, _ms: u32) {}
     /// What the secondaries recorded of their timers (with the secondaries' timer stop on):
     /// the OR of their timer bytes before the stop, and a byte with how many recorded in
     /// the low nibble and the OR of their four ENABLE bits after the stop in the high one.
@@ -673,6 +714,19 @@ pub struct Cfg {
     /// bytes before the stop in 0x9f1d, and in 0x9f1e how many recorded (low nibble) and
     /// the OR of their ENABLE bits after the stop (high nibble, 0 = all stopped).
     pub sec_timer_stop: bool,
+    /// ALL port (A): the AOP's service queues stopped (0xa4) 50 ms before its AP power 0x201,
+    /// started again (0xa3) after its 0x20.
+    pub aop_queue_stop: bool,
+    /// ALL port (C, D): before the last stage the display words and the GPU word are read into
+    /// the trace; a GPU domain that does not read off refuses the entry.
+    pub disp_gpu_check: bool,
+    /// ALL port (F): the interrupt controller's per-IRQ target and mask words saved before the
+    /// last stage masks them, written back after a wake.
+    pub aic_restore: bool,
+    /// ALL port (H, G): after a wake, the last stage's words put back (the watchdog net
+    /// excepted), the P cluster word raised, and every power word of [`PS_WORDS`] that read on
+    /// at the entry raised again, parents first.
+    pub wake_restore: bool,
     /// DIAGNOSTIC, not an entry into sleep: after the release the boot core does not wait
     /// but watches for this many milliseconds (wake status, cluster words, the engine's
     /// progress word), keeping what it sees in the scratch; then it waits after all.
@@ -700,6 +754,10 @@ impl Cfg {
         wake_path: false,
         timer_stop: false,
         sec_timer_stop: false,
+        aop_queue_stop: false,
+        disp_gpu_check: false,
+        aic_restore: false,
+        wake_restore: false,
         watch_ms: 0,
     };
 }
@@ -750,6 +808,18 @@ pub struct Seq {
     cmd_us: u32,
     /// The wake-status words as read right after the first timer write.
     status: [u32; 5],
+    aop_queues_stopped: bool,
+    /// The interrupt controller as found before the last stage: target words, mask words.
+    aic_target: [u32; 1024],
+    aic_mask: [u32; 32],
+    aic_saved: bool,
+    /// The power words of [`PS_WORDS`] as found before the last stage (0: not read).
+    ps_found: [u32; PS_WORDS.len()],
+    /// What the restore after a wake found and did: words raised, words that stayed off,
+    /// whether the P cluster came up.
+    pub wake_raised: u32,
+    pub wake_stuck: u32,
+    pub wake_p_up: bool,
 }
 
 impl Seq {
@@ -768,6 +838,14 @@ impl Seq {
             alarm: 0,
             cmd_us: 0,
             status: [0; 5],
+            aop_queues_stopped: false,
+            aic_target: [0; 1024],
+            aic_mask: [0; 32],
+            aic_saved: false,
+            ps_found: [0; PS_WORDS.len()],
+            wake_raised: 0,
+            wake_stuck: 0,
+            wake_p_up: false,
         }
     }
 
@@ -938,6 +1016,15 @@ impl Seq {
             None => return Err(Self::fail(b, Fail::SepSleep, 2, 0)),
         }
 
+        if self.cfg.aop_queue_stop {
+            // As the reference: the stops are not waited for, then 50 ms.
+            let n = b.aop_queues(AOP_QUEUE_STOP);
+            if n > 0 {
+                self.aop_queues_stopped = true;
+            }
+            Self::rec(b, 0, Kind::Msg, 0x20, u64::from(AOP_QUEUE_STOP) << 48, Cop::Aop as u64);
+            b.sleep_ms(50);
+        }
         if self.cfg.aop_notify {
             let msg = AP_POWER_MSG | u64::from(AP_POWER_SLEEP);
             Self::rec(b, 0, Kind::Msg, 0, msg, Cop::Aop as u64);
@@ -983,6 +1070,11 @@ impl Seq {
             if b.aop_ap_power(0x20).is_ok() {
                 Self::rec(b, 0, Kind::Recv, 0, msg, Cop::Aop as u64);
             }
+        }
+        if self.aop_queues_stopped {
+            self.aop_queues_stopped = false;
+            Self::rec(b, 0, Kind::Msg, 0x20, u64::from(AOP_QUEUE_START) << 48, Cop::Aop as u64);
+            let _ = b.aop_queues(AOP_QUEUE_START);
         }
     }
 
@@ -1098,6 +1190,32 @@ impl Seq {
             Self::w32(b, WD1_ALARM, self.cfg.net_wd1_secs.min(178) * 24_000_000);
             Self::w32(b, WD1_CNT, 0);
             Self::w32(b, WD1_CTL, 4);
+        }
+        // ALL port (C, D): the display and GPU words on record; the GPU's domain must read off.
+        if self.cfg.disp_gpu_check {
+            for a in DISP_WORDS {
+                Self::r32(b, a);
+            }
+            let gfx = Self::r32(b, GFX_PS);
+            if (gfx >> 4) & 0xf != 0 {
+                return Err(Self::fail(b, Fail::Precheck, GFX_PS, gfx.into()));
+            }
+        }
+        // ALL port (F, H): what a wake has to put back, read plainly (not traced: reads only,
+        // before the last stage, and far more than the trace holds).
+        if self.cfg.aic_restore {
+            for n in 0..(self.irq_words * 32) as usize {
+                self.aic_target[n] = b.r32(AIC_TARGET + 4 * n as u64);
+            }
+            for w in 0..self.irq_words as usize {
+                self.aic_mask[w] = b.r32(AIC_MASK_SET + 4 * w as u64);
+            }
+            self.aic_saved = true;
+        }
+        if self.cfg.wake_restore {
+            for (i, a) in PS_WORDS.iter().enumerate() {
+                self.ps_found[i] = b.r32(*a);
+            }
         }
         if b.refused() {
             return Err(Self::fail(b, Fail::Precheck, 2, 0));
@@ -1417,6 +1535,13 @@ impl Seq {
     /// Put back what a stopped entry changed, and leave which step stopped it where the next
     /// boot can read it. Only reached before the cluster words.
     fn undo<B: Bus>(&mut self, b: &mut B, why: Fail) {
+        self.put_back(b, Some(why));
+    }
+
+    /// Put back what the entry changed. `why`: the entry stopped (everything, the watchdog
+    /// included, and the reason in the scratch); `None`: after a wake (the watchdog net stays
+    /// armed, nothing written to the stage byte).
+    fn put_back<B: Bus>(&mut self, b: &mut B, why: Option<Fail>) {
         for (i, acc) in ACC.iter().enumerate() {
             for (k, off) in ACC_THROTTLE.iter().enumerate() {
                 if let Some(v) = self.saved.throttle[i][k].take() {
@@ -1455,7 +1580,7 @@ impl Seq {
             Self::w32(b, MCC_BCAST_A, 0);
             Self::w32(b, MCC_BCAST_B, 0);
         }
-        if let Some(w) = self.saved.wdt.take() {
+        if let Some(w) = self.saved.wdt.take().filter(|_| why.is_some()) {
             Self::w32(b, WDT_DEADLINE, w[0]);
             Self::w32(b, WDT_CFG, w[1]);
             Self::w32(b, WD0_CTL, w[2]);
@@ -1478,7 +1603,9 @@ impl Seq {
         }
         if let Some(stage) = self.saved.boot_stage.take() {
             let _ = Self::pmu_write(b, PMU_BOOT_STAGE, &[stage]);
-            let _ = Self::pmu_write(b, PMU_STAGE, &[why as u8]);
+            if let Some(why) = why {
+                let _ = Self::pmu_write(b, PMU_STAGE, &[why as u8]);
+            }
         }
     }
 
@@ -1508,11 +1635,75 @@ impl Seq {
     /// After the boot core came back through its resume entry: the stage byte 'U' and the
     /// power chip's clock second (low three bytes, over the found bytes) in the scratch.
     pub fn after_resume<B: Bus>(&mut self, b: &mut B) {
+        if self.cfg.wake_restore {
+            self.wake_restore(b);
+        }
         let mut rtc = [0u8; 6];
         if Self::pmu_read(b, PMU_RTC_NOW, &mut rtc).is_ok() {
             self.late_write(b, PMU_FOUND, &[rtc[2], rtc[3], rtc[4]]);
         }
         self.late_write(b, PMU_STAGE, &[b'U']);
+    }
+
+    /// ALL port (H, F, G): after a wake, before any device resumes: the last stage's words
+    /// back (the watchdog net stays), the interrupt controller as found, the P cluster word
+    /// raised, then every power word that read on at the entry raised again (target nibble
+    /// 0xf, parents first, up to three passes, each word waited for up to 20 ms).
+    fn wake_restore<B: Bus>(&mut self, b: &mut B) {
+        self.put_back(b, None);
+        if self.aic_saved {
+            for n in 0..(self.irq_words * 32) as usize {
+                b.w32(AIC_TARGET + 4 * n as u64, self.aic_target[n]);
+            }
+            for w in 0..self.irq_words as usize {
+                b.w32(AIC_MASK_SET + 4 * w as u64, self.aic_mask[w]);
+                b.w32(AIC_MASK_CLR + 4 * w as u64, !self.aic_mask[w]);
+            }
+        }
+        // The P cluster: target 0xf, wait for actual 0xf (the chip's way up starts only the E
+        // cluster's core 0).
+        let p = CLUSTER_PS[1];
+        let v = b.r32(p);
+        b.w32(p, (v & !0xf) | 0xf);
+        self.wake_p_up = Self::poll(b, p, 0xf0, 0xf0, 10_000);
+        let (mut raised, mut stuck) = (0, 0);
+        for pass in 0..3 {
+            stuck = 0;
+            for (i, a) in PS_WORDS.iter().enumerate() {
+                let was = self.ps_found[i];
+                if was & 0xf != 0xf || (was >> 4) & 0xf != 0xf {
+                    continue;
+                }
+                let now = b.r32(*a);
+                if (now >> 4) & 0xf == 0xf {
+                    continue;
+                }
+                b.w32(*a, (now & !0xf) | 0xf);
+                if Self::poll(b, *a, 0xf0, 0xf0, 20_000) {
+                    raised += 1;
+                } else {
+                    stuck += 1;
+                }
+            }
+            if stuck == 0 || pass == 2 {
+                break;
+            }
+        }
+        self.wake_raised = raised;
+        self.wake_stuck = stuck;
+    }
+
+    /// An untraced poll (after a wake): `a & mask == want` within `timeout_us`.
+    fn poll<B: Bus>(b: &mut B, a: u64, mask: u32, want: u32, timeout_us: u64) -> bool {
+        let t0 = b.now_us();
+        loop {
+            if b.r32(a) & mask == want {
+                return true;
+            }
+            if b.dry() || b.now_us() - t0 >= timeout_us {
+                return false;
+            }
+        }
     }
 
     /// One core's final routine: ACC_OVRD, CYC_OVRD, the wait. Does not return on the machine.

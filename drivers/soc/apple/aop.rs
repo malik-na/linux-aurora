@@ -2411,10 +2411,15 @@ unsafe impl Send for AopDriver {}
 
 /// The t8103 suspend-to-RAM driver (s2r_rs.rs) tells the AOP which power state the AP is
 /// going to: "AP power" on the management endpoint, acknowledged by the AOP, which itself
-/// keeps running.
+/// keeps running; and, before that, stops the AOP's service queues (and starts them again
+/// after a wake).
 #[cfg(CONFIG_APPLE_S2R_RS)]
 mod s2r_hook {
-    use super::AopData;
+    use super::{
+        AopData,
+        AFK_ENDPOINT_COUNT,
+        AFK_ENDPOINT_START, //
+    };
     use core::sync::atomic::{
         AtomicPtr,
         Ordering, //
@@ -2432,6 +2437,9 @@ mod s2r_hook {
         fn apple_s2r_rs_set_aop_power(f: Option<unsafe extern "C" fn(u32) -> c_int>);
     }
 
+    /// The suspend driver's marker for a queue operation in place of an AP power state.
+    const QUEUE_OP: u32 = 0x5a51_0000;
+
     /// Called from the suspend path, process context, user space frozen.
     unsafe extern "C" fn ap_power(state: u32) -> c_int {
         let p = AOP.load(Ordering::Acquire);
@@ -2442,6 +2450,26 @@ mod s2r_hook {
         // up only in `unregister`, which runs on unbind; no unbind runs while the suspend
         // path that calls this is under way.
         let data = unsafe { &*p };
+        // QUEUE_OP | op: send `op << 48` to every service endpoint this driver started at
+        // boot (the ones the AOP announced and that took the start), not waited for; the
+        // result is how many sends were accepted. 0xa4 stops a queue, 0xa3 starts it again.
+        if state & 0xffff_ff00 == QUEUE_OP && matches!(state & 0xff, 0xa3 | 0xa4) {
+            let msg = u64::from(state & 0xff) << 48;
+            let mut sent = 0;
+            for ep in 0..AFK_ENDPOINT_COUNT as usize {
+                let mut guard = data.rtkit.lock();
+                let Some(mut rtk) = guard.as_mut().as_pin_mut() else {
+                    return ENODEV.to_errno();
+                };
+                if !data.endpoints[ep].lock().started {
+                    continue;
+                }
+                if rtk.as_mut().send_message(AFK_ENDPOINT_START + ep as u8, msg).is_ok() {
+                    sent += 1;
+                }
+            }
+            return sent;
+        }
         let mut guard = data.rtkit.lock();
         let r = match guard.as_mut().as_pin_mut() {
             None => Err(ENODEV),

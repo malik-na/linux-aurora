@@ -55,6 +55,7 @@ int s2r_rs_suspend(int (*finish)(void));
 void s2r_rs_sec_timer_stop(bool on);
 u32 s2r_rs_sec_timers(void);
 u16 s2r_rs_sec_timer_slot(unsigned int i);
+int s2r_rs_cpus_woke(void);
 int s2r_rs_wake_slot(u64 cpu0, u64 loader_boot, const u64 *mpidr, const u64 *entry, u32 n);
 
 /* called from modules */
@@ -405,4 +406,10 @@ u32 s2r_rs_sec_timers(void)
 u16 s2r_rs_sec_timer_slot(unsigned int i)
 {
 	return apple_cpu_s2r_timer_slot(i);
+}
+
+/* After a wake: the cores stopped for the sleep may be started again. */
+int s2r_rs_cpus_woke(void)
+{
+	return apple_cpu_s2r_woke();
 }
