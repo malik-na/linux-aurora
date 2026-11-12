@@ -2674,7 +2674,7 @@ int dcp_wait_ready(struct platform_device *pdev, u64 timeout)
 	return dcp->active ? 0 : -ETIMEDOUT;
 }
 
-static void __maybe_unused dcp_sleep(struct apple_dcp *dcp)
+static void dcp_sleep(struct apple_dcp *dcp)
 {
 	switch (dcp->fw_compat) {
 	case DCP_FIRMWARE_V_12_3:
@@ -4908,37 +4908,56 @@ static inline bool apple_s2r_rs_deep_sleep(void) { return false; }
 /*
  * A deep system sleep (the t8103 suspend-to-RAM driver says so): the chip's own
  * way down waits for the display blocks to power off, which they cannot while
- * the coprocessor runs. Instead of holding it for the sleep, stop presenting,
- * let the queue settle, and put the coprocessor to RTKit idle (AP and IOP power
- * 0x201, state retained). Returns true if it is parked; then the device is not
- * made a wakeup path, so nothing keeps its power domains on.
+ * the coprocessor runs. In the order of the t6000 reference: in device suspend
+ * the display firmware is put to sleep through its own protocol (dcp_sleep():
+ * swaps aborted, client closed, setDCPPower(0)); in suspend_late the coprocessor
+ * goes to RTKit idle (AP and IOP power 0x201), which a firmware still serving
+ * the display does not acknowledge (run 15: -62). Neither a hold nor a wakeup
+ * path then: nothing keeps the display power domains on.
  */
-static bool dcp_s2r_park(struct apple_dcp *dcp)
+static bool dcp_s2r_sleep(struct apple_dcp *dcp)
 {
-	int ret;
-
 	if (!apple_s2r_rs_deep_sleep() || IS_ERR_OR_NULL(dcp->rtk) || READ_ONCE(dcp->crashed))
 		return false;
 	iomfb_pause_presentation(dcp, true);
 	if (iomfb_queue_settle(dcp, msecs_to_jiffies(500)))
 		dev_warn(dcp->dev, "deep sleep: display updates still pending\n");
-	ret = apple_rtkit_idle(dcp->rtk);
-	dev_info(dcp->dev, "deep sleep: coprocessor to RTKit idle: %d\n", ret);
-	if (ret) {
-		iomfb_pause_presentation(dcp, false);
-		return false;
-	}
-	dcp->s2r_parked = true;
+	dcp_sleep(dcp);
+	dev_info(dcp->dev, "deep sleep: display firmware asked to sleep\n");
+	dcp->s2r_slept = true;
 	return true;
 }
 
-static void dcp_release_after_sleep(struct apple_dcp *dcp)
+static int dcp_platform_suspend_late(struct device *dev)
 {
+	struct apple_dcp *dcp = dev_get_drvdata(dev);
+	int ret;
+
+	if (!dcp->s2r_slept)
+		return 0;
+	ret = apple_rtkit_idle(dcp->rtk);
+	dev_info(dev, "deep sleep: coprocessor to RTKit idle: %d\n", ret);
+	dcp->s2r_parked = !ret;
+	return 0;
+}
+
+static int dcp_platform_resume_early(struct device *dev)
+{
+	struct apple_dcp *dcp = dev_get_drvdata(dev);
+
 	if (dcp->s2r_parked) {
 		int ret = apple_rtkit_wake(dcp->rtk);
 
 		dcp->s2r_parked = false;
-		dev_info(dcp->dev, "after deep sleep: coprocessor woken: %d\n", ret);
+		dev_info(dev, "after deep sleep: coprocessor woken: %d\n", ret);
+	}
+	return 0;
+}
+
+static void dcp_release_after_sleep(struct apple_dcp *dcp)
+{
+	if (dcp->s2r_slept) {
+		dcp->s2r_slept = false;
 		iomfb_pause_presentation(dcp, false);
 		return;
 	}
@@ -5061,7 +5080,7 @@ static int dcp_platform_suspend(struct device *dev)
 			dcp_enable_typec_work(dcp);
 			return ret;
 		}
-		if (!dcp_s2r_park(dcp))
+		if (!dcp_s2r_sleep(dcp))
 			device_set_wakeup_path(dev);
 		return 0;
 	}
@@ -5094,7 +5113,7 @@ static int dcp_platform_suspend(struct device *dev)
 	 * shutdown properly yet.
 	 */
 	/* Last: the steps above still talk to the coprocessor. */
-	if (!dcp_s2r_park(dcp)) {
+	if (!dcp_s2r_sleep(dcp)) {
 		device_set_wakeup_path(dev);
 		dcp_hold_for_sleep(dcp);
 	}
@@ -5131,6 +5150,7 @@ static const struct dev_pm_ops dcp_platform_pm_ops = {
 	.prepare = pm_sleep_ptr(dcp_platform_prepare),
 	.complete = pm_sleep_ptr(dcp_platform_complete),
 	SYSTEM_SLEEP_PM_OPS(dcp_platform_suspend, dcp_platform_resume)
+	LATE_SYSTEM_SLEEP_PM_OPS(dcp_platform_suspend_late, dcp_platform_resume_early)
 };
 
 static const struct apple_dcp_hw_data apple_dcp_hw_t6020 = {
