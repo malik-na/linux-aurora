@@ -625,10 +625,13 @@ impl kernel::Module for S2rModule {
 }
 
 /// First use of the polled power-chip access on the machine, awake, at boot, before the
-/// controller's own driver is loaded: one read that the run script compares with the same
-/// byte read through the kernel's own path, and, if asked for, one write of our stage byte
-/// read back the same way. Also shown: what one polled command leaves pending in the
-/// controllers' interrupt words, and how the words the entry will write read as found.
+/// controller's own driver is loaded. Reads first: the boot-stage byte (which the kernel's
+/// reboot driver rewrites later in the boot, so it is logged and not compared) and five of
+/// our own scratch bytes that no kernel driver writes, which the run script compares with
+/// the same bytes read through the kernel's own path. Only if every read came back, and
+/// only if asked for: one write of our stage byte, with its read-back. Also shown: what one
+/// polled command leaves pending in the controllers' interrupt words, and how the words the
+/// entry may write read as found.
 fn pmu_selftest(hw: &mut Hw, write: bool) {
     let pending = |hw: &mut Hw, bus: usize| -> [u32; 9] {
         let mut p = [0u32; 9];
@@ -648,11 +651,21 @@ fn pmu_selftest(hw: &mut Hw, write: bool) {
     for bus in 0..2 {
         pr_info!("selftest: SPMI controller {} pending words before {:x?} after {:x?}\n", bus, before[bus], after[bus]);
     }
+    let mut note = [0u8; 4];
+    let r_note = hw.pmu_read(0x9f04, &mut note);
+    pr_info!("selftest: polled read of 0x9f04-07: {:?} value {:02x} {:02x} {:02x} {:02x}\n", r_note, note[0], note[1], note[2], note[3]);
+    let mut results = [0u8; 1];
+    let r_results = hw.pmu_read(0x9f0c, &mut results);
+    pr_info!("selftest: polled read of 0x9f0c: {:?} value {:02x}\n", r_results, results[0]);
     if write {
-        let w = hw.pmu_write(0x9f0a, &[b't']);
-        let mut back = [0u8; 1];
-        let r = hw.pmu_read(0x9f0a, &mut back);
-        pr_info!("selftest: polled write of 0x9f0a = 0x74: {:?}; read back {:?} value {:#04x}\n", w, r, back[0]);
+        if r.is_ok() && r_note.is_ok() && r_results.is_ok() {
+            let w = hw.pmu_write(0x9f0a, &[b't']);
+            let mut back = [0u8; 1];
+            let r = hw.pmu_read(0x9f0a, &mut back);
+            pr_info!("selftest: polled write of 0x9f0a = 0x74: {:?}; read back {:?} value {:#04x}\n", w, r, back[0]);
+        } else {
+            pr_warn!("selftest: NO WRITE: a read did not come back\n");
+        }
     }
     for a in [0x2_3b73_4000u64, 0x2_3b77_c000, 0x2_3b77_8000, 0x2_3b73_8004, 0x2_3b73_8008, 0x2_3b74_8000, 0x2_3b74_8400, 0x2_3b74_8800, 0x2_3b74_8c00] {
         let v = hw.rd(a);
