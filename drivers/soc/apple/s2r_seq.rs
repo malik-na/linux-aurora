@@ -649,12 +649,13 @@ pub trait Bus {
     }
     /// The wake path's final wait of the boot core: data cache off and its L1 written back
     /// and invalidated by set and way, then the two override registers, then the wait, with
-    /// no stack in between (the L2 still holds what L1 wrote back to it). Does not return on
-    /// the machine; the resume entry left in the loader's mailbox brings the core back.
-    fn off_deep(&mut self, acc: u64, cyc: u64) {
+    /// no stack in between (the L2 still holds what L1 wrote back to it). A wake through a
+    /// power cut comes back through the resume entry in the loader's mailbox; true if the wait
+    /// fell through instead (the data cache is on again then).
+    fn off_deep(&mut self, acc: u64, cyc: u64) -> bool {
         self.sys_write(SysReg::AccOvrd, acc);
         self.sys_write(SysReg::CycOvrd, cyc);
-        self.wfi();
+        false
     }
     /// Keep one record.
     fn trace(&mut self, rec: Rec);
@@ -1611,7 +1612,7 @@ impl Seq {
 
     /// The boot core's final routine on the wake path: as [`Self::final_routine`], with the
     /// records made first and the writes and the wait in one piece behind the L1 write-back.
-    fn final_routine_off<B: Bus>(b: &mut B) {
+    fn final_routine_off<B: Bus>(&self, b: &mut B) {
         let acc = b.sys_read(SysReg::AccOvrd);
         Self::rec(b, 0, Kind::SysRead, 0, acc, 0);
         let cyc = b.sys_read(SysReg::CycOvrd);
@@ -1619,7 +1620,11 @@ impl Seq {
         Self::rec(b, 0, Kind::SysWrite, 0, acc_deep(acc), 0);
         Self::rec(b, 0, Kind::SysWrite, 1, cyc_deep(cyc), 0);
         Self::rec(b, 0, Kind::Wfi, 0, 0, 0);
-        b.off_deep(acc_deep(acc), cyc_deep(cyc));
+        if b.off_deep(acc_deep(acc), cyc_deep(cyc)) {
+            // The wait fell through: on record as stage 'F', then the wait again.
+            self.late_write(b, PMU_STAGE, &[b'F']);
+        }
+        b.wfi();
     }
 
     /// Whether the secondaries stop their timers on their way down.
@@ -1762,7 +1767,7 @@ impl Seq {
             self.watch(b);
         }
         if self.cfg.wake_path {
-            Self::final_routine_off(b);
+            self.final_routine_off(b);
         } else {
             Self::final_routine(b, 0);
         }

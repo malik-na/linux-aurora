@@ -77,6 +77,8 @@ extern "C" {
     fn s2r_rs_sec_timers() -> u32;
     fn s2r_rs_sec_timer_slot(i: u32) -> u16;
     fn s2r_rs_cpus_woke() -> c_int;
+    // s2r_rs_off.S
+    fn apple_s2r_rs_off_deep(acc_ovrd: u64, cyc_ovrd: u64) -> c_int;
 }
 
 /// The SPMI controller of the primary power chip. Commands go to this one only.
@@ -451,65 +453,15 @@ impl Bus for Hw {
         unsafe { core::arch::asm!("isb", options(nomem, nostack, preserves_flags)) };
     }
 
-    fn off_deep(&mut self, acc: u64, cyc: u64) {
+    fn off_deep(&mut self, acc: u64, cyc: u64) -> bool {
         if self.writes_off() {
-            return;
+            return false;
         }
-        // SAFETY: the boot core's last instructions before the wake: interrupts masked, the
-        // data cache off, the L1 data cache cleaned and invalidated by set and way (level 1
-        // only: the L2 stays to the hardware), the two override registers, the wait. Nothing
-        // here touches the stack once the cache is off. It does not return: the wake resets
-        // the core into the loader, which jumps to the resume entry in the mailbox. The
-        // scratch registers are passed as inputs: outputs are not allowed with `noreturn`,
-        // and nothing reads them after this.
-        unsafe {
-            core::arch::asm!(
-                "msr daifset, #0xf",
-                "mrs {t}, sctlr_el1",
-                "bic {t}, {t}, #4",
-                "msr sctlr_el1, {t}",
-                "isb",
-                "msr csselr_el1, xzr",
-                "isb",
-                "mrs {t}, ccsidr_el1",
-                "and {ls}, {t}, #7",
-                "add {ls}, {ls}, #4",
-                "ubfx {w}, {t}, #3, #10",
-                "ubfx {st}, {t}, #13, #15",
-                "clz {ws:w}, {w:w}",
-                "2:",
-                "mov {i}, {st}",
-                "3:",
-                "lsl {x}, {w}, {ws}",
-                "lsl {y}, {i}, {ls}",
-                "orr {x}, {x}, {y}",
-                "dc cisw, {x}",
-                "subs {i}, {i}, #1",
-                "b.ge 3b",
-                "subs {w}, {w}, #1",
-                "b.ge 2b",
-                "dsb sy",
-                "isb",
-                "msr s3_5_c15_c6_0, {acc}",
-                "msr s3_5_c15_c5_0, {cyc}",
-                "isb",
-                "4:",
-                "dsb sy",
-                "wfi",
-                "b 4b",
-                acc = in(reg) acc,
-                cyc = in(reg) cyc,
-                t = in(reg) 0u64,
-                ls = in(reg) 0u64,
-                w = in(reg) 0u64,
-                st = in(reg) 0u64,
-                ws = in(reg) 0u64,
-                i = in(reg) 0u64,
-                x = in(reg) 0u64,
-                y = in(reg) 0u64,
-                options(noreturn, nostack)
-            )
-        }
+        // SAFETY: the boot core's last instructions (s2r_rs_off.S): interrupts masked, the data
+        // cache off, L1 written back by set and way, the overrides, the wait. It returns only if
+        // the wait fell through, with the data cache on again.
+        unsafe { apple_s2r_rs_off_deep(acc, cyc) };
+        true
     }
 
     fn sync(&mut self) {
