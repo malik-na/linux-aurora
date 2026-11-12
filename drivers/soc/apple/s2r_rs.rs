@@ -401,7 +401,7 @@ impl Bus for Hw {
         (timers, (isr >> 6 & 7) as u8)
     }
 
-    fn off_deep(&mut self, acc: u64, cyc: u64, timers_off: bool) {
+    fn off_deep(&mut self, acc: u64, cyc: u64) {
         if self.writes_off() {
             return;
         }
@@ -440,16 +440,6 @@ impl Bus for Hw {
                 "b.ge 2b",
                 "dsb sy",
                 "isb",
-                "cbz {ts}, 5f",
-                "msr cntp_ctl_el0, xzr",
-                "msr cntv_ctl_el0, xzr",
-                "mrs {t}, CurrentEL",
-                "cmp {t}, #8",
-                "b.ne 5f",
-                "msr s3_5_c14_c2_1, xzr",
-                "msr s3_5_c14_c3_1, xzr",
-                "5:",
-                "isb",
                 "msr s3_5_c15_c6_0, {acc}",
                 "msr s3_5_c15_c5_0, {cyc}",
                 "isb",
@@ -459,7 +449,6 @@ impl Bus for Hw {
                 "b 4b",
                 acc = in(reg) acc,
                 cyc = in(reg) cyc,
-                ts = in(reg) u64::from(timers_off),
                 t = in(reg) 0u64,
                 ls = in(reg) 0u64,
                 w = in(reg) 0u64,
@@ -767,14 +756,9 @@ impl kernel::Module for S2rModule {
             go_last: p(*module_parameters::go_last.value()),
             timer_record: p(*module_parameters::timer_record.value()),
             wake_path: p(*module_parameters::wake_path.value()),
-            timer_stop: p(*module_parameters::timer_stop.value()),
             watch_ms: (*module_parameters::watch_ms.value()).min(2500),
         };
         let dry = p(*module_parameters::dry.value());
-        if cfg.timer_stop && !cfg.wake_path {
-            pr_err!("timer_stop=1 needs wake_path=1: staying with s2idle\n");
-            return Ok(S2rModule);
-        }
         // SAFETY: plain C call, once, before anything uses the mailbox.
         if cfg.wake_path && unsafe { s2r_rs_mbox_init() } != 0 {
             pr_err!("wake_path=1 and no usable resume mailbox: staying with s2idle\n");
@@ -806,7 +790,7 @@ impl kernel::Module for S2rModule {
         // SAFETY: plain C call; the driver's state is in place.
         kernel::error::to_result(unsafe { s2r_rs_register_ops() })?;
         pr_info!(
-            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={}\n",
+            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={}\n",
             u8::from(dry),
             cfg.alarm_secs,
             u8::from(cfg.no_alarm_ok),
@@ -822,8 +806,7 @@ impl kernel::Module for S2rModule {
             cfg.watch_ms,
             u8::from(cfg.go_last),
             u8::from(cfg.timer_record),
-            u8::from(cfg.wake_path),
-            u8::from(cfg.timer_stop)
+            u8::from(cfg.wake_path)
         );
         let selftest = *module_parameters::pmu_selftest.value();
         if selftest != 0 {
@@ -981,10 +964,6 @@ module! {
         wake_path: u8 {
             default: 0,
             description: "Go down through cpu_suspend() with the boot core's resume entry in the loader's mailbox, L1 written back first (1); needs /chosen/asahi,s2r-mailbox",
-        },
-        timer_stop: u8 {
-            default: 0,
-            description: "With wake_path=1: write the boot core's four timer controls 0 in its final wait, after the L1 write-back (1)",
         },
         watch_ms: u32 {
             default: 0,
