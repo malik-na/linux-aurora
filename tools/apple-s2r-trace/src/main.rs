@@ -419,6 +419,11 @@ fn deviations(cfg: &Cfg) {
         let (after, before) = if cfg.go_last { ("R23", "R24") } else { ("R24", "R26") };
         println!("timer-stop-ack mmio32-write phys {:#x} 0x00000001 {after} {before}", SPMI[0] + 0x60 + 4 * 6);
     }
+    if cfg.gate_record {
+        println!("# gate_record: how many of sequence 0's waits are open, one more scratch write (0x9f15-16), acknowledged at once.");
+        let (after, before) = if cfg.go_last { ("R23", "R24") } else { ("R24", "R26") };
+        println!("gate-record-ack mmio32-write phys {:#x} 0x00000001 {after} {before}", SPMI[0] + 0x60 + 4 * 6);
+    }
     if cfg.disp_park {
         println!("# disp_park: the two DCPs' actual states before the release, one more scratch write (0x9f17), acknowledged at once.");
         let (after, before) = if cfg.go_last { ("R23", "R24") } else { ("R24", "R26") };
@@ -435,7 +440,7 @@ fn usage() -> ExitCode {
     eprintln!(
         "usage: apple-s2r-trace [--alarm SECS] [--no-alarm] [--net-wd1 SECS] [--base-steps N] [--carry-over N]\n\
          \x20                      [--no-spmi-ack] [--no-spmi-setup] [--no-wake-mask] [--wake-mask-named-only] [--no-aop]\n\
-         \x20                      [--window-record] [--mark-release] [--go-last] [--timer-record] [--wake-path] [--timer-stop] [--sec-timer-stop] [--aop-queue-stop] [--disp-park] [--wake-mask-no-mbox] [--disp-gpu-check] [--aic-restore] [--wake-restore] [--watch MS] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
+         \x20                      [--window-record] [--mark-release] [--go-last] [--timer-record] [--wake-path] [--timer-stop] [--sec-timer-stop] [--aop-queue-stop] [--disp-park] [--gate-record] [--wake-mask-no-mbox] [--disp-gpu-check] [--aic-restore] [--wake-restore] [--watch MS] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
     );
     ExitCode::from(2)
 }
@@ -496,6 +501,7 @@ fn main() -> ExitCode {
             "--sec-timer-stop" => cfg.sec_timer_stop = true,
             "--aop-queue-stop" => cfg.aop_queue_stop = true,
             "--disp-park" => cfg.disp_park = true,
+            "--gate-record" => cfg.gate_record = true,
             "--wake-mask-no-mbox" => cfg.wake_mask = Some(WAKE_MASK_NAMED_NO_MBOX),
             "--disp-gpu-check" => cfg.disp_gpu_check = true,
             "--aic-restore" => cfg.aic_restore = true,
@@ -847,6 +853,26 @@ mod tests {
         let (_, r) = enter_all(&mut m, cfg);
         assert!(r.is_ok());
         assert_eq!(m.pmu[&0x9f17], 0x40);
+        assert_eq!(m.refused, None);
+    }
+
+    /// Run 17's record: with gate_record, every one of sequence 0's 49 words is read before the
+    /// release, the count of those not yet as needed and the first one's index land in
+    /// 0x9f15-16; in the model one of the 44 still busy (bit 11) and the five not yet set (bit 30).
+    #[test]
+    fn gate_record_counts_the_open_waits() {
+        let mut cfg = all_cfg();
+        cfg.aop_queue_stop = false;
+        cfg.disp_park = true;
+        cfg.gate_record = true;
+        let mut m = Model::new();
+        m.reg.insert(PMGR + 0x1_0018, 0x1404_020f);
+        m.reg.insert(PMGR + 0x378, 0x1404_020f);
+        m.reg.insert(SEQ0_GATES[3].0, 0x800);
+        let (_, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok());
+        assert_eq!(m.pmu[&0x9f15], 6, "one busy word and the five unset ones");
+        assert_eq!(m.pmu[&0x9f16], 3, "the first open one");
         assert_eq!(m.refused, None);
     }
 

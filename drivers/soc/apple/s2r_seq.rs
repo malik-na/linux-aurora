@@ -189,6 +189,30 @@ pub const PS_WORDS: [u64; 114] = [
     0x2_3b70_0468, 0x2_3b70_03b8,
 ];
 
+/// What the chip's own sleep sequence 0 waits on before it goes on (its program in the sleep
+/// engine's memory, read live on this M1; private/engine-gates-seq0-seq1.tsv): 44 device
+/// power-state words whose bit 11 must read 0, then five power-manager words whose bit 30 must
+/// read 1. (address, mask, the value the masked bits must have)
+pub const SEQ0_GATES: [(u64, u32, u32); 49] = [
+    (0x2_3b70_01d8, 0x800, 0x0), (0x2_3b70_01e0, 0x800, 0x0), (0x2_3b70_01e8, 0x800, 0x0),
+    (0x2_3b70_01f0, 0x800, 0x0), (0x2_3b70_01f8, 0x800, 0x0), (0x2_3b70_0200, 0x800, 0x0),
+    (0x2_3b70_0208, 0x800, 0x0), (0x2_3b70_0210, 0x800, 0x0), (0x2_3b70_0238, 0x800, 0x0),
+    (0x2_3b70_0270, 0x800, 0x0), (0x2_3b70_0278, 0x800, 0x0), (0x2_3b70_0280, 0x800, 0x0),
+    (0x2_3b70_0288, 0x800, 0x0), (0x2_3b70_0290, 0x800, 0x0), (0x2_3b70_0298, 0x800, 0x0),
+    (0x2_3b70_02a0, 0x800, 0x0), (0x2_3b70_02a8, 0x800, 0x0), (0x2_3b70_02b0, 0x800, 0x0),
+    (0x2_3b70_0240, 0x800, 0x0), (0x2_3b70_0248, 0x800, 0x0), (0x2_3b70_0250, 0x800, 0x0),
+    (0x2_3b70_0258, 0x800, 0x0), (0x2_3b70_0260, 0x800, 0x0), (0x2_3b70_01d0, 0x800, 0x0),
+    (0x2_3b70_02b8, 0x800, 0x0), (0x2_3b70_02c0, 0x800, 0x0), (0x2_3b70_02c8, 0x800, 0x0),
+    (0x2_3b70_02d0, 0x800, 0x0), (0x2_3b70_02d8, 0x800, 0x0), (0x2_3b70_02e0, 0x800, 0x0),
+    (0x2_3b70_02e8, 0x800, 0x0), (0x2_3b70_02f0, 0x800, 0x0), (0x2_3b70_0220, 0x800, 0x0),
+    (0x2_3b70_0218, 0x800, 0x0), (0x2_3b70_0228, 0x800, 0x0), (0x2_3b70_0230, 0x800, 0x0),
+    (0x2_3b70_01c8, 0x800, 0x0), (0x2_3b70_01c0, 0x800, 0x0), (0x2_3b70_03e8, 0x800, 0x0),
+    (0x2_3b70_0418, 0x800, 0x0), (0x2_3b70_03f0, 0x800, 0x0), (0x2_3b70_03d8, 0x800, 0x0),
+    (0x2_3b70_0110, 0x800, 0x0), (0x2_3b70_0130, 0x800, 0x0), (0x2_3b71_c0a8, 0x40000000, 0x40000000),
+    (0x2_3b71_c090, 0x40000000, 0x40000000), (0x2_3b71_c5a0, 0x40000000, 0x40000000),
+    (0x2_3b71_c360, 0x40000000, 0x40000000), (0x2_3b71_c330, 0x40000000, 0x40000000),
+];
+
 const AIC_TARGET: u64 = AIC + 0x3000;
 /// The GPU's power word (GFX) and the display words (RMX, DISP0_FE, DISPEXT_FE, DISPEXT_CPU0,
 /// DISP0_CPU0, DISPDFR_FE, DISPDFR_BE): this M1's device tree.
@@ -728,6 +752,10 @@ pub struct Cfg {
     /// during the transition; before the cluster words the two DCP words must not read fully
     /// on, and just before the release their actual states go to RECORD byte 7.
     pub disp_park: bool,
+    /// RECORD ONLY: just before the release, every word of [`SEQ0_GATES`] read into the trace;
+    /// how many do not yet read as sequence 0 needs, and the index of the first such, go to
+    /// RECORD bytes 5 and 6 (0x9f15, 0x9f16; 0xff = none).
+    pub gate_record: bool,
     /// ALL port (C, D): before the last stage the display words and the GPU word are read into
     /// the trace; a GPU domain that does not read off refuses the entry.
     pub disp_gpu_check: bool,
@@ -767,6 +795,7 @@ impl Cfg {
         sec_timer_stop: false,
         aop_queue_stop: false,
         disp_park: false,
+        gate_record: false,
         disp_gpu_check: false,
         aic_restore: false,
         wake_restore: false,
@@ -1771,6 +1800,18 @@ impl Seq {
             let d0 = (Self::r32(b, DISP0_CPU0_PS) >> 4) & 0xf;
             let de = (Self::r32(b, DISPEXT_CPU0_PS) >> 4) & 0xf;
             self.late_write(b, PMU_RECORD + 7, &[(d0 << 4 | de) as u8]);
+        }
+        if self.cfg.gate_record {
+            let (mut busy, mut first) = (0u8, 0xffu8);
+            for (i, (a, mask, want)) in SEQ0_GATES.iter().enumerate() {
+                if Self::r32(b, *a) & mask != *want {
+                    if busy == 0 {
+                        first = i as u8;
+                    }
+                    busy += 1;
+                }
+            }
+            self.late_write(b, PMU_RECORD + 5, &[busy, first]);
         }
         if self.cfg.timer_stop {
             b.timers_stop();

@@ -797,6 +797,7 @@ impl kernel::Module for S2rModule {
             sec_timer_stop: p(*module_parameters::sec_timer_stop.value()),
             aop_queue_stop: p(*module_parameters::aop_queue_stop.value()),
             disp_park: p(*module_parameters::disp_park.value()),
+            gate_record: p(*module_parameters::gate_record.value()),
             disp_gpu_check: p(*module_parameters::disp_gpu_check.value()),
             aic_restore: p(*module_parameters::aic_restore.value()),
             wake_restore: p(*module_parameters::wake_restore.value()),
@@ -846,7 +847,7 @@ impl kernel::Module for S2rModule {
         // SAFETY: plain C call; the driver's state is in place.
         kernel::error::to_result(unsafe { s2r_rs_register_ops() })?;
         pr_info!(
-            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={}\n",
+            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={} gate_record={}\n",
             u8::from(dry),
             cfg.alarm_secs,
             u8::from(cfg.no_alarm_ok),
@@ -869,7 +870,8 @@ impl kernel::Module for S2rModule {
             u8::from(cfg.disp_gpu_check),
             u8::from(cfg.aic_restore),
             u8::from(cfg.wake_restore),
-            u8::from(cfg.disp_park)
+            u8::from(cfg.disp_park),
+            u8::from(cfg.gate_record)
         );
         let selftest = *module_parameters::pmu_selftest.value();
         if selftest != 0 {
@@ -1035,6 +1037,10 @@ module! {
         sec_timer_stop: u8 {
             default: 0,
             description: "The secondaries record and stop their four timers on their way down; the OR of their bytes and their count go to 0x9f1d-1e before the release (1)",
+        },
+        gate_record: u8 {
+            default: 0,
+            description: "RECORD ONLY: just before the release, the words the chip's sequence 0 waits on into the trace; how many are not yet as it needs and the first one's index into 0x9f15-16 (1)",
         },
         disp_park: u8 {
             default: 0,
