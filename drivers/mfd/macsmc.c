@@ -21,6 +21,7 @@
 #include <linux/overflow.h>
 #include <linux/platform_device.h>
 #include <linux/suspend.h>
+#include <linux/sysfs.h>
 #include <linux/soc/apple/rtkit.h>
 #include <linux/unaligned.h>
 
@@ -440,11 +441,64 @@ static void apple_smc_disable_notifications(void *data)
 	apple_smc_write_flag(smc, SMC_KEY(NTAP), false);
 }
 
+/*
+ * Research aid for the suspend work, read-only. CLSP and CLWK are, by the Asahi
+ * documentation, "possibly" the controller's last sleep and last wake time. Each key's
+ * info and bytes are printed as found: at probe, and whenever the attribute
+ * "sleep_keys" of this device is read. Nothing is written to the controller.
+ */
+static int apple_smc_sleep_keys(struct apple_smc *smc, char *out, size_t len)
+{
+	static const smc_key keys[] = { SMC_KEY(CLSP), SMC_KEY(CLWK) };
+	struct apple_smc_key_info info;
+	u8 val[32];
+	int i, ret, n = 0;
+
+	for (i = 0; i < ARRAY_SIZE(keys); i++) {
+		__be32 name = cpu_to_be32(keys[i]);
+		__be32 type;
+
+		ret = apple_smc_get_key_info(smc, keys[i], &info);
+		if (ret < 0) {
+			n += scnprintf(out + n, len - n, "%.4s: no key info (%d); ",
+				       (char *)&name, ret);
+			continue;
+		}
+		type = cpu_to_be32(info.type_code);
+		if (info.size > sizeof(val)) {
+			n += scnprintf(out + n, len - n, "%.4s type %.4s size %u: not read; ",
+				       (char *)&name, (char *)&type, info.size);
+			continue;
+		}
+		ret = apple_smc_read(smc, keys[i], val, info.size);
+		n += scnprintf(out + n, len - n, "%.4s type %.4s size %u flags %#x read %d: %*ph; ",
+			       (char *)&name, (char *)&type, info.size, info.flags, ret,
+			       ret > 0 ? ret : 0, val);
+	}
+	return n;
+}
+
+static ssize_t sleep_keys_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct apple_smc *smc = dev_get_drvdata(dev);
+	int n = apple_smc_sleep_keys(smc, buf, PAGE_SIZE - 2);
+
+	return n + sysfs_emit_at(buf, n, "\n");
+}
+static DEVICE_ATTR_RO(sleep_keys);
+
+static struct attribute *apple_smc_attrs[] = {
+	&dev_attr_sleep_keys.attr,
+	NULL
+};
+ATTRIBUTE_GROUPS(apple_smc);
+
 static int apple_smc_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct device_node *np;
 	struct apple_smc *smc;
+	char sleep_keys[200];
 	__be32 count = 0;
 	int ret;
 
@@ -531,6 +585,9 @@ static int apple_smc_probe(struct platform_device *pdev)
 			return dev_err_probe(smc->dev, ret,
 					     "Failed to register the second GPIO bank");
 	}
+
+	apple_smc_sleep_keys(smc, sleep_keys, sizeof(sleep_keys));
+	dev_info(dev, "sleep keys at probe: %s\n", sleep_keys);
 
 	return 0;
 }
@@ -635,6 +692,7 @@ static struct platform_driver apple_smc_driver = {
 		.name = "macsmc",
 		.of_match_table = apple_smc_of_match,
 		.pm = pm_sleep_ptr(&apple_smc_pm_ops),
+		.dev_groups = apple_smc_groups,
 	},
 	.probe = apple_smc_probe,
 };
