@@ -594,8 +594,9 @@ pub trait Bus {
     /// The running core's four timer controls (CNTP/CNTV_CTL_EL0, and at EL2 the EL02 pair)
     /// written 0: none is enabled and none can stand pending afterwards.
     fn timers_stop(&mut self) {}
-    /// What the secondaries recorded of their timers before they stopped them (with the
-    /// secondaries' timer stop on): the OR of their timer bytes, and how many recorded.
+    /// What the secondaries recorded of their timers (with the secondaries' timer stop on):
+    /// the OR of their timer bytes before the stop, and a byte with how many recorded in
+    /// the low nibble and the OR of their four ENABLE bits after the stop in the high one.
     fn sec_timers(&mut self) -> (u8, u8) {
         (0, 0)
     }
@@ -662,8 +663,9 @@ pub struct Cfg {
     /// of them enabled and pending there; the reference stops them before its final wait).
     pub timer_stop: bool,
     /// The seven secondaries record and stop their four timers on their way down, before
-    /// they hold; the boot core keeps the OR of their timer bytes in 0x9f1d and how many
-    /// recorded in 0x9f1e, directly before the release.
+    /// they hold; directly before the release the boot core keeps the OR of their timer
+    /// bytes before the stop in 0x9f1d, and in 0x9f1e how many recorded (low nibble) and
+    /// the OR of their ENABLE bits after the stop (high nibble, 0 = all stopped).
     pub sec_timer_stop: bool,
     /// DIAGNOSTIC, not an entry into sleep: after the release the boot core does not wait
     /// but watches for this many milliseconds (wake status, cluster words, the engine's

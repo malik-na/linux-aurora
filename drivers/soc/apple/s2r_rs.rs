@@ -75,6 +75,7 @@ extern "C" {
     fn s2r_rs_suspend(finish: extern "C" fn() -> c_int) -> c_int;
     fn s2r_rs_sec_timer_stop(on: bool);
     fn s2r_rs_sec_timers() -> u32;
+    fn s2r_rs_sec_timer_slot(i: u32) -> u16;
 }
 
 /// The SPMI controller of the primary power chip. Commands go to this one only.
@@ -406,7 +407,8 @@ impl Bus for Hw {
     fn sec_timers(&mut self) -> (u8, u8) {
         // SAFETY: plain C call; it reads the secondaries' slots.
         let v = unsafe { s2r_rs_sec_timers() };
-        (v as u8, (v >> 8) as u8)
+        // Count in the low nibble, the ENABLE bits read after their stop in the high one.
+        (v as u8, ((v >> 8) & 0xf | (v >> 12 & 0xf) << 4) as u8)
     }
 
     fn timers_stop(&mut self) {
@@ -697,6 +699,13 @@ fn enter_wake_path() -> c_int {
     // SAFETY: as above.
     let after = unsafe { s2r_rs_mbox_resumes() };
     pr_info!("RESUMED through the loader's mailbox: resumes {} -> {}\n", before, after);
+    if d.seq.sec_timer_stop() {
+        for i in 0..8u32 {
+            // SAFETY: plain C call.
+            let v = unsafe { s2r_rs_sec_timer_slot(i) };
+            pr_info!("secondary slot {}: timers before {:#04x}, recorded {}, ENABLE after {:#x}\n", i, v & 0xff, v >> 8 & 1, v >> 12);
+        }
+    }
     0
 }
 

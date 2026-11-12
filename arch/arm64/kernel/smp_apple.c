@@ -336,8 +336,9 @@ void apple_cpu_hotplug_set_s2r_hold(bool hold)
  * Timer stop for the secondaries (the Rust driver's timer_stop): with it set, a
  * secondary taken down for S2R records its four timer controls in its slot below
  * (index cluster * 4 + core; bit 8 set = recorded, low byte two bits per timer,
- * ENABLE then ISTATUS, for CNTP_CTL_EL0, CNTV_CTL_EL0, CNTP_CTL_EL02, CNTV_CTL_EL02)
- * and writes them 0, before it holds. Written with the MMU off (non-cacheable): CPU0
+ * ENABLE then ISTATUS, for CNTP_CTL_EL0, CNTV_CTL_EL0, CNTP_CTL_EL02, CNTV_CTL_EL02,
+ * before the stop; bits 12-15 their four ENABLE bits read again after it) and
+ * writes them 0, before it holds. Written with the MMU off (non-cacheable): CPU0
  * cleans the slots before and invalidates them before it reads them.
  */
 static bool apple_cpu_s2r_timer_stop;
@@ -359,11 +360,14 @@ void apple_cpu_hotplug_set_s2r_timer_stop(bool on)
 	dsb(sy);
 }
 
-/* CPU0: the OR of the recorded secondaries' bytes, and their count in bits 15:8. */
+/*
+ * CPU0: the OR of the recorded secondaries' bytes before the stop (bits 7:0), their
+ * count (bits 11:8), the OR of their ENABLE bits after it (bits 15:12).
+ */
 u32 apple_cpu_s2r_timers_read(void)
 {
 	unsigned long va = (unsigned long)&apple_cpu_s2r_timers;
-	u32 or = 0, n = 0;
+	u32 or = 0, after = 0, n = 0;
 	int i;
 
 	dcache_inval_poc(va, va + sizeof(apple_cpu_s2r_timers));
@@ -372,10 +376,22 @@ u32 apple_cpu_s2r_timers_read(void)
 
 		if (v & BIT(8)) {
 			or |= v & 0xff;
+			after |= v >> 12;
 			n++;
 		}
 	}
-	return or | n << 8;
+	return or | n << 8 | after << 12;
+}
+
+/* One secondary's slot as it recorded it, for the log after a resume. */
+u16 apple_cpu_s2r_timer_slot(unsigned int i)
+{
+	unsigned long va = (unsigned long)&apple_cpu_s2r_timers;
+
+	if (i >= ARRAY_SIZE(apple_cpu_s2r_timers.slot))
+		return 0;
+	dcache_inval_poc(va, va + sizeof(apple_cpu_s2r_timers));
+	return READ_ONCE(apple_cpu_s2r_timers.slot[i]);
 }
 
 /* CPU0, interrupts off, after the commit: let the held secondaries go down */

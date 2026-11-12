@@ -217,9 +217,10 @@ SYM_FUNC_START(apple_cpu_s2r_mmuoff)
 
 	/*
 	 * Bit 29 (the S2R timer stop): record this core's four timer controls in its
-	 * slot of apple_cpu_s2r_timers (index cluster * 4 + core; two bits per timer,
-	 * ENABLE then ISTATUS; bit 8 = recorded), then write them 0. A timer that
-	 * stands pending can keep a core from powering down.
+	 * slot of apple_cpu_s2r_timers (index cluster * 4 + core; low byte two bits
+	 * per timer, ENABLE then ISTATUS, before the stop; bit 8 = recorded; bits
+	 * 12-15 the four ENABLE bits read again after the stop), then write them 0.
+	 * A timer that stands pending can keep a core from powering down.
 	 */
 	tbz	x20, #29, 6f
 	mov	x1, #0x100
@@ -248,9 +249,22 @@ SYM_FUNC_START(apple_cpu_s2r_mmuoff)
 	orr	x1, x1, x2, lsl #7
 	msr_s	SYS_CNTP_CTL_EL02, xzr
 	msr_s	SYS_CNTV_CTL_EL02, xzr
+	isb
+	mrs_s	x0, SYS_CNTP_CTL_EL02
+	and	x2, x0, #1
+	orr	x1, x1, x2, lsl #14
+	mrs_s	x0, SYS_CNTV_CTL_EL02
+	and	x2, x0, #1
+	orr	x1, x1, x2, lsl #15
 7:	msr	cntp_ctl_el0, xzr
 	msr	cntv_ctl_el0, xzr
 	isb
+	mrs	x0, cntp_ctl_el0
+	and	x2, x0, #1
+	orr	x1, x1, x2, lsl #12
+	mrs	x0, cntv_ctl_el0
+	and	x2, x0, #1
+	orr	x1, x1, x2, lsl #13
 	mrs	x0, mpidr_el1
 	ubfx	x2, x0, #8, #8			// cluster
 	and	x0, x0, #0xff			// core

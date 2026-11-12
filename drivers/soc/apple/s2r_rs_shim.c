@@ -54,6 +54,7 @@ u64 s2r_rs_mbox_resumes(void);
 int s2r_rs_suspend(int (*finish)(void));
 void s2r_rs_sec_timer_stop(bool on);
 u32 s2r_rs_sec_timers(void);
+u16 s2r_rs_sec_timer_slot(unsigned int i);
 int s2r_rs_wake_slot(u64 cpu0, u64 loader_boot, const u64 *mpidr, const u64 *entry, u32 n);
 
 /* called from modules */
@@ -394,8 +395,14 @@ void s2r_rs_sec_timer_stop(bool on)
 	apple_cpu_hotplug_set_s2r_timer_stop(on);
 }
 
-/* What they recorded: the OR of their timer bytes, their count in bits 15:8. */
+/* What they recorded: OR before (7:0), count (11:8), OR of ENABLE after (15:12). */
 u32 s2r_rs_sec_timers(void)
 {
 	return apple_cpu_s2r_timers_read();
+}
+
+/* One secondary's slot (index cluster * 4 + core). */
+u16 s2r_rs_sec_timer_slot(unsigned int i)
+{
+	return apple_cpu_s2r_timer_slot(i);
 }
