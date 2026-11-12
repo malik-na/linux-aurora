@@ -420,9 +420,11 @@ fn deviations(cfg: &Cfg) {
         println!("timer-stop-ack mmio32-write phys {:#x} 0x00000001 {after} {before}", SPMI[0] + 0x60 + 4 * 6);
     }
     if cfg.gate_record {
-        println!("# gate_record: how many of sequence 0's waits are open, one more scratch write (0x9f15-16), acknowledged at once.");
+        println!("# gate_record: sequence 0's open waits at the release, two more scratch writes (0x9f1a, 0x9f1c-1e), each acknowledged at once.");
         let (after, before) = if cfg.go_last { ("R23", "R24") } else { ("R24", "R26") };
-        println!("gate-record-ack mmio32-write phys {:#x} 0x00000001 {after} {before}", SPMI[0] + 0x60 + 4 * 6);
+        for n in 0..2 {
+            println!("gate-record-ack-{n} mmio32-write phys {:#x} 0x00000001 {after} {before}", SPMI[0] + 0x60 + 4 * 6);
+        }
     }
     if cfg.disp_park {
         println!("# disp_park: the two DCPs' actual states before the release, one more scratch write (0x9f17), acknowledged at once.");
@@ -871,8 +873,10 @@ mod tests {
         m.reg.insert(SEQ0_GATES[3].0, 0x800);
         let (_, r) = enter_all(&mut m, cfg);
         assert!(r.is_ok());
-        assert_eq!(m.pmu[&0x9f15], 6, "one busy word and the five unset ones");
-        assert_eq!(m.pmu[&0x9f16], 3, "the first open one");
+        // Before the cluster words and at the release the model reads the same: one busy word
+        // (index 3) and the five unset ones (44 to 48).
+        assert_eq!((m.pmu[&0x9f13], m.pmu[&0x9f14], m.pmu[&0x9f15], m.pmu[&0x9f16]), (6, 3, 44, 45));
+        assert_eq!((m.pmu[&0x9f1a], m.pmu[&0x9f1c], m.pmu[&0x9f1d], m.pmu[&0x9f1e]), (6, 3, 44, 45));
         assert_eq!(m.refused, None);
     }
 

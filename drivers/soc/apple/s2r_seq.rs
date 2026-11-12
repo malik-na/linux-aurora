@@ -752,9 +752,10 @@ pub struct Cfg {
     /// during the transition; before the cluster words the two DCP words must not read fully
     /// on, and just before the release their actual states go to RECORD byte 7.
     pub disp_park: bool,
-    /// RECORD ONLY: just before the release, every word of [`SEQ0_GATES`] read into the trace;
-    /// how many do not yet read as sequence 0 needs, and the index of the first such, go to
-    /// RECORD bytes 5 and 6 (0x9f15, 0x9f16; 0xff = none).
+    /// RECORD ONLY: every word of [`SEQ0_GATES`] read into the trace twice: at the end of the
+    /// slow part (before the cluster words; how many open and the first three open indices into
+    /// RECORD bytes 3-6, 0x9f13-16) and just before the release (into 0x9f1a and 0x9f1c-1e, in
+    /// place of the timer and secondaries bytes). 0xff = none.
     pub gate_record: bool,
     /// ALL port (C, D): before the last stage the display words and the GPU word are read into
     /// the trace; a GPU domain that does not read off refuses the entry.
@@ -850,6 +851,9 @@ pub struct Seq {
     /// The wake-status words as read right after the first timer write.
     status: [u32; 5],
     aop_queues_stopped: bool,
+    /// gate_record: [`SEQ0_GATES`] as the end of the slow part found them: how many open and the
+    /// first three open indices (0xff: none).
+    gate_before: [u8; 4],
     /// The interrupt controller as found before the last stage: target words, mask words.
     aic_target: [u32; 1024],
     aic_mask: [u32; 32],
@@ -880,6 +884,7 @@ impl Seq {
             cmd_us: 0,
             status: [0; 5],
             aop_queues_stopped: false,
+            gate_before: [0, 0xff, 0xff, 0xff],
             aic_target: [0; 1024],
             aic_mask: [0; 32],
             aic_saved: false,
@@ -1267,10 +1272,30 @@ impl Seq {
                 self.ps_found[i] = b.r32(*a);
             }
         }
+        // RECORD ONLY: what sequence 0 would find as Linux leaves it, before anything of the
+        // chip's own way down has started; kept in the last stage's record (bytes 3-6).
+        if self.cfg.gate_record {
+            self.gate_before = Self::gate_scan(b);
+        }
         if b.refused() {
             return Err(Self::fail(b, Fail::Precheck, 2, 0));
         }
         Ok(())
+    }
+
+    /// gate_record: every word of [`SEQ0_GATES`] read (traced); how many do not read as sequence
+    /// 0 needs, and the indices of the first three such (0xff where there is none).
+    fn gate_scan<B: Bus>(b: &mut B) -> [u8; 4] {
+        let mut out = [0u8, 0xff, 0xff, 0xff];
+        for (i, (a, mask, want)) in SEQ0_GATES.iter().enumerate() {
+            if Self::r32(b, *a) & mask != *want {
+                if (out[0] as usize) < 3 {
+                    out[1 + out[0] as usize] = i as u8;
+                }
+                out[0] += 1;
+            }
+        }
+        out
     }
 
     /// How many bits are set in the five wake-status words, and the first four by source
@@ -1558,6 +1583,14 @@ impl Seq {
             let (n, src) = Self::sources(&self.status);
             // With the timer written last the status words have not latched yet: 0xfe.
             let n = if self.cfg.go_last { 0xfe } else { n };
+            // gate_record: bytes 3-6 carry the slow part's gate reading instead of the wake
+            // sources (none stand under the named-only masks).
+            let (n, src) = if self.cfg.gate_record {
+                let g = self.gate_before;
+                (g[0], [g[1], g[2], g[3], src[3]])
+            } else {
+                (n, src)
+            };
             let _ = Self::pmu_write(b, PMU_RECORD, &[0x80 | flags, units as u8, (units >> 8) as u8, n, src[0], src[1], src[2], src[3]]);
         }
         // Carried over from the recorded runs: every command of ours leaves a vector in the
@@ -1801,18 +1834,6 @@ impl Seq {
             let de = (Self::r32(b, DISPEXT_CPU0_PS) >> 4) & 0xf;
             self.late_write(b, PMU_RECORD + 7, &[(d0 << 4 | de) as u8]);
         }
-        if self.cfg.gate_record {
-            let (mut busy, mut first) = (0u8, 0xffu8);
-            for (i, (a, mask, want)) in SEQ0_GATES.iter().enumerate() {
-                if Self::r32(b, *a) & mask != *want {
-                    if busy == 0 {
-                        first = i as u8;
-                    }
-                    busy += 1;
-                }
-            }
-            self.late_write(b, PMU_RECORD + 5, &[busy, first]);
-        }
         if self.cfg.timer_stop {
             b.timers_stop();
             let (after, _) = b.timers();
@@ -1821,6 +1842,14 @@ impl Seq {
         if self.cfg.sec_timer_stop {
             let (or, n) = b.sec_timers();
             self.late_write(b, PMU_FOUND + 1, &[or, n]);
+        }
+        // RECORD ONLY: the same words as the release finds them (sequence 0 already running),
+        // last of the late writes so that they win over the timer bytes: 0x9f1a = how many open,
+        // 0x9f1c-1e = the first three open indices.
+        if self.cfg.gate_record {
+            let g = Self::gate_scan(b);
+            self.late_write(b, PMU_TICKS, &[g[0]]);
+            self.late_write(b, PMU_FOUND, &[g[1], g[2], g[3]]);
         }
         if self.cfg.mark_release {
             // The boot core got as far as the release: said before it, where a restart
