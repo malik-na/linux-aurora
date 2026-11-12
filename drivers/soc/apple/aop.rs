@@ -1411,6 +1411,26 @@ impl AopData {
                 Err(e) => return Err(e),
             }
         }
+        // The endpoints the AOP announced and that took the start: the set the suspend
+        // driver's queue stop sends to (bit n = endpoint 0x20 + n).
+        let mut announced = 0u32;
+        let mut started = 0u32;
+        for ep in 0..AFK_ENDPOINT_COUNT as usize {
+            let mut guard = self.rtkit.lock();
+            let mut rtk = guard.as_mut().as_pin_mut().ok_or(ENODEV)?;
+            if rtk.as_mut().has_endpoint(AFK_ENDPOINT_START + ep as u8) {
+                announced |= 1 << ep;
+            }
+            if self.endpoints[ep].lock().started {
+                started |= 1 << ep;
+            }
+        }
+        dev_info!(
+            self.dev,
+            "AFK endpoints from 0x20: announced {:#06x} started {:#06x}\n",
+            announced,
+            started
+        );
         Ok(())
     }
     fn register_service(
