@@ -27,6 +27,7 @@
 #include <asm/cpu_ops.h>
 #include <asm/cputype.h>
 #include <asm/memory.h>
+#include <asm/smp_plat.h>
 #include <asm/suspend.h>
 
 /* s2r_rs.rs */
@@ -314,9 +315,10 @@ int s2r_rs_mbox_init(void)
 		       pa, s2r_rs_mbox->magic, s2r_rs_mbox->version, s2r_rs_mbox->ncpus);
 		goto out;
 	}
-	mpidr = read_cpuid_mpidr() & 0xffffff;
+	/* CPU 0's hardware id: this init may run on any core. */
+	mpidr = cpu_logical_map(0) & 0xffffff;
 	if (mpidr != s2r_rs_mbox->boot_mpidr) {
-		pr_err("apple_s2r_rs: wake path: running on %#llx, the loader booted on %#llx\n",
+		pr_err("apple_s2r_rs: wake path: CPU 0 is %#llx, the loader booted on %#llx\n",
 		       mpidr, s2r_rs_mbox->boot_mpidr);
 		goto out;
 	}
@@ -364,6 +366,9 @@ static int s2r_rs_finisher(unsigned long arg)
 {
 	int ret;
 
+	/* The slot is the loader's boot core's: no entry from any other core. */
+	if ((read_cpuid_mpidr() & 0xffffff) != s2r_rs_slot->mpidr)
+		return -EINVAL;
 	WRITE_ONCE(s2r_rs_slot->entry, __pa_symbol(cpu_resume));
 	s2r_rs_slot_clean();
 	ret = s2r_rs_finish();
