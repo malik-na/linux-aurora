@@ -593,9 +593,12 @@ pub trait Bus {
     }
     /// The wake path's final wait of the boot core: data cache off and its L1 written back
     /// and invalidated by set and way, then the two override registers, then the wait, with
-    /// no stack in between (the L2 still holds what L1 wrote back to it). Does not return on
-    /// the machine; the resume entry left in the loader's mailbox brings the core back.
-    fn off_deep(&mut self, acc: u64, cyc: u64) {
+    /// no stack in between (the L2 still holds what L1 wrote back to it). With `timers_off`
+    /// the four timer controls (CNTP/CNTV_CTL_EL0, and the EL02 pair at EL2) are written 0
+    /// after the write-back and before the overrides. Does not return on the machine; the
+    /// resume entry left in the loader's mailbox brings the core back.
+    fn off_deep(&mut self, acc: u64, cyc: u64, timers_off: bool) {
+        let _ = timers_off;
         self.sys_write(SysReg::AccOvrd, acc);
         self.sys_write(SysReg::CycOvrd, cyc);
         self.wfi();
@@ -649,6 +652,10 @@ pub struct Cfg {
     /// The wake path: the boot core goes down through the kernel's cpu_suspend() with its
     /// resume entry in the loader's mailbox, and its final wait writes its L1 back first.
     pub wake_path: bool,
+    /// With the wake path: the boot core's four timer controls written 0 in its final wait,
+    /// after the L1 write-back and before the overrides (a timer that stands pending is read
+    /// at the release in run 8; the reference stops them there).
+    pub timer_stop: bool,
     /// DIAGNOSTIC, not an entry into sleep: after the release the boot core does not wait
     /// but watches for this many milliseconds (wake status, cluster words, the engine's
     /// progress word), keeping what it sees in the scratch; then it waits after all.
@@ -674,6 +681,7 @@ impl Cfg {
         go_last: false,
         timer_record: false,
         wake_path: false,
+        timer_stop: false,
         watch_ms: 0,
     };
 }
@@ -1458,7 +1466,7 @@ impl Seq {
 
     /// The boot core's final routine on the wake path: as [`Self::final_routine`], with the
     /// records made first and the writes and the wait in one piece behind the L1 write-back.
-    fn final_routine_off<B: Bus>(b: &mut B) {
+    fn final_routine_off<B: Bus>(b: &mut B, timers_off: bool) {
         let acc = b.sys_read(SysReg::AccOvrd);
         Self::rec(b, 0, Kind::SysRead, 0, acc, 0);
         let cyc = b.sys_read(SysReg::CycOvrd);
@@ -1466,7 +1474,7 @@ impl Seq {
         Self::rec(b, 0, Kind::SysWrite, 0, acc_deep(acc), 0);
         Self::rec(b, 0, Kind::SysWrite, 1, cyc_deep(cyc), 0);
         Self::rec(b, 0, Kind::Wfi, 0, 0, 0);
-        b.off_deep(acc_deep(acc), cyc_deep(cyc));
+        b.off_deep(acc_deep(acc), cyc_deep(cyc), timers_off);
     }
 
     /// Whether the run goes down through the wake path.
@@ -1531,7 +1539,7 @@ impl Seq {
             self.watch(b);
         }
         if self.cfg.wake_path {
-            Self::final_routine_off(b);
+            Self::final_routine_off(b, self.cfg.timer_stop);
         } else {
             Self::final_routine(b, 0);
         }

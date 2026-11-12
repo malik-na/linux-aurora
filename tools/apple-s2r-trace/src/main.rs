@@ -402,7 +402,7 @@ fn usage() -> ExitCode {
     eprintln!(
         "usage: apple-s2r-trace [--alarm SECS] [--no-alarm] [--net-wd1 SECS] [--base-steps N] [--carry-over N]\n\
          \x20                      [--no-spmi-ack] [--no-spmi-setup] [--no-wake-mask] [--no-aop]\n\
-         \x20                      [--window-record] [--mark-release] [--go-last] [--timer-record] [--wake-path] [--watch MS] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
+         \x20                      [--window-record] [--mark-release] [--go-last] [--timer-record] [--wake-path] [--timer-stop] [--watch MS] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
     );
     ExitCode::from(2)
 }
@@ -458,6 +458,7 @@ fn main() -> ExitCode {
             "--go-last" => cfg.go_last = true,
             "--timer-record" => cfg.timer_record = true,
             "--wake-path" => cfg.wake_path = true,
+            "--timer-stop" => cfg.timer_stop = true,
             "--watch" => match num(args.get(i + 1)) {
                 Some(n) => {
                     cfg.watch_ms = n;
