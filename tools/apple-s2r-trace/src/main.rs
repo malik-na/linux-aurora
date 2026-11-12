@@ -40,6 +40,8 @@ struct Model {
     sep_forgotten: bool,
     refused: Option<u64>,
     out: Vec<Rec>,
+    /// The boot core's timers as the record reads them (two bits each, ENABLE then ISTATUS).
+    timers: u8,
 }
 
 impl Model {
@@ -92,6 +94,7 @@ impl Model {
             sep_forgotten: false,
             refused: None,
             out: Vec::new(),
+            timers: 0,
         }
     }
 
@@ -120,6 +123,14 @@ impl Model {
 impl Bus for Model {
     fn now_us(&mut self) -> u64 {
         self.t
+    }
+    fn timers(&mut self) -> (u8, u8) {
+        self.t += 4 * SYSREG_US;
+        (self.timers, 0)
+    }
+    fn timers_stop(&mut self) {
+        self.t += 4 * SYSREG_US;
+        self.timers = 0;
     }
     fn r32(&mut self, a: u64) -> u32 {
         if !self.allowed(a, 4, false) {
@@ -396,13 +407,18 @@ fn deviations(cfg: &Cfg) {
             println!("timer-record-ack-{n} mmio32-write phys {:#x} 0x00000001 {after} {before}", SPMI[0] + 0x60 + 4 * 6);
         }
     }
+    if cfg.timer_stop {
+        println!("# timer_stop: the timers stopped and read again; that reading is one more scratch write (0x9f1c), acknowledged at once.");
+        let (after, before) = if cfg.go_last { ("R23", "R24") } else { ("R24", "R26") };
+        println!("timer-stop-ack mmio32-write phys {:#x} 0x00000001 {after} {before}", SPMI[0] + 0x60 + 4 * 6);
+    }
 }
 
 fn usage() -> ExitCode {
     eprintln!(
         "usage: apple-s2r-trace [--alarm SECS] [--no-alarm] [--net-wd1 SECS] [--base-steps N] [--carry-over N]\n\
          \x20                      [--no-spmi-ack] [--no-spmi-setup] [--no-wake-mask] [--no-aop]\n\
-         \x20                      [--window-record] [--mark-release] [--go-last] [--timer-record] [--wake-path] [--watch MS] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
+         \x20                      [--window-record] [--mark-release] [--go-last] [--timer-record] [--wake-path] [--timer-stop] [--watch MS] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
     );
     ExitCode::from(2)
 }
@@ -458,6 +474,7 @@ fn main() -> ExitCode {
             "--go-last" => cfg.go_last = true,
             "--timer-record" => cfg.timer_record = true,
             "--wake-path" => cfg.wake_path = true,
+            "--timer-stop" => cfg.timer_stop = true,
             "--watch" => match num(args.get(i + 1)) {
                 Some(n) => {
                     cfg.watch_ms = n;
@@ -616,6 +633,43 @@ mod tests {
         let mut busy = slots;
         busy[0].1 = 0x1234_0000;
         assert_eq!(wake_slot(0x0, 0x0, &busy), Err(WakeRefuse::Busy));
+    }
+
+    /// Run 9's seam: with the timer record, the boot core's timers as found go to the tick
+    /// byte; with the timer stop as well, they are stopped after that read and read again,
+    /// and what reads then goes to 0x9f1c. Without the stop nothing is stopped and 0x9f1c
+    /// keeps the found byte.
+    #[test]
+    fn timer_stop_records_before_and_after() {
+        for stop in [false, true] {
+            let mut cfg = Cfg::DEFAULT;
+            cfg.alarm_secs = 60;
+            cfg.net_wd1_secs = 170;
+            cfg.window_record = true;
+            cfg.mark_release = true;
+            cfg.timer_record = true;
+            cfg.wake_path = true;
+            cfg.timer_stop = stop;
+            let mut m = Model::new();
+            // As read at run 8's release: CNTP, CNTP_EL02, CNTV_EL02 enabled and pending.
+            m.timers = 0xf3;
+            let mut seq = Seq::new(cfg);
+            seq.begin(&mut m);
+            seq.note_smc(&mut m, SMC_SLPW);
+            assert!(seq.prepare(&mut m).is_ok());
+            seq.note_smc(&mut m, SMC_SLPW | SMC_WKTP | SMC_SLPA | SMC_AP_POWER);
+            assert!(seq.enter(&mut m).is_ok());
+            assert_eq!(m.pmu[&0x9f1a], 0xf3, "the record before the stop");
+            assert_eq!(m.pmu[&0x9f0a], b'R');
+            if stop {
+                assert_eq!(m.timers, 0, "stopped");
+                assert_eq!(m.pmu[&0x9f1c], 0x00, "the record after the stop");
+            } else {
+                assert_eq!(m.timers, 0xf3, "not stopped");
+                // The found byte: one power-chip command's time.
+                assert_eq!(u64::from(m.pmu[&0x9f1c]), PMU_CMD_US.min(255));
+            }
+        }
     }
 
     #[test]

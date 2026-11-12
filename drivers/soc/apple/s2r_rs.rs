@@ -401,6 +401,36 @@ impl Bus for Hw {
         (timers, (isr >> 6 & 7) as u8)
     }
 
+    fn timers_stop(&mut self) {
+        if self.writes_off() {
+            return;
+        }
+        let el: u64;
+        // SAFETY: this core's timer controls written 0 with interrupts off, directly before
+        // the release; nothing of the kernel arms them again before the final wait.
+        unsafe {
+            core::arch::asm!(
+                "msr cntp_ctl_el0, xzr",
+                "msr cntv_ctl_el0, xzr",
+                "mrs {el}, CurrentEL",
+                el = out(reg) el,
+                options(nomem, nostack, preserves_flags)
+            )
+        };
+        if (el >> 2) & 3 == 2 {
+            // SAFETY: as above; the EL02 names exist at EL2 with E2H set.
+            unsafe {
+                core::arch::asm!(
+                    "msr s3_5_c14_c2_1, xzr",
+                    "msr s3_5_c14_c3_1, xzr",
+                    options(nomem, nostack, preserves_flags)
+                )
+            };
+        }
+        // SAFETY: a barrier only.
+        unsafe { core::arch::asm!("isb", options(nomem, nostack, preserves_flags)) };
+    }
+
     fn off_deep(&mut self, acc: u64, cyc: u64) {
         if self.writes_off() {
             return;
@@ -756,6 +786,7 @@ impl kernel::Module for S2rModule {
             go_last: p(*module_parameters::go_last.value()),
             timer_record: p(*module_parameters::timer_record.value()),
             wake_path: p(*module_parameters::wake_path.value()),
+            timer_stop: p(*module_parameters::timer_stop.value()),
             watch_ms: (*module_parameters::watch_ms.value()).min(2500),
         };
         let dry = p(*module_parameters::dry.value());
@@ -790,7 +821,7 @@ impl kernel::Module for S2rModule {
         // SAFETY: plain C call; the driver's state is in place.
         kernel::error::to_result(unsafe { s2r_rs_register_ops() })?;
         pr_info!(
-            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={}\n",
+            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={}\n",
             u8::from(dry),
             cfg.alarm_secs,
             u8::from(cfg.no_alarm_ok),
@@ -806,7 +837,8 @@ impl kernel::Module for S2rModule {
             cfg.watch_ms,
             u8::from(cfg.go_last),
             u8::from(cfg.timer_record),
-            u8::from(cfg.wake_path)
+            u8::from(cfg.wake_path),
+            u8::from(cfg.timer_stop)
         );
         let selftest = *module_parameters::pmu_selftest.value();
         if selftest != 0 {
@@ -964,6 +996,10 @@ module! {
         wake_path: u8 {
             default: 0,
             description: "Go down through cpu_suspend() with the boot core's resume entry in the loader's mailbox, L1 written back first (1); needs /chosen/asahi,s2r-mailbox",
+        },
+        timer_stop: u8 {
+            default: 0,
+            description: "Directly before the release: the boot core's four timer controls written 0, read again into the scratch's 0x9f1c (1)",
         },
         watch_ms: u32 {
             default: 0,

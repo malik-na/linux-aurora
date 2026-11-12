@@ -591,6 +591,9 @@ pub trait Bus {
     fn timers(&mut self) -> (u8, u8) {
         (0, 0)
     }
+    /// The running core's four timer controls (CNTP/CNTV_CTL_EL0, and at EL2 the EL02 pair)
+    /// written 0: none is enabled and none can stand pending afterwards.
+    fn timers_stop(&mut self) {}
     /// The wake path's final wait of the boot core: data cache off and its L1 written back
     /// and invalidated by set and way, then the two override registers, then the wait, with
     /// no stack in between (the L2 still holds what L1 wrote back to it). Does not return on
@@ -649,6 +652,10 @@ pub struct Cfg {
     /// The wake path: the boot core goes down through the kernel's cpu_suspend() with its
     /// resume entry in the loader's mailbox, and its final wait writes its L1 back first.
     pub wake_path: bool,
+    /// Directly before the release, after the timer record: the boot core's four timer
+    /// controls written 0, read again, and what reads then kept in 0x9f1c (run 8 read three
+    /// of them enabled and pending there; the reference stops them before its final wait).
+    pub timer_stop: bool,
     /// DIAGNOSTIC, not an entry into sleep: after the release the boot core does not wait
     /// but watches for this many milliseconds (wake status, cluster words, the engine's
     /// progress word), keeping what it sees in the scratch; then it waits after all.
@@ -674,6 +681,7 @@ impl Cfg {
         go_last: false,
         timer_record: false,
         wake_path: false,
+        timer_stop: false,
         watch_ms: 0,
     };
 }
@@ -1515,6 +1523,11 @@ impl Seq {
             let (timers, pending) = b.timers();
             self.late_write(b, PMU_TICKS, &[timers]);
             self.late_write(b, PMU_RESULTS, &[0x80 | self.smc_bits | (pending & 7) << 4]);
+        }
+        if self.cfg.timer_stop {
+            b.timers_stop();
+            let (after, _) = b.timers();
+            self.late_write(b, PMU_FOUND, &[after]);
         }
         if self.cfg.mark_release {
             // The boot core got as far as the release: said before it, where a restart
