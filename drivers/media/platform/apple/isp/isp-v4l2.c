@@ -153,7 +153,7 @@ static int isp_submit_buffers(struct apple_isp *isp, bool pre_start)
 	struct isp_channel *chan = isp->chan_bh;
 	struct isp_message *req = &chan->req;
 	struct isp_buffer *buf, *tmp;
-	unsigned int num_rendered = 0;
+	unsigned int num_rendered = 0, num_buffers = 0;
 	unsigned long flags;
 	size_t offset;
 	int err;
@@ -180,7 +180,7 @@ static int isp_submit_buffers(struct apple_isp *isp, bool pre_start)
 		bufd->iovas[0] = meta->iova;
 		bufd->flags[0] = 0x40000000;
 		bufd++;
-		bl->num_buffers++;
+		num_buffers++;
 
 		meta->submitted = true;
 	}
@@ -199,7 +199,7 @@ static int isp_submit_buffers(struct apple_isp *isp, bool pre_start)
 		bufd->iovas[0] = meta->iova;
 		bufd->flags[0] = 0x40000000;
 		bufd++;
-		bl->num_buffers++;
+		num_buffers++;
 
 		meta->submitted = true;
 	}
@@ -222,7 +222,7 @@ static int isp_submit_buffers(struct apple_isp *isp, bool pre_start)
 		       buf->surfs[0].iova,
 		       buf->surfs[0].iova + buf->surfs[0].size); */
 		bufd++;
-		bl->num_buffers++;
+		num_buffers++;
 		num_rendered++;
 
 		/*
@@ -235,6 +235,12 @@ static int isp_submit_buffers(struct apple_isp *isp, bool pre_start)
 
 send:
 	spin_unlock_irqrestore(&isp->buf_lock, flags);
+
+	/*
+	 * The firmware can write to the command area, so the error path below
+	 * goes by the count kept here rather than the one in the batch.
+	 */
+	bl->num_buffers = num_buffers;
 
 	req->arg0 = isp->cmd_iova;
 	req->arg1 = max_t(u64, ISP_IPC_BUFEXC_STAT_SIZE,
@@ -255,7 +261,7 @@ send:
 		spin_lock_irqsave(&isp->buf_lock, flags);
 
 		bufd = &bl->buffers[0];
-		for (int i = 0; i < bl->num_buffers; i++, bufd++) {
+		for (unsigned int i = 0; i < num_buffers; i++, bufd++) {
 			list_for_each_entry_safe_reverse(
 				buf, tmp, &isp->bufs_submitted, link) {
 				if (bufd->iovas[0] == buf->surfs[0].iova) {
@@ -292,13 +298,20 @@ static int isp_vb2_queue_setup(struct vb2_queue *vq, unsigned int *nbuffers,
 {
 	struct apple_isp *isp = vb2_get_drv_priv(vq);
 	struct isp_format *fmt = isp_get_current_format(isp);
+	unsigned int q_num_bufs = vb2_get_num_buffers(vq);
 
 	/* This is not strictly neccessary but makes it easy to enforce that
 	 * at most 16 buffers are submitted at once. ISP on t6001 (FW 12.3)
 	 * times out if more buffers are submitted than set in the buffer pool
 	 * config before streaming is started.
+	 *
+	 * REQBUFS frees the old buffers first, CREATE_BUFS adds to them, so
+	 * count the buffers the queue already has.
 	 */
-	*nbuffers = min_t(unsigned int, *nbuffers, ISP_MAX_BUFFERS);
+	if (q_num_bufs >= ISP_MAX_BUFFERS)
+		return -ENOBUFS;
+	*nbuffers = min_t(unsigned int, *nbuffers,
+			  ISP_MAX_BUFFERS - q_num_bufs);
 
 	if (*num_planes) {
 		if (sizes[0] < fmt->total_size)
@@ -757,6 +770,10 @@ static int isp_vidioc_set_format(struct file *file, void *fh,
 	struct isp_preset *preset;
 	int err;
 
+	/* The buffers and the queue type depend on the format. */
+	if (vb2_is_busy(&isp->vbq))
+		return -EBUSY;
+
 	preset = isp_select_preset(isp, f->fmt.pix.width, f->fmt.pix.height);
 	err = isp_set_preset(isp, fmt, preset);
 	if (err)
@@ -811,6 +828,9 @@ static int isp_vidioc_set_format_mplane(struct file *file, void *fh,
 
 	if (!isp->multiplanar)
 		return -ENOTTY;
+
+	if (vb2_is_busy(&isp->vbq))
+		return -EBUSY;
 
 	preset = isp_select_preset(isp, f->fmt.pix_mp.width,
 				   f->fmt.pix_mp.height);
@@ -885,7 +905,6 @@ static int isp_vidioc_get_param(struct file *file, void *fh,
 		return -EINVAL;
 
 	a->parm.capture.capability = V4L2_CAP_TIMEPERFRAME;
-	a->parm.capture.readbuffers = ISP_MIN_FRAMES;
 	a->parm.capture.timeperframe.numerator = 1;
 	a->parm.capture.timeperframe.denominator = isp->frame_rate;
 
@@ -914,7 +933,7 @@ static int isp_vidioc_set_param(struct file *file, void *fh,
 		isp->frame_rate = isp_closest_frame_rate(tpf);
 
 	a->parm.capture.capability = V4L2_CAP_TIMEPERFRAME;
-	a->parm.capture.readbuffers = ISP_MIN_FRAMES;
+	a->parm.capture.readbuffers = 0;
 	tpf->numerator = 1;
 	tpf->denominator = isp->frame_rate;
 
@@ -969,6 +988,22 @@ static const struct media_device_ops isp_media_device_ops = {
 	.link_notify = v4l2_pipeline_link_notify,
 };
 
+/*
+ * The video device's file operations can run until its last open file is
+ * closed, after the driver has been unbound, so the state they reach is freed
+ * only with the last reference to the v4l2_device: the one remove drops, or
+ * the one the video device holds while it is open.
+ */
+static void apple_isp_release(struct v4l2_device *v4l2_dev)
+{
+	struct apple_isp *isp = container_of(v4l2_dev, struct apple_isp,
+					     v4l2_dev);
+
+	v4l2_ctrl_handler_free(&isp->ctrl_handler);
+	media_device_cleanup(&isp->mdev);
+	kfree(isp);
+}
+
 static void isp_free_meta_surfaces(struct apple_isp *isp)
 {
 	for (int i = 0; i < ARRAY_SIZE(isp->capmeta_surfs); i++) {
@@ -982,6 +1017,24 @@ static void isp_free_meta_surfaces(struct apple_isp *isp)
 			isp_free_surface(isp, isp->meta_surfs[i]);
 		isp->meta_surfs[i] = NULL;
 	}
+}
+
+static int isp_vb2_queue_init(struct apple_isp *isp)
+{
+	struct vb2_queue *vbq = &isp->vbq;
+
+	vbq->drv_priv = isp;
+	vbq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	vbq->io_modes = VB2_MMAP;
+	vbq->dev = isp->dev;
+	vbq->ops = &isp_vb2_ops;
+	vbq->mem_ops = &vb2_dma_sg_memops;
+	vbq->buf_struct_size = sizeof(struct isp_buffer);
+	vbq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+	vbq->min_queued_buffers = ISP_MIN_FRAMES;
+	vbq->lock = &isp->video_lock;
+
+	return vb2_queue_init(vbq);
 }
 
 int apple_isp_setup_video(struct apple_isp *isp)
@@ -1056,18 +1109,7 @@ int apple_isp_setup_video(struct apple_isp *isp)
 		goto ctrl_free;
 	}
 
-	vbq->drv_priv = isp;
-	vbq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-	vbq->io_modes = VB2_MMAP;
-	vbq->dev = isp->dev;
-	vbq->ops = &isp_vb2_ops;
-	vbq->mem_ops = &vb2_dma_sg_memops;
-	vbq->buf_struct_size = sizeof(struct isp_buffer);
-	vbq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
-	vbq->min_queued_buffers = ISP_MIN_FRAMES;
-	vbq->lock = &isp->video_lock;
-
-	err = vb2_queue_init(vbq);
+	err = isp_vb2_queue_init(isp);
 	if (err) {
 		dev_err(isp->dev, "failed to init vb2 queue: %d\n", err);
 		goto v4l2_unregister;
@@ -1076,9 +1118,10 @@ int apple_isp_setup_video(struct apple_isp *isp)
 	vdev->queue = vbq;
 	vdev->fops = &isp_v4l2_fops;
 	vdev->ioctl_ops = &isp_v4l2_ioctl_ops;
-	vdev->device_caps = V4L2_BUF_TYPE_VIDEO_CAPTURE | V4L2_CAP_STREAMING;
+	vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING;
 	if (isp->multiplanar)
 		vdev->device_caps |= V4L2_CAP_VIDEO_CAPTURE_MPLANE;
+	vdev->entity.flags = MEDIA_ENT_FL_DEFAULT;
 	vdev->v4l2_dev = &isp->v4l2_dev;
 	vdev->vfl_type = VFL_TYPE_VIDEO;
 	vdev->vfl_dir = VFL_DIR_RX;
@@ -1092,6 +1135,9 @@ int apple_isp_setup_video(struct apple_isp *isp)
 		dev_err(isp->dev, "failed to register video device: %d\n", err);
 		goto v4l2_unregister;
 	}
+
+	/* From here on, the last v4l2_device reference frees the state. */
+	isp->v4l2_dev.release = apple_isp_release;
 
 	return 0;
 
@@ -1108,13 +1154,15 @@ surf_cleanup:
 	return err;
 }
 
+/*
+ * Unregister the device nodes. An open file keeps the video device, and
+ * with it the driver state, until it is closed: see apple_isp_release().
+ */
 void apple_isp_remove_video(struct apple_isp *isp)
 {
 	vb2_video_unregister_device(&isp->vdev);
 	v4l2_device_unregister(&isp->v4l2_dev);
-	v4l2_ctrl_handler_free(&isp->ctrl_handler);
 	media_device_unregister(&isp->mdev);
-	media_device_cleanup(&isp->mdev);
 }
 
 /* After apple_isp_remove_video() and with the firmware stopped */
@@ -1122,3 +1170,7 @@ void apple_isp_free_video(struct apple_isp *isp)
 {
 	isp_free_meta_surfaces(isp);
 }
+
+#if IS_ENABLED(CONFIG_VIDEO_APPLE_ISP_KUNIT_TEST)
+#include "isp-v4l2-test.c"
+#endif

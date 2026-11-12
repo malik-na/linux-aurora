@@ -136,8 +136,8 @@ struct apple_rtkit *apple_rtkit_init_adopted(struct device *dev, void *cookie,
 void apple_rtkit_free(struct apple_rtkit *rtk);
 
 /*
- * Detach a co-processor that could not be quiesced without releasing its
- * shared buffers.
+ * Detach a co-processor that is still running, or that could not be
+ * quiesced, without releasing its shared buffers.
  *
  * Stops mailbox callbacks and drains the private RTKit workqueue before
  * freeing the transport state. Firmware-visible mappings and their allocation
@@ -198,6 +198,12 @@ int apple_rtkit_poweroff(struct apple_rtkit *rtk);
 int apple_rtkit_idle(struct apple_rtkit *rtk);
 
 /*
+ * Set only the AP power state the co-processor sees (e.g. 0x201 before a system sleep,
+ * 0x20 after it); the co-processor keeps running.
+ */
+int apple_rtkit_set_ap_power(struct apple_rtkit *rtk, unsigned int state);
+
+/*
  * Checks if RTKit is running and ready to handle messages.
  */
 bool apple_rtkit_is_running(struct apple_rtkit *rtk);
@@ -238,6 +244,21 @@ int apple_rtkit_send_message(struct apple_rtkit *rtk, u8 ep, u64 message,
  * @rtk:            RTKit reference
  */
 int apple_rtkit_poll(struct apple_rtkit *rtk);
+
+/*
+ * Stop taking interrupts for messages from the co-processor, which then
+ * stay queued in the mailbox until apple_rtkit_resume_rx().
+ */
+void apple_rtkit_hold_rx(struct apple_rtkit *rtk);
+void apple_rtkit_resume_rx(struct apple_rtkit *rtk);
+
+/*
+ * Wait until the messages already received have been handled, including the
+ * recv_message, crashed and shmem_setup callbacks the worker thread ran for
+ * them. Must not be called from one of those callbacks.
+ *
+ * @rtk:            RTKit reference
+ */
 void apple_rtkit_flush_rx(struct apple_rtkit *rtk);
 
 /*

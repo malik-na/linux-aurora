@@ -25,6 +25,40 @@ config APPLE_MAILBOX
 
 	  Say Y here if you have an Apple SoC.
 
+config APPLE_MCC
+	tristate "Apple T8140 system level cache"
+	depends on ARCH_APPLE || COMPILE_TEST
+	depends on OF
+	default ARCH_APPLE
+	help
+	  The boot firmware of the Apple T8140 SoC enables the system level
+	  cache without letting it allocate. This driver allows allocation
+	  once the devices that took over DMA from the bootloader are bound.
+
+	  Say 'y' or 'm' here if you have an Apple T8140 SoC.
+
+config APPLE_MCC_KUNIT_TEST
+	bool "KUnit tests for Apple MCC allocation and unwind" if !KUNIT_ALL_TESTS
+	depends on APPLE_MCC=y && KUNIT=y
+	default KUNIT_ALL_TESTS
+	help
+	  Test allocation failure after a plane has been enabled, and cache
+	  handoff on shutdown, using simulated registers. Verify that failure
+	  also cleans up the plane whose state is uncertain. These tests do not
+	  access physical hardware and are only useful for kernel developers.
+
+config APPLE_S2R
+	bool "Apple M1 (t8103) suspend-to-RAM, first stage (wake reboots)"
+	depends on ARCH_APPLE && ARM64 && SUSPEND && HOTPLUG_CPU
+	default n
+	help
+	  Opt-in suspend-to-RAM for the Apple M1 (t8103), following macOS's own
+	  sleep sequence on this SoC. Active only with apple_s2r=1 and
+	  apple_cpu_hotplug=park on the kernel command line. In this first stage
+	  the wake reboots the machine through m1n1.
+
+	  If unsure, say N.
+
 config APPLE_PMGR_MISC
 	bool "Apple SoC PMGR miscellaneous support"
 	depends on PM
@@ -32,6 +66,21 @@ config APPLE_PMGR_MISC
 	  The PMGR block in Apple SoCs provides high-level power state
 	  controls for SoC devices. This driver manages miscellaneous
 	  power controls.
+
+config APPLE_T8103_PMU_ALARM_DT
+	bool "Describe the M1 PMU RTC alarm in the boot loader's device tree"
+	depends on ARCH_APPLE && OF_DYNAMIC && OF_ADDRESS
+	default y
+	help
+	  On t8103 (M1) Macs, add the Sera PMU's RTC alarm to the device
+	  tree at boot when the boot loader's tree lacks it: the alarm's
+	  NVMEM cells, the SPMI controller's interrupt (AIC 343) and the
+	  SMC RTC's alarm interrupt and wakeup-source. With them the SMC
+	  RTC (RTC_DRV_MACSMC) has an alarm that wakes the system, e.g.
+	  "rtcwake -m freeze". Opt-in while it is unproven on hardware:
+	  it does nothing unless the kernel is booted with
+	  apple_t8103_pmu_alarm=1. Does nothing on other SoCs, or when
+	  the tree already describes the alarm.
 
 config APPLE_RTKIT
 	tristate "Apple RTKit co-processor IPC protocol"
@@ -104,9 +153,13 @@ config APPLE_SEP_FV_INTERFACE
 
 config APPLE_SEP
 	tristate "Apple SEP (Secure Enclave Processor)"
+	default m if ARCH_APPLE
 	depends on ARCH_APPLE
 	depends on PM
 	depends on RUST
+	depends on DMA_SHARED_BUFFER
+	depends on OF_DYNAMIC
+	depends on SPI
 	depends on RUST_APPLE_MAILBOX
 	depends on HW_RANDOM
 	depends on TRUSTED_KEYS
@@ -129,13 +182,29 @@ config APPLE_SEP
 	  the iBoot system container, locating its .gl extent through read-only,
 	  checksum-validated APFS metadata. It validates the complete store and
 	  both root records before registering with SEP.
-	  Shared xART writes and identity-keybag creation default on. A write
-	  still runs only when APFS proves a single unsnapshotted .gl extent.
-	  The first boot creates the Linux identity keybag when it is absent.
+	  xART writes are enabled by default, but accepted only when the driver
+	  validates the physical extent ownership invariants. Unsupported APFS
+	  layouts fail closed. A Linux identity keybag is created automatically
+	  when none exists; existing identities and reference keys are retained.
+	  Set xart_writes=0 provision_keybag=0 for read-only operation.
 	  With writes off the driver still attaches, but refuses Touch ID enrol
 	  and verify: the enclave saves anti-replay state after every match.
 
 	  Say Y here if you have an Apple silicon Mac.
+
+config APPLE_SEP_KUNIT_TEST
+	bool "KUnit tests for the Apple SEP driver" if !KUNIT_ALL_TESTS
+	depends on APPLE_SEP && KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  Build KUnit tests for the pure logic of the Apple SEP driver: the
+	  mailbox message encoding and decoding, the shared-memory registration
+	  limits, the rules that keep a keybag's lookup identity apart from
+	  the identity the enclave reports, the format and validation of the
+	  Linux host-state store, and the xART guard's decisions and its list
+	  of Linux's records. The tests touch no hardware.
+
+	  If unsure, say N.
 
 config APPLE_PMP
 	tristate "Apple Power Management Processor"
@@ -150,16 +219,42 @@ config APPLE_PMP
 
 	  Say 'y' here if you have an Apple SoC.
 
-config APPLE_J613_DISPLAY_GATE
-	bool "Apple J613 25G83 display boot gate"
-	depends on ARCH_APPLE && OF_DYNAMIC && OF_ADDRESS
-	select VIDEO
+config APPLE_PMP_V1
+	tristate "Apple PMP v1 (M1) bring-up"
+	depends on ARCH_APPLE || COMPILE_TEST
+	depends on RUST
+	depends on OF_OVERLAY
+	select RUST_APPLE_RTKIT
+	select APPLE_PMP_V1_DT
+	default m if ARCH_APPLE
+	help
+	  Lab experiment: start the power management coprocessor (PMP)
+	  firmware that iBoot preloads on Apple M1 (t8103), run its
+	  startup handshake and report device power states to it.
+
+	  The module is not loaded automatically: load it with
+	  "modprobe apple-pmp-v1". It cannot be unloaded once the PMP
+	  runs; reboot to stop it.
+
+config APPLE_PMP_V1_DT
+	bool
+	help
+	  Built-in part of APPLE_PMP_V1: the device tree overlay that adds
+	  the PMP nodes when the module loads, the hold that keeps ps_pmp
+	  and ps_pms_sram on, and the apple_pmp_v1_hold=1 boot option that
+	  marks them always-on before the PMGR driver probes.
+
+config APPLE_CLPC
+	tristate "Apple host performance controller floors"
+	depends on ARCH_APPLE || COMPILE_TEST
+	depends on APPLE_PMC && CPU_FREQ
 	default ARCH_APPLE
 	help
-	  Enable the exact J613 26.6.2 display and PMP nodes before platform
-	  population after validating the boot loader's handoff and this Mac's
-	  clock and PMP values. This built-in gate also supports modular DRM.
-	  Missing or invalid handoffs keep the boot framebuffer available.
+	  Raises the DRAM controller and SoC fabric performance floors of the
+	  host's PMC voter agent while CPU clusters are busy, and releases
+	  them at idle.
+
+	  Say 'y' or 'm' here if you have an Apple SoC with a PMC.
 
 config APPLE_T6030_DISPLAY_GATE
 	bool "Apple T6030 internal display enable gate"
@@ -177,37 +272,58 @@ config APPLE_T6030_DISPLAY_GATE
 	  apple_t6030_display.enable=0 keeps the boot framebuffer.
 
 	  The same gate serves T8122 (M3) device trees with
-	  apple,t8122-handoff. No T8122 PMP description is built in yet, so
-	  on T8122 it never enables anything.
+	  apple,t8122-handoff. There it adds no overlay: it completes the PMP,
+	  report and requests the device tree describes, with the values the
+	  boot loader passes, and the PMP report driver starts the PMP. It
+	  enables the T8122 external display processor only when the boot
+	  loader has marked it apple,t8122-dcpext-firmware-ready, and not with
+	  nomodeset.
+
+	  It also serves T6031 (M3 Max) device trees with apple,t6031-handoff,
+	  in the same way and only with the PMP values the boot loader passes.
+	  There the native display is on by default on the J516C, unless
+	  apple_t6031_display.enable=0; the other T6031 boards need
+	  apple_t6031_display.enable=1 on the kernel command line. The T6031
+	  GPU driver starts its firmware only after this native display is
+	  up, so apple_t6031_display.enable=0, or a native display that does
+	  not come up, also keeps the GPU off for that boot. It is not a
+	  display-only switch.
 
 	  Say 'y' if you want the native display on M3 Pro MacBook Pros.
+
+config APPLE_T8122_GPU_PMP_LINK
+	bool
+	depends on APPLE_PMP_REPORT
+	default n
+	help
+	  Let T8122 (M3 MacBook Air) GPU power commands wait for the display
+	  request the PMP report acknowledges on the 14.8.3 firmware, as the
+	  M3 runtime of DRM_ASAHI_M3_T8122 requires.
+
+config APPLE_T6030_GPU_PMP_LINK
+	bool
+	depends on APPLE_T6030_DISPLAY_GATE
+	default n
+	help
+	  Link an opted-in T6030 GPU to the PMP admitted by the display gate.
+	  GPU power commands wait for that supplier's acknowledged display
+	  request through the existing PMP report startup and removal rules.
+
+config APPLE_DISPLAY_GATE_KUNIT_TEST
+	bool "KUnit tests for the Apple display gate" if !KUNIT_ALL_TESTS
+	depends on KUNIT=y && APPLE_T6030_DISPLAY_GATE
+	default KUNIT_ALL_TESTS
+	help
+	  Runs the display gate on test device trees with the T6030, T6031
+	  and T8122 display nodes, without Apple hardware. On T6031: on by
+	  default only on the default board (the J516C), otherwise only with
+	  apple_t6031_display.enable=1, off with apple_t6031_display.enable=0,
+	  only with the boot loader's handoff marker and this Mac's PMP values,
+	  and with nothing changed when a check fails. On T6030: on by default, as
+	  before, whatever the T6031 option says. On T8122: on by default,
+	  and nothing changed when the handoff or the device tree's own PMP
+	  topology does not check out.
 
 endmenu
 
 endif
-
-config APPLE_MCC
-	tristate "Apple T8140 system level cache"
-	depends on ARCH_APPLE || COMPILE_TEST
-	depends on OF
-	default ARCH_APPLE
-	help
-	  The boot firmware of the Apple T8140 SoC enables the system level
-	  cache without letting it allocate. This driver allows allocation
-	  once the devices that took over DMA from the bootloader are bound.
-
-	  Say 'y' or 'm' here if you have an Apple T8140 SoC.
-
-
-config APPLE_CLPC
-	tristate "Apple host performance controller floors"
-	depends on ARCH_APPLE || COMPILE_TEST
-	depends on APPLE_PMC && CPU_FREQ
-	select MFD_SYSCON
-	default ARCH_APPLE
-	help
-	  Raises the DRAM controller and SoC fabric performance floors of the
-	  host's PMC voter agent while CPU clusters, and optionally the GPU,
-	  are busy, and releases them at idle.
-
-	  Say 'y' or 'm' here if you have an Apple SoC with a PMC.

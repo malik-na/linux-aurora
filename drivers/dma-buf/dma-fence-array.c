@@ -107,17 +107,11 @@ static bool dma_fence_array_signaled(struct dma_fence *fence)
 	unsigned int i;
 
 	/*
-	 * We need to read num_pending before checking the enable_signal bit
-	 * to avoid racing with the enable_signaling() implementation, which
-	 * might decrement the counter, and cause a partial check.
-	 * atomic_read_acquire() pairs with atomic_dec_and_test() in
-	 * dma_fence_array_enable_signaling()
-	 *
-	 * The !--num_pending check is here to account for the any_signaled case
-	 * if we race with enable_signaling(), that means the !num_pending check
-	 * in the is_signalling_enabled branch might be outdated (num_pending
-	 * might have been decremented), but that's fine. The user will get the
-	 * right value when testing again later.
+	 * Read the counter before the enable bit so callback installation
+	 * cannot make a partial count look complete. The acquire pairs with
+	 * the counter decrements in dma_fence_array_enable_signaling().
+	 * If enabling races with the lazy scan, every child must still be
+	 * observed complete before that scan can return true.
 	 */
 	num_pending = atomic_read_acquire(&array->num_pending);
 	if (test_bit(DMA_FENCE_FLAG_ENABLE_SIGNAL_BIT, &array->base.flags)) {
@@ -126,8 +120,16 @@ static bool dma_fence_array_signaled(struct dma_fence *fence)
 		return false;
 	}
 
+	/*
+	 * Arrays require every member to complete. A pending member already
+	 * proves the array incomplete; polling its successors only repeats work
+	 * during timeline-chain walks. Keep the completion counter and the
+	 * enabled-signaling path unchanged.
+	 */
 	for (i = 0; i < array->num_fences; ++i) {
-		if (dma_fence_is_signaled(array->fences[i]) && !--num_pending)
+		if (!dma_fence_is_signaled(array->fences[i]))
+			return false;
+		if (!--num_pending)
 			goto signal;
 	}
 	return false;
@@ -190,15 +192,13 @@ EXPORT_SYMBOL(dma_fence_array_alloc);
  * @fences:		[in]	array containing the fences
  * @context:		[in]	fence context to use
  * @seqno:		[in]	sequence number to use
- * @signal_on_any:	[in]	signal on any fence in the array
  *
  * Implementation of @dma_fence_array_create without allocation. Useful to init
  * a preallocated dma fence array in the path of reclaim or dma fence signaling.
  */
 void dma_fence_array_init(struct dma_fence_array *array,
 			  int num_fences, struct dma_fence **fences,
-			  u64 context, unsigned seqno,
-			  bool signal_on_any)
+			  u64 context, unsigned seqno)
 {
 	static struct lock_class_key dma_fence_array_lock_key;
 
@@ -222,7 +222,7 @@ void dma_fence_array_init(struct dma_fence_array *array,
 	 */
 	lockdep_set_class(&array->base.inline_lock, &dma_fence_array_lock_key);
 
-	atomic_set(&array->num_pending, signal_on_any ? 1 : num_fences);
+	atomic_set(&array->num_pending, num_fences);
 	array->fences = fences;
 
 	array->base.error = PENDING_ERROR;
@@ -249,7 +249,6 @@ EXPORT_SYMBOL(dma_fence_array_init);
  * @fences:		[in]	array containing the fences
  * @context:		[in]	fence context to use
  * @seqno:		[in]	sequence number to use
- * @signal_on_any:	[in]	signal on any fence in the array
  *
  * Allocate a dma_fence_array object and initialize the base fence with
  * dma_fence_init().
@@ -259,13 +258,11 @@ EXPORT_SYMBOL(dma_fence_array_init);
  * and fill it with the fences it wants to add to the object. Ownership of this
  * array is taken and dma_fence_put() is used on each fence on release.
  *
- * If @signal_on_any is true the fence array signals if any fence in the array
- * signals, otherwise it signals when all fences in the array signal.
+ * The array signals when every fence in the array signals.
  */
 struct dma_fence_array *dma_fence_array_create(int num_fences,
 					       struct dma_fence **fences,
-					       u64 context, unsigned seqno,
-					       bool signal_on_any)
+					       u64 context, unsigned seqno)
 {
 	struct dma_fence_array *array;
 
@@ -273,8 +270,7 @@ struct dma_fence_array *dma_fence_array_create(int num_fences,
 	if (!array)
 		return NULL;
 
-	dma_fence_array_init(array, num_fences, fences,
-			     context, seqno, signal_on_any);
+	dma_fence_array_init(array, num_fences, fences, context, seqno);
 
 	return array;
 }

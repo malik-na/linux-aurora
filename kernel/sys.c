@@ -1927,7 +1927,7 @@ out_thread:
 	}
 
 out_children:
-	r->ru_maxrss = maxrss * (PAGE_SIZE / 1024); /* convert pages to KBs */
+	r->ru_maxrss = maxrss; /* signal and mm high-water maxima are in kB */
 	r->ru_utime = ns_to_kernel_old_timeval(utime);
 	r->ru_stime = ns_to_kernel_old_timeval(stime);
 }
@@ -2190,7 +2190,7 @@ static int prctl_set_auxv(struct mm_struct *mm, unsigned long addr,
 	BUILD_BUG_ON(sizeof(user_auxv) != sizeof(mm->saved_auxv));
 
 	task_lock(current);
-	memcpy(mm->saved_auxv, user_auxv, len);
+	memcpy(mm->saved_auxv, user_auxv, sizeof(user_auxv));
 	task_unlock(current);
 
 	return 0;
@@ -2532,6 +2532,34 @@ static int prctl_set_thp_disable(bool thp_disable, unsigned long flags,
 	return 0;
 }
 
+#ifdef CONFIG_ARCH_HAS_USER_PAGE_SIZE
+static int prctl_page_size_get(struct task_struct *task, bool persistent)
+{
+	unsigned int shift = persistent ? task->default_exec_page_shift :
+					 task->exec_page_shift;
+
+	return shift ? 1U << shift : 0;
+}
+
+static int prctl_page_size_set(struct task_struct *task, unsigned long size,
+			       bool persistent)
+{
+	int shift = arch_exec_page_size_shift(size);
+
+	if (shift < 0)
+		return shift;
+	if (persistent) {
+		task->default_exec_page_shift = shift;
+	} else {
+		/* A native request overrides an inherited default for one exec. */
+		if (!shift && task->default_exec_page_shift)
+			shift = PAGE_SHIFT;
+		task->exec_page_shift = shift;
+	}
+	return 0;
+}
+#endif
+
 int __weak arch_prctl_mem_model_get(struct task_struct *t)
 {
 	return -EINVAL;
@@ -2555,6 +2583,24 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 
 	error = 0;
 	switch (option) {
+#ifdef CONFIG_ARCH_HAS_USER_PAGE_SIZE
+	case PR_AURORA_GET_EXEC_PAGE_SIZE:
+		if (arg2 || arg3 || arg4 || arg5)
+			return -EINVAL;
+		return prctl_page_size_get(me, false);
+	case PR_AURORA_SET_EXEC_PAGE_SIZE:
+		if (arg3 || arg4 || arg5)
+			return -EINVAL;
+		return prctl_page_size_set(me, arg2, false);
+	case PR_AURORA_GET_DEFAULT_PAGE_SIZE:
+		if (arg2 || arg3 || arg4 || arg5)
+			return -EINVAL;
+		return prctl_page_size_get(me, true);
+	case PR_AURORA_SET_DEFAULT_PAGE_SIZE:
+		if (arg3 || arg4 || arg5)
+			return -EINVAL;
+		return prctl_page_size_set(me, arg2, true);
+#endif
 	case PR_GET_MEM_MODEL:
 		if (arg2 || arg3 || arg4 || arg5)
 			return -EINVAL;
@@ -2586,14 +2632,14 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		error = put_user(me->pdeath_signal, (int __user *)arg2);
 		break;
 	case PR_GET_DUMPABLE:
-		error = get_dumpable(me->mm);
+		error = task_exec_state_get_dumpable(me);
 		break;
 	case PR_SET_DUMPABLE:
-		if (arg2 != SUID_DUMP_DISABLE && arg2 != SUID_DUMP_USER) {
+		if (arg2 != TASK_DUMPABLE_OFF && arg2 != TASK_DUMPABLE_OWNER) {
 			error = -EINVAL;
 			break;
 		}
-		set_dumpable(me->mm, arg2);
+		task_exec_state_set_dumpable(arg2);
 		break;
 
 	case PR_SET_UNALIGN:

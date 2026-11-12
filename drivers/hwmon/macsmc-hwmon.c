@@ -89,6 +89,36 @@ static const struct macsmc_hwmon_board {
 		.die_keys = "Tf04,Tf09,Tf0A,Tf0B,Tf0D,Tf0E,Tf14,Tf18,Tf19,Tf1A,Tf24,Tf25,Tf2A,Tf2B",
 		.pressure_key = "mTPL",
 	},
+	/*
+	 * MacBook Pro (14-inch and 16-inch, M3 Max): the same key family in
+	 * five groups. On a J516C every one of these keys read a die
+	 * temperature (47-62 C at idle); the keys ending in D and E repeated
+	 * the one ending in 4 and are left out. The J514C list is assumed to
+	 * be the same; keys the SMC does not have are skipped.
+	 */
+	{
+		.compatible = "apple,j516c",
+		.die_keys = "Tf04,Tf06,Tf09,Tf0A,Tf0B,Tf14,Tf16,Tf19,Tf1A,Tf1B,Tf24,Tf26,Tf29,Tf2A,Tf2B,"
+			    "Tf34,Tf36,Tf39,Tf3A,Tf3B,Tf44,Tf46,Tf49,Tf4A,Tf4B",
+	},
+	{
+		.compatible = "apple,j514c",
+		.die_keys = "Tf04,Tf06,Tf09,Tf0A,Tf0B,Tf14,Tf16,Tf19,Tf1A,Tf1B,Tf24,Tf26,Tf29,Tf2A,Tf2B,"
+			    "Tf34,Tf36,Tf39,Tf3A,Tf3B,Tf44,Tf46,Tf49,Tf4A,Tf4B",
+	},
+	/*
+	 * MacBook Air (13-inch, M3): the base M3 has no Tf keys. With only
+	 * the GPU busy, the six Tg keys below rose by about 50 C, the most
+	 * of any key, and each has a twin about 4.5 C lower; they read 0 C
+	 * or slightly below while the GPU is powered off. The others are the
+	 * CPU die keys of the board's device tree (the E-cluster groups and
+	 * one per P core), so the zone also follows a hot CPU.
+	 */
+	{
+		.compatible = "apple,j613",
+		.die_keys = "Tg0D,Tg0P,Tg0X,Tg0b,Tg0j,Tg0v,Te05,Te0P,Tp05,Tp0L,Tp0b,Tp0r",
+		.pressure_key = "mTPL",
+	},
 };
 
 static bool macsmc_hwmon_is_m3(void)
@@ -585,6 +615,10 @@ static umode_t macsmc_hwmon_is_visible(const void *data,
 		return 0;
 	}
 
+	/* A sensor without a key could not be set up; see macsmc_hwmon_add_temp_channel(). */
+	if (!sensor->macsmc_key)
+		return 0;
+
 	/* Sensors only register ro attributes */
 	if (sensor->attrs & BIT(attr))
 		return 0444;
@@ -737,6 +771,89 @@ invalid:
 }
 
 /*
+ * Account for the temperature sensor just set up at the end of @temp.
+ *
+ * Thermal zones refer to a temperature channel by the index of its node
+ * among the temperature-* nodes, so every node takes a channel. A sensor
+ * that could not be set up keeps its channel with no key, which hides it:
+ * hwmon creates no attributes and no thermal sensor for it, and only the
+ * zones that use it fail to register, instead of every later channel
+ * moving onto the wrong sensor.
+ */
+static void macsmc_hwmon_add_temp_channel(struct macsmc_hwmon_sensors *temp,
+					  int create_ret)
+{
+	struct macsmc_hwmon_sensor *sensor = &temp->sensors[temp->count++];
+
+	if (create_ret)
+		memset(sensor, 0, sizeof(*sensor));
+
+	/* A zero entry would end the list of channels here. */
+	sensor->attrs = HWMON_T_INPUT;
+	if (*sensor->label)
+		sensor->attrs |= HWMON_T_LABEL;
+}
+
+/* Discover reporting-only temperatures without a board-specific key table. */
+static int macsmc_hwmon_discover_temperatures(struct macsmc_hwmon *hwmon)
+{
+	struct apple_smc *smc = hwmon->smc;
+	struct macsmc_hwmon_sensor *sensor;
+	struct apple_smc_key_info info;
+	smc_key key, previous = 0;
+	u32 i;
+	int ret;
+
+	if (!of_property_read_bool(hwmon->dev->of_node, "apple,discover-temperatures"))
+		return 0;
+
+	/* Dynamic channel numbers must not replace DT-described channels. */
+	if (hwmon->temp.count)
+		return -EINVAL;
+
+	/* Bound both allocation and mailbox transactions for invalid firmware data. */
+	if (!smc->key_count || smc->key_count > U16_MAX)
+		return -EINVAL;
+
+	hwmon->temp.sensors = devm_kcalloc(hwmon->dev, smc->key_count,
+					   sizeof(*sensor), GFP_KERNEL);
+	if (!hwmon->temp.sensors)
+		return -ENOMEM;
+
+	for (i = 0; i < smc->key_count; i++) {
+		ret = apple_smc_get_key_by_index(smc, i, &key);
+		if (ret < 0)
+			return ret;
+		/* SMC key tables are strictly ordered; reject duplicates as well. */
+		if (i && key <= previous)
+			return -EINVAL;
+		previous = key;
+		if ((key >> 24) < 'T')
+			continue;
+		if ((key >> 24) > 'T')
+			break;
+
+		ret = apple_smc_get_key_info(smc, key, &info);
+		if (ret < 0)
+			return ret;
+		if (!(info.flags & APPLE_SMC_READABLE) ||
+		    (info.flags & APPLE_SMC_FUNCTION) ||
+		    info.type_code != __SMC_KEY('f', 'l', 't', ' ') || info.size != 4)
+			continue;
+
+		sensor = &hwmon->temp.sensors[hwmon->temp.count++];
+		sensor->macsmc_key = key;
+		sensor->info = info;
+		sensor->attrs = HWMON_T_INPUT | HWMON_T_LABEL;
+		/* Key identity only: do not invent locations or calibration. */
+		snprintf(sensor->label, sizeof(sensor->label), "%c%c%c%c",
+			 key >> 24, (key >> 16) & 0xff, (key >> 8) & 0xff, key & 0xff);
+	}
+
+	return 0;
+}
+
+/*
  * Fan data is exposed by the SMC as multiple sensors.
  *
  * The devicetree schema reuses apple,key-id for the actual fan speed sensor.
@@ -815,6 +932,7 @@ static int macsmc_hwmon_populate_sensors(struct macsmc_hwmon *hwmon,
 	u32 n_current = 0, n_fan = 0, n_power = 0, n_temperature = 0, n_voltage = 0;
 	const char *die_keys = macsmc_hwmon_die_key_list(), *list;
 	char key[5];
+	bool indexed;
 	int ret;
 
 	for_each_child_of_node_with_prefix(hwmon_node, key_node, "current-") {
@@ -892,16 +1010,22 @@ static int macsmc_hwmon_populate_sensors(struct macsmc_hwmon *hwmon,
 		if (!hwmon->temp.sensors)
 			return -ENOMEM;
 
+		/*
+		 * Only a node that is a thermal sensor provider (T8140) has zones
+		 * referring to its temperature channels by index: there a node
+		 * that fails to set up keeps its channel. Elsewhere it is skipped.
+		 */
+		indexed = of_property_present(hwmon_node, "#thermal-sensor-cells");
 		for_each_child_of_node_with_prefix(hwmon_node, key_node, "temperature-") {
 			sensor = &hwmon->temp.sensors[hwmon->temp.count];
-			if (!macsmc_hwmon_create_sensor(hwmon->dev, hwmon->smc, key_node, sensor)) {
-				sensor->attrs = HWMON_T_INPUT;
-
-				if (*sensor->label)
-					sensor->attrs |= HWMON_T_LABEL;
-
-				hwmon->temp.count++;
-			}
+			ret = macsmc_hwmon_create_sensor(hwmon->dev, hwmon->smc,
+							 key_node, sensor);
+			if (ret && !indexed)
+				continue;
+			if (ret)
+				dev_warn(hwmon->dev, "%pOFn unavailable (%d), temp%u hidden\n",
+					 key_node, ret, hwmon->temp.count + 1);
+			macsmc_hwmon_add_temp_channel(&hwmon->temp, ret);
 		}
 
 		for (list = die_keys; list && (ret = macsmc_hwmon_next_key(&list, key));) {
@@ -1245,6 +1369,10 @@ static int macsmc_hwmon_probe(struct platform_device *pdev)
 			return ret;
 	}
 
+	ret = macsmc_hwmon_discover_temperatures(hwmon);
+	if (ret)
+		return dev_err_probe(hwmon->dev, ret, "Temperature discovery failed\n");
+
 	if (!hwmon->curr.count && !hwmon->fan.count &&
 	    !hwmon->power.count && !hwmon->temp.count &&
 	    !hwmon->volt.count && !hwmon->pressure.macsmc_key) {
@@ -1300,6 +1428,10 @@ static struct platform_driver macsmc_hwmon_driver = {
 	},
 };
 module_platform_driver(macsmc_hwmon_driver);
+
+#if IS_ENABLED(CONFIG_SENSORS_MACSMC_HWMON_KUNIT_TEST)
+#include "macsmc-hwmon-test.c"
+#endif
 
 MODULE_DESCRIPTION("Apple Silicon SMC hwmon driver");
 MODULE_AUTHOR("James Calligeros <jcalligeros99@gmail.com>");

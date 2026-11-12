@@ -948,8 +948,9 @@ static int tas2770_i2c_probe(struct i2c_client *client)
 	if (client->dev.of_node) {
 		result = tas2770_parse_dt(&client->dev, tas2770);
 		if (result) {
-			dev_err(tas2770->dev, "%s: Failed to parse devicetree\n",
-				__func__);
+			if (result != -EPROBE_DEFER)
+				dev_err(tas2770->dev, "%s: Failed to parse devicetree\n",
+					__func__);
 			return result;
 		}
 	}
@@ -984,7 +985,7 @@ static int tas2770_i2c_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id tas2770_i2c_id[] = {
-	{ "tas2770"},
+	{ .name = "tas2770" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, tas2770_i2c_id);

@@ -42,8 +42,6 @@ enum apple_mbox_ascwrap_v6_role {
  *
  * The apple-mailbox provider owns both mappings.  Consumers request CPU
  * transitions through the provider and never map either resource themselves.
- * T8140 has a complete matching start and stop transform.  AppleA7IOP's
- * resetState() only updates software state and performs no reset MMIO.
  */
 struct apple_mbox_ascwrap_v6_lifecycle {
 	enum apple_mbox_ascwrap_v6_role role;
@@ -80,9 +78,9 @@ struct apple_mbox {
 	void *cookie;
 
 	/*
-	 * Protected by tx_lock. IRQ, send-error and provider-removal paths
-	 * mask an outstanding unmask only once; rebuild every consumer when
-	 * changing this internal structure's layout.
+	 * Protected by tx_lock: set while irq_send_empty is unmasked, so that
+	 * the IRQ handler, a failed send and provider removal mask it exactly
+	 * once between them.
 	 */
 	bool tx_irq_unmasked;
 };
@@ -93,6 +91,12 @@ struct apple_mbox *apple_mbox_get_byname(struct device *dev, const char *name);
 int apple_mbox_start(struct apple_mbox *mbox);
 void apple_mbox_stop(struct apple_mbox *mbox);
 int apple_mbox_poll(struct apple_mbox *mbox);
+/*
+ * Leave received messages in the hardware FIFO, without an interrupt, until
+ * apple_mbox_release_rx().  For consumers that must not wake the system.
+ */
+void apple_mbox_hold_rx(struct apple_mbox *mbox);
+void apple_mbox_release_rx(struct apple_mbox *mbox);
 int apple_mbox_send(struct apple_mbox *mbox, struct apple_mbox_msg msg,
 		    bool atomic);
 

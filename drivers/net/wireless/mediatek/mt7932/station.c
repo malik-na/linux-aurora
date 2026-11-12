@@ -1,6 +1,58 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "mt7932.h"
 
+static const char mt_rx_stat_names[][ETH_GSTRING_LEN] = {
+	"host_rx_integrity_rejected",
+	"host_rx_malformed",
+	"host_rx_unsupported",
+	"host_rx_wrong_peer",
+	"host_rx_unprotected",
+	"host_rx_retry_duplicate",
+	"host_rx_no_memory",
+	"host_rx_retry_records",
+	"host_rx_amsdu_records",
+};
+
+static int mt_get_sset_count(struct net_device *netdev, int set)
+{
+	return set == ETH_SS_STATS ? ARRAY_SIZE(mt_rx_stat_names) : -EOPNOTSUPP;
+}
+
+static void mt_get_strings(struct net_device *netdev, u32 set, u8 *data)
+{
+	if (set == ETH_SS_STATS)
+		memcpy(data, mt_rx_stat_names, sizeof(mt_rx_stat_names));
+}
+
+/* Host observations only: no firmware commands or invented ACK/BA counters.
+ * They span associations so a test can take deltas across a reconnect. Retry
+ * and A-MSDU counts are MSDU records, not over-air MPDU/aggregate counts.
+ */
+static void mt_get_ethtool_stats(struct net_device *netdev,
+				 struct ethtool_stats *stats, u64 *data)
+{
+	struct mt7932 *m = *(struct mt7932 **)netdev_priv(netdev);
+	unsigned long flags;
+
+	spin_lock_irqsave(&m->response_lock, flags);
+	data[0] = m->rx_integrity;
+	data[1] = m->rx_malformed;
+	data[2] = m->rx_unsupported;
+	data[3] = m->rx_wrong_peer;
+	data[4] = m->rx_unprotected;
+	data[5] = m->rx_duplicate;
+	data[6] = m->rx_no_memory;
+	data[7] = m->rx_retry;
+	data[8] = m->rx_amsdu;
+	spin_unlock_irqrestore(&m->response_lock, flags);
+}
+
+const struct ethtool_ops mt_ethtool_ops = {
+	.get_sset_count = mt_get_sset_count,
+	.get_strings = mt_get_strings,
+	.get_ethtool_stats = mt_get_ethtool_stats,
+};
+
 /* Report the owned, validated EE4d association, not an AP advertisement
  * or a transient off-channel scan.
  */
@@ -102,4 +154,70 @@ int mt_dump_station(struct wiphy *wiphy, struct wireless_dev *wdev,
 		ether_addr_copy(mac, m->connect_bssid);
 	spin_unlock_irqrestore(&m->response_lock, flags);
 	return ret;
+}
+
+/*
+ * The firmware reports no signal threshold events, so the connection quality
+ * monitor runs on the host, as mac80211 runs it for drivers without one:
+ * average the signal of the frames the associated access point sends and
+ * report when the average crosses the threshold. Sample at most once per
+ * beacon interval, so that the average follows time rather than traffic.
+ */
+#define MT7932_CQM_INTERVAL	(HZ / 10)
+#define MT7932_CQM_MIN_SAMPLES	4
+
+/* Caller holds response_lock; a new association starts a new average. */
+void mt_cqm_reset(struct mt7932 *m)
+{
+	ewma_mt7932_signal_init(&m->cqm_signal);
+	m->cqm_samples = 0;
+	m->cqm_last_event = 0;
+}
+
+/* Caller holds response_lock; @signal is a frame from the associated AP. */
+void mt_cqm_signal(struct mt7932 *m, int signal)
+{
+	enum nl80211_cqm_rssi_threshold_event event;
+	int average, last = m->cqm_last_event;
+	int hysteresis = m->cqm_hysteresis;
+
+	if (signal >= 0 || signal <= -128)
+		return;
+	if (m->cqm_samples &&
+	    time_before(jiffies, m->cqm_sample_time + MT7932_CQM_INTERVAL))
+		return;
+	m->cqm_sample_time = jiffies;
+	ewma_mt7932_signal_add(&m->cqm_signal, -signal);
+	if (m->cqm_samples < MT7932_CQM_MIN_SAMPLES)
+		m->cqm_samples++;
+	if (!m->cqm_threshold || m->cqm_samples < MT7932_CQM_MIN_SAMPLES)
+		return;
+
+	/* The first event after (re)configuration reports the current side. */
+	average = -(int)ewma_mt7932_signal_read(&m->cqm_signal);
+	if (average < m->cqm_threshold && (!last || average < last - hysteresis))
+		event = NL80211_CQM_RSSI_THRESHOLD_EVENT_LOW;
+	else if (average > m->cqm_threshold && (!last || average > last + hysteresis))
+		event = NL80211_CQM_RSSI_THRESHOLD_EVENT_HIGH;
+	else
+		return;
+	m->cqm_last_event = average;
+	cfg80211_cqm_rssi_notify(m->netdev, event, average, GFP_ATOMIC);
+}
+
+int mt_set_cqm_rssi_config(struct wiphy *wiphy, struct net_device *netdev,
+			   s32 rssi_thold, u32 rssi_hyst)
+{
+	struct mt7932 *m = mt_from_wiphy(wiphy);
+	unsigned long flags;
+
+	if (netdev != m->netdev)
+		return -ENODEV;
+	spin_lock_irqsave(&m->response_lock, flags);
+	/* A zero threshold disables the monitor. */
+	m->cqm_threshold = rssi_thold;
+	m->cqm_hysteresis = min_t(u32, rssi_hyst, S8_MAX);
+	m->cqm_last_event = 0;
+	spin_unlock_irqrestore(&m->response_lock, flags);
+	return 0;
 }

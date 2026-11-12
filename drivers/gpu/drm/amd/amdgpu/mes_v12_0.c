@@ -592,6 +592,7 @@ static int mes_v12_0_suspend_gang(struct amdgpu_mes *mes,
 	mes_suspend_gang_pkt.gang_context_addr = input->gang_context_addr;
 	mes_suspend_gang_pkt.suspend_fence_addr = input->suspend_fence_addr;
 	mes_suspend_gang_pkt.suspend_fence_value = input->suspend_fence_value;
+	mes_suspend_gang_pkt.doorbell_offset = input->doorbell_offset;
 
 	return mes_v12_0_submit_pkt_and_poll_completion(mes, AMDGPU_MES_SCHED_PIPE,
 			&mes_suspend_gang_pkt, sizeof(mes_suspend_gang_pkt),
@@ -611,6 +612,7 @@ static int mes_v12_0_resume_gang(struct amdgpu_mes *mes,
 
 	mes_resume_gang_pkt.resume_all_gangs = input->resume_all_gangs;
 	mes_resume_gang_pkt.gang_context_addr = input->gang_context_addr;
+	mes_resume_gang_pkt.doorbell_offset = input->doorbell_offset;
 
 	return mes_v12_0_submit_pkt_and_poll_completion(mes, AMDGPU_MES_SCHED_PIPE,
 			&mes_resume_gang_pkt, sizeof(mes_resume_gang_pkt),
@@ -1030,7 +1032,8 @@ static int mes_v12_0_allocate_ucode_buffer(struct amdgpu_device *adev,
 		return r;
 	}
 
-	memcpy(adev->mes.ucode_fw_ptr[pipe], fw_data, fw_size);
+	amdgpu_bo_memcpy_to(adev->mes.ucode_fw_obj[pipe],
+			    adev->mes.ucode_fw_ptr[pipe], fw_data, fw_size);
 
 	amdgpu_bo_kunmap(adev->mes.ucode_fw_obj[pipe]);
 	amdgpu_bo_unreserve(adev->mes.ucode_fw_obj[pipe]);
@@ -1064,7 +1067,8 @@ static int mes_v12_0_allocate_ucode_data_buffer(struct amdgpu_device *adev,
 		return r;
 	}
 
-	memcpy(adev->mes.data_fw_ptr[pipe], fw_data, fw_size);
+	amdgpu_bo_memcpy_to(adev->mes.data_fw_obj[pipe],
+			    adev->mes.data_fw_ptr[pipe], fw_data, fw_size);
 
 	amdgpu_bo_kunmap(adev->mes.data_fw_obj[pipe]);
 	amdgpu_bo_unreserve(adev->mes.data_fw_obj[pipe]);
@@ -1871,6 +1875,7 @@ static int mes_v12_0_hw_init(struct amdgpu_ip_block *ip_block)
 	if (r)
 		goto failure;
 
+	amdgpu_mes_validate_fw_version(adev);
 out:
 	/*
 	 * Disable KIQ ring usage from the driver once MES is enabled.

@@ -203,12 +203,7 @@ static void t602x_dump(struct apple_dpxbar *xbar, const char *tag)
 		readl(xbar->regs + T602X_REG_81C_STAT));
 }
 
-/*
- * T6030 DP IN outputs. T6030 has the T6020 crossbar, but it brings a DP IN
- * output up and down with its own sequence: the mux selection only routes, and
- * DCP's DidChangeLinkConfiguration enables the clocks. The M2 Pro and M2 Max
- * keep apple_dpxbar_t602x_link_up() and apple_dpxbar_t602x_link_down().
- */
+/* T602X compact register map; the older dpphy-only names above are retained. */
 #define T602X_RD_PCLK1 0x00c
 #define T602X_RD_PCLK2 0x010
 #define T602X_RD_GATE 0x014
@@ -337,6 +332,8 @@ static int apple_dpxbar_set_t602x(struct mux_control *mux, int state)
 	unsigned int dispext_bit_en;
 	u32 atc_bit, mux_mask, mux_val;
 	bool enable;
+	/* J700 physical DP retains the original T602x clock-gate sequence. */
+	bool j700_physical = index == MUX_DPPHY && of_machine_is_compatible("apple,j700");
 	int ret = 0;
 
 	if (index >= MUX_MAX)
@@ -401,11 +398,14 @@ static int apple_dpxbar_set_t602x(struct mux_control *mux, int state)
 		dpxbar_set32(dpxbar, T602X_REG_014, 0x4);
 
 		/* Native T602x DPIN0 teardown restores the read reset at +0x24. */
-		dpxbar_set32(dpxbar, T602X_FIFO_RD_PCLK2_EN, atc_bit);
+		dpxbar_set32(dpxbar, j700_physical ? FIFO_RD_PCLK1_EN :
+			     T602X_FIFO_RD_PCLK2_EN, atc_bit);
 
 		dpxbar_clear32(dpxbar, T602X_REG_034, atc_bit);
-		dpxbar_clear32(dpxbar, CROSSBAR_ATC_EN, atc_bit);
-		dpxbar_clear32(dpxbar, CROSSBAR_DISPEXT_EN, prev_dispext_bit);
+		if (!j700_physical) {
+			dpxbar_clear32(dpxbar, CROSSBAR_ATC_EN, atc_bit);
+			dpxbar_clear32(dpxbar, CROSSBAR_DISPEXT_EN, prev_dispext_bit);
+		}
 		dpxbar_mask32(dpxbar, T602X_REG_030, mux_mask, 0);
 
 		dpxbar->selected_dispext[index] = -1;
@@ -450,13 +450,15 @@ static int apple_dpxbar_set_t602x(struct mux_control *mux, int state)
 			     index == MUX_DPIN1 ? FIFO_RD_PCLK1_EN : T602X_REG_01C,
 			     atc_bit);
 		dpxbar_set32(dpxbar, T602X_REG_034, atc_bit);
-		dpxbar_set32(dpxbar, CROSSBAR_ATC_EN, atc_bit);
+		if (!j700_physical)
+			dpxbar_set32(dpxbar, CROSSBAR_ATC_EN, atc_bit);
 		/*
 		 * t8103 enables the dispext source at 0x050. T602x left
 		 * that register at 0, so dpin0 was selected with no
 		 * source clock into the ACIO analog PHY.
 		 */
-		dpxbar_set32(dpxbar, CROSSBAR_DISPEXT_EN, dispext_bit);
+		if (!j700_physical)
+			dpxbar_set32(dpxbar, CROSSBAR_DISPEXT_EN, dispext_bit);
 
 		dpxbar_set32(dpxbar, T602X_FIFO_RD_UNK_EN, dispext_bit);
 
@@ -641,6 +643,7 @@ static int apple_dpxbar_set(struct mux_control *mux, int state)
 }
 
 static const struct mux_control_ops apple_dpxbar_ops;
+static const struct mux_control_ops apple_dpxbar_t602x_ops;
 
 static const u32 apple_dpxbar_atc_bits[MUX_MAX] = { ATC_DPPHY, ATC_DPIN0, ATC_DPIN1 };
 
@@ -818,15 +821,13 @@ int apple_dpxbar_tunnel_select_source(struct mux_control *mux, int state)
 
 	if (!mux || mux->chip->ops != &apple_dpxbar_t602x_ops)
 		return -EOPNOTSUPP;
-	xbar = mux_chip_priv(mux->chip);
-	if (xbar->t6030_dpin)
-		return -EOPNOTSUPP;
 	index = mux_control_get_index(mux);
 	if (index != MUX_DPIN0 && index != MUX_DPIN1)
 		return -EINVAL;
 	if (state < -1 || state >= 9)
 		return -EINVAL;
 
+	xbar = mux_chip_priv(mux->chip);
 	spin_lock_irqsave(&xbar->lock, flags);
 	if (xbar->selected_dispext[index] >= 0 &&
 	    xbar->selected_dispext[index] != state) {
@@ -1002,8 +1003,7 @@ static int apple_dpxbar_probe(struct platform_device *pdev)
 	spin_lock_init(&dpxbar->lock);
 
 	dpxbar->dev = dev;
-	dpxbar->t6030_dpin = of_device_is_compatible(dev->of_node, "apple,t6020-display-crossbar") &&
-			     of_machine_is_compatible("apple,t6030");
+	dpxbar->t6030_dpin = of_machine_is_compatible("apple,t6030");
 	dpxbar->regs = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(dpxbar->regs))
 		return PTR_ERR(dpxbar->regs);

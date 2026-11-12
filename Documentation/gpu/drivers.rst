@@ -6,8 +6,10 @@ GPU Driver Documentation
    :maxdepth: 3
 
    amdgpu/index
+   apple-dcp-backlight
    i915
    imagination/index
+   intel-display/index
    mcde
    meson
    nouveau

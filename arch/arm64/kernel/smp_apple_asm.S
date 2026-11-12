@@ -1,0 +1,260 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+/*
+ * Low-level CPU offline paths for Apple silicon spin-table CPUs.
+ *
+ * The dying CPU calls apple_cpu_mmu_off_jump() through the idmap. It turns
+ * the MMU and caches off and branches to the physical address of one of the
+ * two exits below, which then run with the MMU off from their physical
+ * address. Only the trampoline has to live in .idmap.text.
+ *
+ * Neither exit touches memory between turning the caches off and cleaning
+ * them, so no stale dirty line can overwrite a non-cacheable store.
+ *
+ * Both exits clean L1 only. M1 cores run with HID4/EHID4
+ * DISABLE_DC_SW_L2_OPS (bit 44) set by m1n1 init_cpu() (chickens.c), so a
+ * set/way operation never reaches the cluster L2; the kernel therefore never
+ * powers down the last online core of a cluster (see smp_apple.c).
+ *
+ * After the clean, each exit stores 1 to its per-CPU "flushed" word with the
+ * MMU off (a non-cacheable store to its physical address). cpu_kill() on
+ * another CPU waits for it, so the L1 is known to be clean before the dying
+ * CPU is reported dead.
+ */
+
+#include <linux/linkage.h>
+#include <linux/cfi_types.h>
+#include <asm/assembler.h>
+#include <asm/sysreg.h>
+
+/* Apple CYC_OVRD (per core): S3_5_C15_C5_0. Field layout from m1n1 cpu_regs.h. */
+#define APPLE_CYC_OVRD_MODES_MASK	(0x3f << 20)	/* FIQ[21:20] IRQ[23:22] WFI[25:24] */
+#define APPLE_CYC_OVRD_FIQ_MODE_2	(2 << 20)
+#define APPLE_CYC_OVRD_IRQ_MODE_2	(2 << 22)
+#define APPLE_CYC_OVRD_WFI_MODE_3	(3 << 24)
+#define APPLE_CYC_OVRD_DIS_WFI_RET	(1 << 0)
+#define APPLE_CYC_OVRD_CORE_OFF		(APPLE_CYC_OVRD_FIQ_MODE_2 | APPLE_CYC_OVRD_IRQ_MODE_2 | \
+					 APPLE_CYC_OVRD_WFI_MODE_3 | APPLE_CYC_OVRD_DIS_WFI_RET)
+/* Suspend-to-RAM deep WFI, macOS 27 on t8103: CYC_OVRD = 0x3000001 (no IRQ/FIQ modes). */
+#define APPLE_CYC_OVRD_S2R		(APPLE_CYC_OVRD_WFI_MODE_3 | APPLE_CYC_OVRD_DIS_WFI_RET)
+/*
+ * Apple ACC_OVRD (per cluster): S3_5_C15_C6_0. macOS 27 arm64_prepare_for_sleep(deep) on t8103
+ * turns 0x180010102001c207 into 0x1800101526076207: bits 34 (deep sleep) and 32, [16:15] = 2,
+ * [14:13] = [18:17] = [26:25] = 3.
+ */
+#define APPLE_ACC_OVRD_S2R_CLR		((3 << 13) | (3 << 15) | (3 << 17) | (3 << 25))
+#define APPLE_ACC_OVRD_S2R_SET		((1 << 34) | (1 << 32) | (2 << 15) | (3 << 13) | (3 << 17) | (3 << 25))
+
+	.pushsection ".idmap.text", "a"
+/*
+ * apple_cpu_mmu_off_jump(entry_pa, arg0, arg1, arg2)
+ *
+ * Same shape as cpu_soft_restart() without the EL2 switch: with VHE the
+ * write to SCTLR_EL1 is redirected to SCTLR_EL2. Must be called through the
+ * idmap.
+ */
+SYM_TYPED_FUNC_START(apple_cpu_mmu_off_jump)
+	mov_q	x12, INIT_SCTLR_EL1_MMU_OFF
+	pre_disable_mmu_workaround
+	msr	sctlr_el1, x12
+	isb
+
+	mov	x8, x0
+	mov	x0, x1
+	mov	x1, x2
+	mov	x2, x3
+	br	x8
+SYM_FUNC_END(apple_cpu_mmu_off_jump)
+	.popsection
+
+	.text
+/*
+ * Clean and invalidate the data caches by set/way, from L1 up to (not
+ * including) level x0 + 1. x0 = 1 is L1 only, the only value used: on M1
+ * the set/way operations do not reach L2 (HID4 bit 44, see above).
+ *
+ * This is the TF-A do_dcsw_op loop that m1n1 runs on M1 in mmu_disable()
+ * (m1n1 src/memory_asm.S), restricted to DC CISW.
+ * Uses only registers: clobbers x1-x11, x14, x16, x17. No stack. Also
+ * called from C (apple-s2r's hand-back, with the MMU on), for which those
+ * are all caller-saved.
+ */
+SYM_FUNC_START(apple_dcache_cisw_levels)
+	lsl	x3, x0, #1			// x3 = (last level + 1) << 1
+	cbz	x3, 4f
+	mrs	x9, clidr_el1
+	mov	x10, xzr			// x10 = current level << 1
+	mov	w8, #1
+1:	add	x2, x10, x10, lsr #1		// 3 * level
+	lsr	x1, x9, x2
+	and	x1, x1, #7			// cache type at this level
+	cmp	x1, #2
+	b.lo	3f				// no data cache here
+	msr	csselr_el1, x10
+	isb
+	mrs	x1, ccsidr_el1
+	and	x2, x1, #7
+	add	x2, x2, #4			// log2(line size)
+	ubfx	x4, x1, #3, #10			// max way number
+	clz	w5, w4				// way field shift
+	lsl	w14, w4, w5			// aligned max way
+	lsl	w16, w8, w5			// way decrement
+	orr	w14, w10, w14			// way | level
+	ubfx	w6, w1, #13, #15		// max set number
+	lsl	w17, w8, w2			// set decrement
+	dsb	sy
+2:	lsl	w7, w6, w2			// aligned max set
+5:	orr	w11, w14, w7
+	dc	cisw, x11
+	subs	w7, w7, w17
+	b.hs	5b
+	subs	x14, x14, x16
+	b.hs	2b
+3:	add	x10, x10, #2
+	cmp	x3, x10
+	b.hi	1b
+	msr	csselr_el1, xzr
+	dsb	sy
+	isb
+4:	ret
+SYM_FUNC_END(apple_dcache_cisw_levels)
+
+/*
+ * apple_cpu_park_mmuoff(pen_pa, flushed_pa) - MMU off, running at its PA.
+ *
+ * Milestone 1 ("park"): nothing is powered down. Empty L1 so that the CPU
+ * holds no dirty or stale line, report that through *flushed_pa, then enter
+ * the kernel's own secondary_holding_pen, exactly where m1n1 sent it at
+ * boot. cpu_boot releases it with secondary_holding_pen_release + SEV.
+ */
+SYM_FUNC_START(apple_cpu_park_mmuoff)
+	mov	x19, x0
+	mov	x20, x1
+	mov	x0, #1
+	bl	apple_dcache_cisw_levels
+	ic	iallu
+	tlbi	vmalle1
+	dsb	sy
+	isb
+
+	mov	x0, #1
+	str	x0, [x20]			// L1 is clean: tell cpu_kill()
+	dsb	sy
+	br	x19
+SYM_FUNC_END(apple_cpu_park_mmuoff)
+
+/*
+ * apple_cpu_off_mmuoff(stop_reg_pa, flushed_pa, stop_bit) - MMU off, at its PA.
+ *
+ * Milestone 2 ("powerdown"): the per-core stop that m1n1 smp_stop_cpu() does
+ * (m1n1 src/smp.c:228-233 and cpu_sleep(false), src/utils.c:249-285):
+ * request the stop in the PMGR CPU-start block, then CYC_OVRD
+ * FIQ_MODE(2) | IRQ_MODE(2) | WFI_MODE(3) | DISABLE_WFI_RET and WFI.
+ * ACC_OVRD is deliberately left alone: its deep-sleep bit is per cluster,
+ * and this core is never the last online core of its cluster.
+ *
+ * The core comes back through PMGR CPU start, at its RVBAR (m1n1).
+ */
+SYM_FUNC_START(apple_cpu_off_mmuoff)
+	mov	x19, x0
+	mov	x20, x2
+	mov	x21, x1
+	mov	x0, #1
+	bl	apple_dcache_cisw_levels
+	ic	iallu
+	dsb	sy
+	isb
+
+	mov	x0, #1
+	str	x0, [x21]			// L1 is clean: tell cpu_kill()
+	dsb	sy
+
+	str	w20, [x19]			// request this core's stop
+	dsb	sy
+	isb
+
+	mrs	x0, s3_5_c15_c5_0
+	bic	x0, x0, #APPLE_CYC_OVRD_MODES_MASK
+	mov_q	x1, APPLE_CYC_OVRD_CORE_OFF
+	orr	x0, x0, x1
+	msr	s3_5_c15_c5_0, x0
+	isb
+1:	isb
+	wfi
+	b	1b
+SYM_FUNC_END(apple_cpu_off_mmuoff)
+
+/*
+ * apple_cpu_s2r_mmuoff(stop_reg_pa, flushed_pa, stop_bit) - MMU off, at its PA.
+ * stop_bit: bits 15:0 the core's stop bit, bit 30 hold for CPU0's release
+ * (global sleep), bit 31 arm ACC_OVRD's deep sleep.
+ *
+ * Suspend-to-RAM: what macOS 27 does on every secondary before the commit
+ * (E1-E3 of the t8103 sleep sequence): clean L1, report it, request this
+ * core's stop in the PMGR CPU-start block, set ACC_OVRD's deep-sleep bits,
+ * CYC_OVRD = WFI mode 3 with no WFI return, and WFI. Unlike powerdown this
+ * is also used for the last core of a cluster: the SoC is about to power
+ * off, so the cluster going down with it is the point. Never returns; the
+ * core comes back (if at all) through its RVBAR into m1n1.
+ */
+SYM_FUNC_START(apple_cpu_s2r_mmuoff)
+	mov	x19, x0
+	mov	x20, x2
+	mov	x21, x1
+	mov	x0, #1
+	bl	apple_dcache_cisw_levels
+	ic	iallu
+	dsb	sy
+	isb
+
+	mov	x0, #1
+	str	x0, [x21]			// L1 is clean: tell cpu_kill()
+	dsb	sy
+
+	and	x22, x20, #0xffff
+	str	w22, [x19]			// request this core's stop
+	dsb	sy
+	isb
+
+	/*
+	 * Global sleep (bit 30): hold here, stop already requested, until CPU0
+	 * sets apple_cpu_s2r_release after the commit (XNU's arm64_stall_sleep
+	 * loop), then arm ACC_OVRD's deep sleep on every core, as macOS does.
+	 * MMU off: the load is uncached, and adr_l gives the word's PA.
+	 */
+	tbz	x20, #30, 3f
+	adr_l	x23, apple_cpu_s2r_release
+4:	ldr	x0, [x23]
+	cbnz	x0, 5f
+	wfe
+	b	4b
+5:	orr	x20, x20, #(1 << 31)
+3:
+
+	/*
+	 * ACC_OVRD is per cluster: arm deep sleep only when bit 31 of the stop
+	 * argument says this cluster has no core left running (not CPU0's
+	 * cluster, whose deep bits CPU0 sets itself as the very last step).
+	 * Arming it under a running core lets the cluster power off when that
+	 * core next idles (the first run hung that way).
+	 */
+	tbz	x20, #31, 2f
+	mrs	x0, s3_5_c15_c6_0		// ACC_OVRD: deep sleep
+	mov_q	x1, APPLE_ACC_OVRD_S2R_CLR
+	bic	x0, x0, x1
+	mov_q	x1, APPLE_ACC_OVRD_S2R_SET
+	orr	x0, x0, x1
+	msr	s3_5_c15_c6_0, x0
+	isb
+2:
+
+	mrs	x0, s3_5_c15_c5_0		// CYC_OVRD: WFI mode 3, no WFI return
+	bic	x0, x0, #APPLE_CYC_OVRD_MODES_MASK
+	mov_q	x1, APPLE_CYC_OVRD_S2R
+	orr	x0, x0, x1
+	msr	s3_5_c15_c5_0, x0
+	isb
+1:	dsb	sy
+	isb
+	wfi
+	b	1b
+SYM_FUNC_END(apple_cpu_s2r_mmuoff)

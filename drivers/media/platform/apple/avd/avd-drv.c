@@ -23,6 +23,8 @@
 #include "avd-inst.h"
 #include "avd-regs.h"
 
+#define AVD_CODEC_INFO_MAX_SIZE	0x40
+
 static void calc_tile_meta(u32 w, u32 h, u32 bpb, u32 tile_dim,
 			   u32 meta_hdr_bytes, u32 *tile, u32 *meta)
 {
@@ -429,6 +431,17 @@ static void avd_device_run(void *priv)
 		avd_job_finish(ctx, result);
 }
 
+/*
+ * Capture buffers are found by timestamp and handed to the hardware by DMA
+ * address, so nothing limits them to VB2_MAX_FRAME. A larger pool lets
+ * userspace decode ahead to ride out bitrate spikes the hardware can't
+ * decode in real time (e.g. 150+ Mbit/s 4K60 H.264).
+ */
+static unsigned int max_capture_buffers = 128;
+module_param(max_capture_buffers, uint, 0444);
+MODULE_PARM_DESC(max_capture_buffers,
+		 "Maximum number of capture buffers per context (default 128)");
+
 static int avd_queue_init(void *priv, struct vb2_queue *src_vq,
 			  struct vb2_queue *dst_vq)
 {
@@ -466,6 +479,7 @@ static int avd_queue_init(void *priv, struct vb2_queue *src_vq,
 	dst_vq->lock = &ctx->dev->vdev_lock;
 	dst_vq->dev = ctx->dev->v4l2_dev.dev;
 	dst_vq->allow_cache_hints = true;
+	dst_vq->max_num_buffers = max(max_capture_buffers, VB2_MAX_FRAME);
 
 	return vb2_queue_init(dst_vq);
 }
@@ -821,6 +835,7 @@ static int avd_probe(struct platform_device *pdev)
 {
 	struct avd_dev *avd;
 	const struct of_device_id *match;
+	const char *codec_info = NULL;
 	int ret, irq;
 
 	avd = devm_kzalloc(&pdev->dev, sizeof(*avd), GFP_KERNEL);
@@ -863,6 +878,30 @@ static int avd_probe(struct platform_device *pdev)
 	if (ret) {
 		dev_err(avd->dev, "failed to load firmware: %d", ret);
 		return ret;
+	}
+
+	/* Determine firmware and HW variant capabilities */
+	if (avd->fw->size >= AVD_CODEC_INFO_MAX_SIZE)
+		codec_info = avd->fw->data + avd->fw->size - AVD_CODEC_INFO_MAX_SIZE;
+	if (codec_info && strncmp(codec_info, "CODECS:", 7) == 0) {
+		unsigned int caps = 0;
+		unsigned int variant_caps = avd->variant->capabilities;
+
+		if (strnstr(codec_info, "av1", AVD_CODEC_INFO_MAX_SIZE))
+			caps |= variant_caps & AVD_CAPABILITY_AV1;
+		if (strnstr(codec_info, "h264", AVD_CODEC_INFO_MAX_SIZE))
+			caps |= variant_caps & AVD_CAPABILITY_H264;
+		if (strnstr(codec_info, "h265", AVD_CODEC_INFO_MAX_SIZE))
+			caps |= variant_caps & AVD_CAPABILITY_HEVC;
+		if (strnstr(codec_info, "vp9", AVD_CODEC_INFO_MAX_SIZE))
+			caps |= variant_caps & AVD_CAPABILITY_VP9;
+
+		dev_info(avd->dev, "Firmware codecs: %.27s\n", codec_info + 7);
+
+		avd->capabilities = caps;
+	} else {
+		/* Backward compatibility to old firmware, do not upstream. */
+		avd->capabilities = avd->variant->capabilities;
 	}
 
 	ret = dma_set_mask_and_coherent(avd->dev,

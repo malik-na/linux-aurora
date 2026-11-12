@@ -652,6 +652,7 @@ static const struct mm_walk_ops hmm_walk_ops = {
  *		the invalidation to finish.
  * -EFAULT:     A page was requested to be valid and could not be made valid
  *              ie it has no backing VMA or it is illegal to access
+ * -EOPNOTSUPP: The MM uses a non-native mapping granule.
  *
  * This is similar to get_user_pages(), except that it can read the page tables
  * without mutating them (ie causing faults).
@@ -666,6 +667,9 @@ int hmm_range_fault(struct hmm_range *range)
 	int ret;
 
 	mmap_assert_locked(mm);
+	/* Each output PFN describes a whole native page, without a byte offset. */
+	if (mm_page_size(mm) != PAGE_SIZE)
+		return -EOPNOTSUPP;
 
 	do {
 		/* If range is no longer valid force retry. */
@@ -709,7 +713,7 @@ int hmm_dma_map_alloc(struct device *dev, struct hmm_dma_map *map,
 	 * best approximation to ensure no swiotlb buffering happens.
 	 */
 #ifdef CONFIG_DMA_NEED_SYNC
-	dma_need_sync = !dev->dma_skip_sync;
+	dma_need_sync = !dev_dma_skip_sync(dev);
 #endif /* CONFIG_DMA_NEED_SYNC */
 	if (dma_need_sync || dma_addressing_limited(dev))
 		return -EOPNOTSUPP;

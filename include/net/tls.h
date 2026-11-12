@@ -34,6 +34,7 @@
 #ifndef _TLS_OFFLOAD_H
 #define _TLS_OFFLOAD_H
 
+#include <linux/llist.h>
 #include <linux/types.h>
 #include <asm/byteorder.h>
 #include <linux/crypto.h>
@@ -85,7 +86,6 @@ enum {
 	TLS_BASE,
 	TLS_SW,
 	TLS_HW,
-	TLS_HW_RECORD,
 	TLS_NUM_CONFIG,
 };
 
@@ -111,10 +111,15 @@ struct tls_sw_context_tx {
 struct tls_strparser {
 	struct sock *sk;
 
+	/* Bitfield word and msg_ready are serialized by the lower
+	 * socket lock; BH and worker contexts both acquire it.
+	 */
 	u32 mark : 8;
 	u32 stopped : 1;
 	u32 copy_mode : 1;
 	u32 mixed_decrypted : 1;
+
+	u32 msg_announced : 1;
 
 	bool msg_ready;
 
@@ -139,6 +144,9 @@ struct tls_sw_context_rx {
 	struct tls_strparser strp;
 
 	atomic_t decrypt_pending;
+#ifdef CONFIG_MM_SUBPAGE
+	struct llist_head subpage_cleanup;
+#endif
 	struct sk_buff_head async_hold;
 	struct wait_queue_head wq;
 };
@@ -148,6 +156,9 @@ struct tls_record_info {
 	u32 end_seq;
 	int len;
 	int num_frags;
+#ifdef CONFIG_MM_SUBPAGE
+	struct mm_subpage_refs *subpage_refs;
+#endif
 	skb_frag_t frags[MAX_SKB_FRAGS];
 };
 

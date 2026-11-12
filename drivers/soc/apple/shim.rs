@@ -7,6 +7,7 @@ use kernel::prelude::*;
 
 extern "C" {
     fn sep_store_open(path: *const c_char) -> *mut c_void;
+    fn sep_store_open_host(path: *const c_char, created: *mut bool) -> *mut c_void;
     fn sep_store_open_trunc(path: *const c_char) -> *mut c_void;
     fn sep_store_open_ro(path: *const c_char) -> *mut c_void;
     fn sep_store_open_block(path: *const c_char, writable: c_int) -> *mut c_void;
@@ -15,6 +16,7 @@ extern "C" {
     fn sep_store_read(handle: *mut c_void, off: i64, buf: *mut c_void, len: usize) -> c_long;
     fn sep_store_write(handle: *mut c_void, off: i64, buf: *const c_void, len: usize) -> c_long;
     fn sep_store_sync(handle: *mut c_void) -> c_int;
+    fn sep_store_sync_parent(handle: *mut c_void) -> c_int;
     fn sep_random_bytes(buf: *mut c_void, len: usize) -> c_int;
 }
 
@@ -29,7 +31,7 @@ pub(crate) fn random_bytes(buf: &mut [u8]) -> Result<()> {
 /// Backing-store file handle.
 ///
 /// # Invariants
-/// `handle` is a live `struct file *` from `sep_store_open`.
+/// `handle` is a live `struct file *` from one of the store-open shims.
 pub(crate) struct StoreFile {
     handle: *mut c_void,
 }
@@ -54,6 +56,19 @@ impl StoreFile {
             return Err(ENOENT);
         }
         Ok(StoreFile { handle })
+    }
+
+    /// Opens the file like [`StoreFile::open`], and also reports whether this
+    /// call created it.
+    pub(crate) fn open_host(path: &CStr) -> Result<(StoreFile, bool)> {
+        let mut created = false;
+        // SAFETY: `path` is NUL-terminated and `created` is valid for writes
+        // for the duration of the call. The shim returns a live file or an
+        // error pointer.
+        let handle = unsafe {
+            kernel::error::from_err_ptr(sep_store_open_host(path.as_char_ptr(), &mut created))?
+        };
+        Ok((StoreFile { handle }, created))
     }
 
     pub(crate) fn open_trunc(path: &CStr) -> Result<StoreFile> {
@@ -169,6 +184,13 @@ impl StoreFile {
     pub(crate) fn sync(&self) -> Result<()> {
         // SAFETY: `handle` is live per the type invariant.
         kernel::error::to_result(unsafe { sep_store_sync(self.handle) })
+    }
+
+    /// Flushes the directory entry of this file, which [`StoreFile::sync`]
+    /// alone does not make durable for a newly created file.
+    pub(crate) fn sync_parent(&self) -> Result<()> {
+        // SAFETY: `handle` is live per the type invariant.
+        kernel::error::to_result(unsafe { sep_store_sync_parent(self.handle) })
     }
 }
 

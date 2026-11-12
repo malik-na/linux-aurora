@@ -197,7 +197,11 @@
 		#power-domain-cells = <0>;
 		#reset-cells = <0>;
 		label = "sio_cpu";
-		power-domains = <&ps_sio>;
+		/*
+		 * The SIO firmware sets up the SPI, UART and audio DMA shims
+		 * however few of them its clients use.
+		 */
+		power-domains = <&ps_sio &ps_uart_p &ps_spi_p &ps_audio_p>;
 	};
 
 	ps_fpwm0: power-controller@1d8 {
@@ -883,6 +887,7 @@
 		#power-domain-cells = <0>;
 		#reset-cells = <0>;
 		label = "pmp";
+		apple,always-on;
 	};
 
 	ps_pms_sram: power-controller@4d0 {
@@ -891,6 +896,7 @@
 		#power-domain-cells = <0>;
 		#reset-cells = <0>;
 		label = "pms_sram";
+		apple,always-on;
 	};
 
 	ps_lw31: power-controller@4d8 {

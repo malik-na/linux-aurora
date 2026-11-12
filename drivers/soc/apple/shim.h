@@ -42,6 +42,7 @@ void sep_hwrng_unregister(void *mem);
 /* -- store_shim.c ------------------------------------------------------- */
 
 void *sep_store_open(const char *path);
+void *sep_store_open_host(const char *path, bool *created);
 void *sep_store_open_trunc(const char *path);
 void *sep_store_open_ro(const char *path);
 void *sep_store_open_block(const char *path, int writable);
@@ -51,6 +52,7 @@ long sep_store_read(void *handle, long long off, void *buf, size_t len);
 long sep_store_write(void *handle, long long off, const void *buf,
 			    size_t len);
 int sep_store_sync(void *handle);
+int sep_store_sync_parent(void *handle);
 
 /* -- sha_shim.c --------------------------------------------------------- */
 
@@ -154,6 +156,24 @@ int sep_sensor_irq_wait(unsigned int timeout_ms);
 #define SEP_DIAG_KEYBAG_MISSING		2
 #define SEP_DIAG_KEYBAG_FAILED		3
 
+/* Mirrored by registration.rs (AttachState). */
+#define SEP_DIAG_SENSOR_ATTACH_UNKNOWN	0
+#define SEP_DIAG_SENSOR_ATTACH_ATTACHED	1
+#define SEP_DIAG_SENSOR_ATTACH_RETRYING	2
+#define SEP_DIAG_SENSOR_ATTACH_NOT_READY	3
+
+/* Mirrored by diag.rs (Restore). */
+#define SEP_DIAG_RESTORE_UNKNOWN	0
+#define SEP_DIAG_RESTORE_RESTORED	1
+#define SEP_DIAG_RESTORE_EMPTY		2
+#define SEP_DIAG_RESTORE_UNPROVEN	3
+
+/* Mirrored by xart_guard.rs (Matching). */
+#define SEP_DIAG_MATCHING_UNKNOWN	0
+#define SEP_DIAG_MATCHING_USABLE	1
+#define SEP_DIAG_MATCHING_UNVERIFIED	2
+#define SEP_DIAG_MATCHING_BLOCKED	3
+
 struct device;
 
 int sep_diag_register(struct device *dev, const char *profile,
@@ -167,6 +187,11 @@ unsigned int sep_diag_sensor_bind(void);
 void sep_diag_set_sensor_result(unsigned int bind, bool online);
 void sep_diag_set_bio_published(void);
 void sep_diag_set_touchid(bool started);
+void sep_diag_set_sensor_attach(int state);
+void sep_diag_set_restore(int state);
+void sep_diag_set_xart_guard(unsigned int level, bool list_loaded,
+			     int matching);
+void sep_diag_xart_guard_refused(int matching);
 void sep_diag_bringup_ended(void);
 
 /* -- bio_shim.c --------------------------------------------------------- */

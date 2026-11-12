@@ -232,8 +232,7 @@ void drm_gem_private_object_init(struct drm_device *dev,
 	if (!obj->resv)
 		obj->resv = &obj->_resv;
 
-	if (drm_core_check_feature(dev, DRIVER_GEM_GPUVA))
-		drm_gem_gpuva_init(obj);
+	drm_gem_gpuva_init(obj);
 
 	drm_vma_node_reset(&obj->vma_node);
 	INIT_LIST_HEAD(&obj->lru_node);
@@ -1343,7 +1342,7 @@ unsigned long drm_gem_get_unmapped_area(struct file *filp, unsigned long uaddr,
 	struct drm_gem_object *obj;
 	unsigned long ret;
 
-	obj = drm_gem_object_lookup_at_offset(filp, pgoff, len >> PAGE_SHIFT);
+	obj = drm_gem_object_lookup_at_offset(filp, pgoff, DIV_ROUND_UP(len, PAGE_SIZE));
 	if (IS_ERR(obj))
 		obj = NULL;
 
@@ -1379,8 +1378,11 @@ int drm_gem_mmap(struct file *filp, struct vm_area_struct *vma)
 	struct drm_gem_object *obj;
 	int ret;
 
+	/* GEM fake offsets identify an exact object start, not an interior byte. */
+	if (vma_subpage_offset(vma))
+		return -EINVAL;
 	obj = drm_gem_object_lookup_at_offset(filp, vma->vm_pgoff,
-					      vma_pages(vma));
+			DIV_ROUND_UP(vma->vm_end - vma->vm_start, PAGE_SIZE));
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
 
@@ -1713,6 +1715,16 @@ drm_gem_lru_scan(struct drm_device *dev,
 			 */
 			WARN_ON(obj->lru == &still_in_lru);
 			WARN_ON(obj->lru == lru);
+		} else if (obj->lru == &still_in_lru) {
+			/*
+			 * If the object wasn't moved and wasn't shrunk either,
+			 * it's still remaining as reclaimable. Note that
+			 * obj->lru is supposed to be checked with the LRU lock
+			 * held for an accurate result, but we don't care about
+			 * accuracy here. Worst thing that could happen is an
+			 * extra scan.
+			 */
+			*remaining += obj->size >> PAGE_SHIFT;
 		}
 
 		dma_resv_unlock(obj->resv);

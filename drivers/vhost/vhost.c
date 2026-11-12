@@ -14,6 +14,7 @@
 #include <linux/vhost.h>
 #include <linux/uio.h>
 #include <linux/mm.h>
+#include <linux/mm_subpage.h>
 #include <linux/miscdevice.h>
 #include <linux/mutex.h>
 #include <linux/poll.h>
@@ -342,6 +343,17 @@ static void __vhost_vq_meta_reset(struct vhost_virtqueue *vq)
 
 	for (j = 0; j < VHOST_NUM_ADDRS; j++)
 		vq->meta_iotlb[j] = NULL;
+}
+
+/* Caller must hold the virtqueue mutex. */
+static void vhost_vq_invalidate_access(struct vhost_virtqueue *vq)
+{
+	vq->desc = NULL;
+	vq->avail = NULL;
+	vq->used = NULL;
+	vq->log_used = false;
+	vq->log_addr = -1ull;
+	__vhost_vq_meta_reset(vq);
 }
 
 static void vhost_vq_meta_reset(struct vhost_dev *d)
@@ -1914,6 +1926,13 @@ int vq_meta_prefetch(struct vhost_virtqueue *vq)
 {
 	unsigned int num = vq->num;
 
+	/*
+	 * vhost_vq_invalidate_access() clears all three addresses together.
+	 * A single zero address may be a valid GIOVA in IOTLB mode.
+	 */
+	if (!vq->desc && !vq->avail && !vq->used)
+		return 0;
+
 	if (!vq->iotlb)
 		return 1;
 
@@ -2283,6 +2302,40 @@ long vhost_vring_ioctl(struct vhost_dev *d, unsigned int ioctl, void __user *arg
 }
 EXPORT_SYMBOL_GPL(vhost_vring_ioctl);
 
+/* Caller must hold the device mutex. */
+void vhost_clear_device_iotlb(struct vhost_dev *d)
+{
+	struct vhost_iotlb *iotlb;
+	int i;
+
+	iotlb = d->iotlb;
+	if (!iotlb)
+		return;
+
+	vhost_dev_lock_vqs(d);
+
+	/*
+	 * vhost_dev_lock_vqs() takes all VQ mutexes in index order.  Drop the
+	 * device-wide view while they are held, then clear each per-VQ view
+	 * and its cached ring access before releasing the locks.  Workers
+	 * cannot observe a mixed address-space state during this handoff.
+	 */
+	d->iotlb = NULL;
+
+	for (i = 0; i < d->nvqs; ++i) {
+		struct vhost_virtqueue *vq = d->vqs[i];
+
+		vq->iotlb = NULL;
+		vhost_vq_invalidate_access(vq);
+	}
+
+	vhost_dev_unlock_vqs(d);
+	vhost_clear_msg(d);
+	vhost_iotlb_free(iotlb);
+	wake_up_interruptible_poll(&d->wait, EPOLLIN | EPOLLRDNORM);
+}
+EXPORT_SYMBOL_GPL(vhost_clear_device_iotlb);
+
 int vhost_init_device_iotlb(struct vhost_dev *d)
 {
 	struct vhost_iotlb *niotlb, *oiotlb;
@@ -2303,7 +2356,10 @@ int vhost_init_device_iotlb(struct vhost_dev *d)
 
 		mutex_lock(&vq->mutex);
 		vq->iotlb = niotlb;
-		__vhost_vq_meta_reset(vq);
+		if (oiotlb)
+			__vhost_vq_meta_reset(vq);
+		else
+			vhost_vq_invalidate_access(vq);
 		mutex_unlock(&vq->mutex);
 	}
 
@@ -2435,6 +2491,26 @@ static int set_bit_to_user(int nr, void __user *addr)
 	void *base;
 	int bit = nr + (log % PAGE_SIZE) * 8;
 	int r;
+
+#ifdef CONFIG_MM_SUBPAGE
+	if (mm_page_size(current->mm) != PAGE_SIZE) {
+		struct user_page_fragment fragment;
+		unsigned long word = log & ~(sizeof(unsigned long) - 1);
+
+		/* Pin the complete atomic word, which stays inside one leaf.
+		 * A relocated leaf's physical offset need not match its VA.
+		 */
+		r = pin_user_fragments_remote(current->mm, word,
+				sizeof(unsigned long), FOLL_WRITE, &fragment, 1);
+		if (r != 1)
+			return r < 0 ? r : -EFAULT;
+		base = kmap_local_folio(fragment.folio, fragment.offset);
+		set_bit(nr + (log - word) * 8, base);
+		kunmap_local(base);
+		release_user_fragments(&fragment, 1, true);
+		return 0;
+	}
+#endif
 
 	r = pin_user_pages_fast(log, 1, FOLL_WRITE, &page);
 	if (r < 0)
@@ -3339,18 +3415,6 @@ void vhost_set_backend_features(struct vhost_dev *dev, u64 features)
 	mutex_unlock(&dev->mutex);
 }
 EXPORT_SYMBOL_GPL(vhost_set_backend_features);
-
-static int __init vhost_init(void)
-{
-	return 0;
-}
-
-static void __exit vhost_exit(void)
-{
-}
-
-module_init(vhost_init);
-module_exit(vhost_exit);
 
 MODULE_VERSION("0.0.1");
 MODULE_LICENSE("GPL v2");

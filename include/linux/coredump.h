@@ -5,6 +5,7 @@
 #include <linux/types.h>
 #include <linux/mm.h>
 #include <linux/fs.h>
+#include <linux/sched/coredump.h>
 #include <asm/siginfo.h>
 
 #ifdef CONFIG_COREDUMP
@@ -12,15 +13,29 @@ struct core_vma_metadata {
 	unsigned long start, end;
 	vm_flags_t flags;
 	unsigned long dump_size;
-	unsigned long pgoff;
+	unsigned long pgoff; /* File offset in the dumped mm's page units. */
 	struct file   *file;
 };
+
+/* NT_FILE offsets are expressed in the dumped process's page units. */
+static inline unsigned long core_vma_pgoff(const struct vm_area_struct *vma)
+{
+	unsigned int shift = mm_page_shift(vma->vm_mm);
+
+	if (shift > PAGE_SHIFT)
+		return vma->vm_pgoff >> (shift - PAGE_SHIFT);
+	return (vma->vm_pgoff << (PAGE_SHIFT - shift)) +
+		(vma_subpage_offset(vma) >> shift);
+}
 
 struct coredump_params {
 	const kernel_siginfo_t *siginfo;
 	struct file *file;
 	unsigned long limit;
+	/* MMF_DUMP_FILTER_* bits, snapshot of mm->flags at dump start. */
 	unsigned long mm_flags;
+	/* Snapshot of dumpable at dump start. */
+	enum task_dumpable dumpable;
 	int cpu;
 	loff_t written;
 	loff_t pos;

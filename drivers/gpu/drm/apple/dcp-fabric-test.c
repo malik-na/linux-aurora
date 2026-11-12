@@ -9,6 +9,7 @@
 #include "dcp-fabric-core.h"
 #include "dcp-fabric-effects.h"
 #include "dcp-fabric-session.h"
+#include "dcp-relink.h"
 
 struct fabric_fixture {
 	struct dcp_fabric_pipeline pipeline[2];
@@ -1706,141 +1707,6 @@ static void fabric_effect_deactivate_failure_test(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, f.f.port[0].owner[0], &f.f.route[0][1]);
 }
 
-static void fabric_binding_cookie_test(struct kunit *test)
-{
-	/* First admission may callback before attach returns/owner is published. */
-	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(0, 11, true, false), 0);
-	KUNIT_EXPECT_TRUE(test, dcp_fabric_callback_valid(11, 11));
-	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(11, 11, true, true), 1);
-	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(11, 11, true, false), -ESTALE);
-	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(11, 12, true, true), -ESTALE);
-	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(11, 10, false, true), -ESTALE);
-	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(11, 11, false, false), 0);
-	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(0, 11, false, true), -ESTALE);
-	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(0, 0, true, true), -EINVAL);
-	KUNIT_EXPECT_FALSE(test, dcp_fabric_callback_valid(11, 0));
-	KUNIT_EXPECT_FALSE(test, dcp_fabric_callback_valid(12, 11));
-	/* Complete drain removes the lease; a reloaded TB allocator may start at 1. */
-	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(0, 1, true, false), 0);
-}
-
-static void fabric_reconnect_session_test(struct kunit *test)
-{
-	struct dcp_fabric_session queued = { .generation = 7, .cookie = 11 };
-	struct dcp_fabric_session live_session = queued;
-
-	KUNIT_EXPECT_TRUE(test, dcp_fabric_session_valid(queued, live_session, true, false));
-	KUNIT_EXPECT_FALSE(test, dcp_fabric_session_valid(queued, live_session, false, false));
-	KUNIT_EXPECT_FALSE(test, dcp_fabric_session_valid(queued, live_session, true, true));
-	live_session.generation++;
-	KUNIT_EXPECT_FALSE(test, dcp_fabric_session_valid(queued, live_session, true, false));
-	live_session = queued;
-	live_session.cookie++;
-	KUNIT_EXPECT_FALSE(test, dcp_fabric_session_valid(queued, live_session, true, false));
-	live_session.cookie = 0;
-	KUNIT_EXPECT_FALSE(test, dcp_fabric_session_valid(queued, live_session, true, false));
-	/* Retained sleep keeps the TB cookie but invalidates the DCP connection. */
-	live_session = queued;
-	live_session.generation++;
-	queued = live_session;
-	KUNIT_EXPECT_TRUE(test, dcp_fabric_session_valid(queued, live_session, true, false));
-	/* Direct DP-alt uses cookie zero; local generation still guards queued work. */
-	queued.cookie = 0;
-	live_session.cookie = 0;
-	KUNIT_EXPECT_TRUE(test, dcp_fabric_session_valid(queued, live_session, true, false));
-	live_session.generation++;
-	KUNIT_EXPECT_FALSE(test, dcp_fabric_session_valid(queued, live_session, true, false));
-}
-
-struct fabric_drain_fake {
-	struct kunit *test;
-	unsigned int step;
-	u64 lease;
-	u64 admitted;
-	bool fabric_locked;
-	bool reserved;
-	bool cable;
-	bool work_running;
-};
-
-static void fabric_drain_reserve(void *data)
-{
-	struct fabric_drain_fake *f = data;
-
-	KUNIT_EXPECT_EQ(f->test, f->step++, 0U);
-	KUNIT_EXPECT_TRUE(f->test, f->fabric_locked);
-	f->reserved = true;
-	f->admitted = 0;
-}
-
-static void fabric_drain_invalidate(void *data)
-{
-	struct fabric_drain_fake *f = data;
-
-	KUNIT_EXPECT_EQ(f->test, f->step++, 1U);
-	KUNIT_EXPECT_FALSE(f->test, dcp_fabric_callback_valid(f->lease, f->admitted));
-	f->cable = false;
-}
-
-static void fabric_drain_unlock(void *data)
-{
-	struct fabric_drain_fake *f = data;
-
-	KUNIT_EXPECT_EQ(f->test, f->step++, 2U);
-	f->fabric_locked = false;
-}
-
-static void fabric_drain_wait(void *data)
-{
-	struct fabric_drain_fake *f = data;
-
-	KUNIT_EXPECT_EQ(f->test, f->step++, 3U);
-	KUNIT_EXPECT_FALSE(f->test, f->fabric_locked);
-	KUNIT_EXPECT_TRUE(f->test, f->reserved);
-	KUNIT_EXPECT_EQ(f->test, f->lease, 11ULL);
-	KUNIT_EXPECT_FALSE(f->test, f->cable);
-	KUNIT_EXPECT_TRUE(f->test, f->work_running);
-	f->work_running = false;
-}
-
-static void fabric_drain_lock(void *data)
-{
-	struct fabric_drain_fake *f = data;
-
-	KUNIT_EXPECT_EQ(f->test, f->step++, 4U);
-	KUNIT_EXPECT_FALSE(f->test, f->work_running);
-	f->fabric_locked = true;
-}
-
-static void fabric_binding_drain_test(struct kunit *test)
-{
-	static const struct dcp_fabric_drain_ops ops = {
-		.reserve_revoke = fabric_drain_reserve,
-		.invalidate = fabric_drain_invalidate,
-		.unlock = fabric_drain_unlock,
-		.drain = fabric_drain_wait,
-		.lock = fabric_drain_lock,
-	};
-	unsigned int i;
-
-	/* The shared executor drives both failed-attach and detach drain paths. */
-	for (i = 0; i < 2; i++) {
-		struct fabric_drain_fake f = {
-			.test = test, .lease = 11, .admitted = 11,
-			.fabric_locked = true, .cable = true, .work_running = true,
-		};
-
-		dcp_fabric_drain_binding(&ops, &f);
-		KUNIT_EXPECT_EQ(test, f.step, 5U);
-		KUNIT_EXPECT_FALSE(test, f.work_running);
-		KUNIT_EXPECT_TRUE(test, f.fabric_locked);
-		/* Only now may the caller release its lease/reservation and return. */
-		f.lease = 0;
-		f.reserved = false;
-		KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(f.lease, 1, true, false), 0);
-	}
-}
-
 static void fabric_capacity_notification_test(struct kunit *test)
 {
 	struct fabric_fake f;
@@ -2044,8 +1910,9 @@ static void fabric_t6030_init(struct fabric_fixture *f)
 {
 	unsigned int p;
 
-	fabric_init(f, false);
+	fabric_init(f, dcp_fabric_ordered_dual_stream(true, true));
 	for (p = 0; p < 3; p++) {
+		f->port[p].candidate_crtcs[1] = BIT(1) | BIT(2);
 		f->route[p][0].tunnel_clock_blocked =
 			dcp_fabric_tunnel_clock_blocked(true, 0);
 		f->route[p][1].tunnel_clock_blocked =
@@ -2053,53 +1920,125 @@ static void fabric_t6030_init(struct fabric_fixture *f)
 	}
 }
 
+static void fabric_t6030_dual_policy_test(struct kunit *test)
+{
+	struct fabric_fake f;
+	u32 mask;
+
+	fabric_fake_init(&f, test, dcp_fabric_ordered_dual_stream(true, true));
+	KUNIT_EXPECT_FALSE(test, f.f.policy.dual_stream);
+	KUNIT_EXPECT_TRUE(test, dcp_fabric_ordered_dual_stream(true, false));
+	KUNIT_EXPECT_FALSE(test, dcp_fabric_ordered_dual_stream(false, true));
+	/* A primary dock stream leaves the fixed processor free for HDMI. */
+	KUNIT_ASSERT_EQ(test, fabric_tunnel(&f.f, 0, 0), 0);
+	KUNIT_EXPECT_PTR_EQ(test, f.f.port[0].owner[0], &f.f.route[0][1]);
+	f.borrowed = f.f.pipeline[0].owned;
+	f.frozen = true;
+	f.levels[0] = f.levels[1] = 1;
+	dcp_fabric_run_hdmi(&fabric_fake_hdmi_ops, &f);
+	KUNIT_ASSERT_EQ(test, f.count, 4U);
+	KUNIT_EXPECT_EQ(test, f.trace[3], FX_CONNECT_FIXED);
+	/* HDMI owns one processor; the other still takes the first tunnel. */
+	fabric_release(&f.f, 0, 0);
+	f.f.pipeline[0].fixed_busy = true;
+	KUNIT_ASSERT_EQ(test, fabric_tunnel(&f.f, 0, 0), 0);
+	KUNIT_EXPECT_PTR_EQ(test, f.f.port[0].owner[0], &f.f.route[0][1]);
+	f.f.pipeline[0].fixed_busy = false;
+	f.f.port[0].candidate_crtcs[1] = BIT(1) | BIT(2);
+	KUNIT_ASSERT_EQ(test, fabric_tunnel(&f.f, 0, 1), 0);
+	KUNIT_EXPECT_PTR_EQ(test, f.f.port[0].owner[1], &f.f.route[0][0]);
+	/* Both encoders expose candidates, then narrow to the actual owner. */
+	mask = dcp_fabric_port_crtc_mask(true, false, false, 0, BIT(1));
+	mask = dcp_fabric_port_crtc_mask(true, false, true, mask, BIT(2));
+	KUNIT_EXPECT_EQ(test, mask, (u32)(BIT(1) | BIT(2)));
+	KUNIT_EXPECT_EQ(test, dcp_fabric_connector_mask(false, true, true, 1, mask), (u32)BIT(1));
+	KUNIT_EXPECT_EQ(test, dcp_fabric_connector_mask(false, true, true, 2, mask), (u32)BIT(2));
+	/* Ordered M2 secondary connectors retain the Type-C-only processor. */
+	mask = dcp_fabric_port_crtc_mask(true, true, false, 0, BIT(1));
+	mask = dcp_fabric_port_crtc_mask(true, true, true, mask, BIT(2));
+	KUNIT_EXPECT_EQ(test, mask, (u32)BIT(2));
+	mask = dcp_fabric_port_crtc_mask(false, true, false, mask, BIT(1));
+	KUNIT_EXPECT_EQ(test, mask, (u32)(BIT(1) | BIT(2)));
+}
+
+static void fabric_t6030_clock_header_parity_test(struct kunit *test)
+{
+	static const struct {
+		unsigned int source;
+		unsigned int dpin;
+		int pclk;
+	} cases[] = {
+		{ 0, 0, 0 }, { 0, 1, 1 }, { 2, 0, 0 }, { 2, 1, 1 },
+		{ 1, 0, -EOPNOTSUPP }, { 1, 1, -EOPNOTSUPP },
+		{ 3, 0, -EOPNOTSUPP }, { 4, 0, -EOPNOTSUPP },
+		{ UINT_MAX, 0, -EOPNOTSUPP },
+		{ 0, 2, -EOPNOTSUPP }, { 2, 2, -EOPNOTSUPP },
+		{ 0, UINT_MAX, -EOPNOTSUPP },
+	};
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(cases); i++) {
+		KUNIT_EXPECT_EQ(test,
+			apple_dp_tunnel_t6030_pclk(cases[i].source, cases[i].dpin),
+			cases[i].pclk);
+		KUNIT_EXPECT_EQ(test,
+			dcp_fabric_t6030_pclk(cases[i].source, cases[i].dpin),
+			cases[i].pclk);
+	}
+}
+
 static void fabric_t6030_clock_routes_test(struct kunit *test)
 {
 	struct fabric_fixture f;
-	struct dcp_fabric_route *route;
-	int error;
 
 	fabric_t6030_init(&f);
+	/* Reserve the hybrid processor for HDMI, even before HDMI arrives. */
 	KUNIT_ASSERT_EQ(test, fabric_tunnel(&f, 0, 0), 0);
-	KUNIT_EXPECT_PTR_EQ(test, f.port[0].owner[0], &f.route[0][0]);
+	KUNIT_EXPECT_PTR_EQ(test, f.port[0].owner[0], &f.route[0][1]);
+	KUNIT_EXPECT_FALSE(test, f.pipeline[0].owned);
+	f.pipeline[0].fixed_busy = true;
+	KUNIT_EXPECT_EQ(test, fabric_tunnel(&f, 0, 0), 0);
 	fabric_release(&f, 0, 0);
-	/* Unusable engines cannot override readiness of the supported engine. */
-	f.pipeline[1].terminal = true;
-	f.pipeline[1].services_ready = false;
+	/* HDMI first: the USB-C-only processor still drives the dock. */
 	KUNIT_ASSERT_EQ(test, fabric_tunnel(&f, 0, 0), 0);
-	KUNIT_EXPECT_PTR_EQ(test, f.port[0].owner[0], &f.route[0][0]);
+	KUNIT_EXPECT_PTR_EQ(test, f.port[0].owner[0], &f.route[0][1]);
 	fabric_release(&f, 0, 0);
-	f.pipeline[1].terminal = false;
-	f.pipeline[1].services_ready = true;
-	/* The Type-C-only engine wins direct DP, but cannot clock a tunnel. */
+	f.pipeline[0].fixed_busy = false;
+	/* A direct USB-C display can hold source 2; source 0 remains a fallback. */
 	KUNIT_ASSERT_EQ(test, fabric_direct(&f, 1), 0);
 	KUNIT_EXPECT_PTR_EQ(test, f.port[1].owner[0], &f.route[1][1]);
 	KUNIT_ASSERT_EQ(test, fabric_tunnel(&f, 0, 0), 0);
 	KUNIT_EXPECT_PTR_EQ(test, f.port[0].owner[0], &f.route[0][0]);
 	fabric_release(&f, 0, 0);
-	fabric_release(&f, 1, 0);
-	/* HDMI owns source 0: do not hand off the unclockable source 2. */
 	f.pipeline[0].fixed_busy = true;
 	KUNIT_EXPECT_EQ(test, fabric_tunnel(&f, 0, 0), -EBUSY);
 	KUNIT_EXPECT_PTR_EQ(test, f.port[0].owner[0], NULL);
-	KUNIT_EXPECT_FALSE(test, f.pipeline[1].owned);
+	fabric_release(&f, 1, 0);
 	f.pipeline[0].fixed_busy = false;
-	f.pipeline[0].services_ready = false;
-	KUNIT_EXPECT_EQ(test, fabric_tunnel(&f, 0, 0), -EAGAIN);
-	f.pipeline[0].services_ready = true;
+	/* A processor still starting does not displace the ready fallback. */
+	f.pipeline[1].services_ready = false;
 	KUNIT_ASSERT_EQ(test, fabric_tunnel(&f, 0, 0), 0);
 	KUNIT_EXPECT_PTR_EQ(test, f.port[0].owner[0], &f.route[0][0]);
 	fabric_release(&f, 0, 0);
-	KUNIT_EXPECT_EQ(test, fabric_tunnel(&f, 0, 1), -EOPNOTSUPP);
-	KUNIT_EXPECT_PTR_EQ(test, f.port[0].owner[1], NULL);
-	f.port[0].routes = &f.route[0][1];
-	KUNIT_EXPECT_EQ(test, fabric_tunnel(&f, 0, 0), -EOPNOTSUPP);
-	f.port[0].routes = NULL;
-	KUNIT_EXPECT_EQ(test, fabric_tunnel(&f, 0, 0), -EBUSY);
-	route = dcp_fabric_tunnel_candidate(&f.port[0], &f.policy, NULL,
-					    false, 2, true, &error);
-	KUNIT_EXPECT_PTR_EQ(test, route, NULL);
-	KUNIT_EXPECT_EQ(test, error, -EINVAL);
+	f.pipeline[0].services_ready = false;
+	f.pipeline[1].services_ready = false;
+	KUNIT_EXPECT_EQ(test, fabric_tunnel(&f, 0, 0), -EAGAIN);
+	f.pipeline[1].services_ready = true;
+	KUNIT_ASSERT_EQ(test, fabric_tunnel(&f, 0, 0), 0);
+	KUNIT_EXPECT_PTR_EQ(test, f.port[0].owner[0], &f.route[0][1]);
+	fabric_release(&f, 0, 0);
+	/* Separate dock monitors hold separate processors and pixel clocks. */
+	f.pipeline[0].services_ready = true;
+	f.pipeline[1].services_ready = true;
+	KUNIT_ASSERT_EQ(test, fabric_tunnel(&f, 0, 0), 0);
+	KUNIT_ASSERT_EQ(test, fabric_tunnel(&f, 0, 1), 0);
+	KUNIT_EXPECT_PTR_EQ(test, f.port[0].owner[0], &f.route[0][1]);
+	KUNIT_EXPECT_PTR_EQ(test, f.port[0].owner[1], &f.route[0][0]);
+	fabric_release(&f, 0, 0);
+	KUNIT_EXPECT_PTR_EQ(test, f.port[0].owner[1], &f.route[0][0]);
+	fabric_release(&f, 0, 1);
+	KUNIT_EXPECT_EQ(test, dcp_fabric_tunnel_clock_blocked(true, 1), (u8)3);
+	KUNIT_EXPECT_EQ(test, dcp_fabric_tunnel_clock_blocked(true, 4), (u8)3);
 	KUNIT_EXPECT_EQ(test, dcp_fabric_tunnel_clock_blocked(false, 0), (u8)0);
 	KUNIT_EXPECT_EQ(test, dcp_fabric_tunnel_clock_blocked(false, 2), (u8)0);
 }
@@ -2113,12 +2052,12 @@ static void fabric_t6030_plan_test(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, f.plan[0].target[0], &f.route[0][0]);
 	f.pipeline[0].fixed_busy = true;
 	dcp_fabric_plan(f.pipeline, f.port, &f.port[0], 0);
-	KUNIT_EXPECT_PTR_EQ(test, f.plan[0].target[0], NULL);
-	/* The same available source remains usable by a direct USB-C display. */
+	KUNIT_EXPECT_PTR_EQ(test, f.plan[0].target[0], &f.route[0][1]);
 	f.port[1].wanted = true;
 	f.port[1].hpd = true;
 	dcp_fabric_plan(f.pipeline, f.port, &f.port[0], 0);
-	KUNIT_EXPECT_PTR_EQ(test, f.plan[1].target[0], &f.route[1][1]);
+	/* HDMI and the dock exhaust both external processors. */
+	KUNIT_EXPECT_PTR_EQ(test, f.plan[1].target[0], NULL);
 	dcp_fabric_plan(f.pipeline, f.port, &f.port[0], 1);
 	KUNIT_EXPECT_PTR_EQ(test, f.plan[0].target[1], NULL);
 }
@@ -2131,33 +2070,301 @@ static void fabric_t6030_follow_test(struct kunit *test)
 	f.route[0][0].tunnel = true;
 	f.route[0][0].dpin = 0;
 	KUNIT_EXPECT_EQ(test, dcp_fabric_follow(&f.route[0][0], &f.route[0][1],
-					      NULL, NULL, false, &f.policy), DCP_FABRIC_FOLLOW_REFUSE);
-	/* Direct streams do not acquire a tunnel clock restriction. */
+					      NULL, NULL, false, &f.policy), DCP_FABRIC_FOLLOW_MOVE);
+	f.route[0][0].dpin = 1;
+	KUNIT_EXPECT_EQ(test, dcp_fabric_follow(&f.route[0][0], &f.route[0][1],
+					      NULL, NULL, false, &f.policy), DCP_FABRIC_FOLLOW_MOVE);
 	f.route[0][0].tunnel = false;
 	KUNIT_EXPECT_EQ(test, dcp_fabric_follow(&f.route[0][0], &f.route[0][1],
 					      NULL, NULL, false, &f.policy), DCP_FABRIC_FOLLOW_MOVE);
-	/* A swap must also preserve the holder's clockable source. */
-	f.route[1][0].tunnel = true;
-	f.route[1][0].dpin = 0;
-	KUNIT_EXPECT_EQ(test, dcp_fabric_follow(&f.route[0][1], &f.route[0][0],
-					      &f.route[1][0], &f.route[1][1], true, &f.policy),
-			DCP_FABRIC_FOLLOW_REFUSE);
+}
+
+static void fabric_binding_cookie_test(struct kunit *test)
+{
+	/* First admission may callback before attach returns/owner is published. */
+	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(0, 11, true, false), 0);
+	KUNIT_EXPECT_TRUE(test, dcp_fabric_callback_valid(11, 11));
+	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(11, 11, true, true), 1);
+	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(11, 11, true, false), -ESTALE);
+	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(11, 12, true, true), -ESTALE);
+	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(11, 10, false, true), -ESTALE);
+	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(11, 11, false, false), 0);
+	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(0, 11, false, true), -ESTALE);
+	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(0, 0, true, true), -EINVAL);
+	KUNIT_EXPECT_FALSE(test, dcp_fabric_callback_valid(11, 0));
+	KUNIT_EXPECT_FALSE(test, dcp_fabric_callback_valid(12, 11));
+	/* Complete drain removes the lease; a reloaded TB allocator may start at 1. */
+	KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(0, 1, true, false), 0);
+}
+
+static void fabric_reconnect_session_test(struct kunit *test)
+{
+	struct dcp_fabric_session queued = { .generation = 7, .cookie = 11 };
+	struct dcp_fabric_session live_session = queued;
+
+	KUNIT_EXPECT_TRUE(test, dcp_fabric_session_valid(queued, live_session, true, false));
+	KUNIT_EXPECT_FALSE(test, dcp_fabric_session_valid(queued, live_session, false, false));
+	KUNIT_EXPECT_FALSE(test, dcp_fabric_session_valid(queued, live_session, true, true));
+	live_session.generation++;
+	KUNIT_EXPECT_FALSE(test, dcp_fabric_session_valid(queued, live_session, true, false));
+	live_session = queued;
+	live_session.cookie++;
+	KUNIT_EXPECT_FALSE(test, dcp_fabric_session_valid(queued, live_session, true, false));
+	live_session.cookie = 0;
+	KUNIT_EXPECT_FALSE(test, dcp_fabric_session_valid(queued, live_session, true, false));
+	/* Retained sleep keeps the TB cookie but invalidates the DCP connection. */
+	live_session = queued;
+	live_session.generation++;
+	queued = live_session;
+	KUNIT_EXPECT_TRUE(test, dcp_fabric_session_valid(queued, live_session, true, false));
+	/* Direct DP-alt uses cookie zero; local generation still guards queued work. */
+	queued.cookie = 0;
+	live_session.cookie = 0;
+	KUNIT_EXPECT_TRUE(test, dcp_fabric_session_valid(queued, live_session, true, false));
+	live_session.generation++;
+	KUNIT_EXPECT_FALSE(test, dcp_fabric_session_valid(queued, live_session, true, false));
+}
+
+struct fabric_drain_fake {
+	struct kunit *test;
+	unsigned int step;
+	u64 lease;
+	u64 admitted;
+	bool fabric_locked;
+	bool reserved;
+	bool cable;
+	bool work_running;
+};
+
+static void fabric_drain_reserve(void *data)
+{
+	struct fabric_drain_fake *f = data;
+
+	KUNIT_EXPECT_EQ(f->test, f->step++, 0U);
+	KUNIT_EXPECT_TRUE(f->test, f->fabric_locked);
+	f->reserved = true;
+	f->admitted = 0;
+}
+
+static void fabric_drain_invalidate(void *data)
+{
+	struct fabric_drain_fake *f = data;
+
+	KUNIT_EXPECT_EQ(f->test, f->step++, 1U);
+	KUNIT_EXPECT_FALSE(f->test, dcp_fabric_callback_valid(f->lease, f->admitted));
+	f->cable = false;
+}
+
+static void fabric_drain_unlock(void *data)
+{
+	struct fabric_drain_fake *f = data;
+
+	KUNIT_EXPECT_EQ(f->test, f->step++, 2U);
+	f->fabric_locked = false;
+}
+
+static void fabric_drain_wait(void *data)
+{
+	struct fabric_drain_fake *f = data;
+
+	KUNIT_EXPECT_EQ(f->test, f->step++, 3U);
+	KUNIT_EXPECT_FALSE(f->test, f->fabric_locked);
+	KUNIT_EXPECT_TRUE(f->test, f->reserved);
+	KUNIT_EXPECT_EQ(f->test, f->lease, 11ULL);
+	KUNIT_EXPECT_FALSE(f->test, f->cable);
+	KUNIT_EXPECT_TRUE(f->test, f->work_running);
+	f->work_running = false;
+}
+
+static void fabric_drain_lock(void *data)
+{
+	struct fabric_drain_fake *f = data;
+
+	KUNIT_EXPECT_EQ(f->test, f->step++, 4U);
+	KUNIT_EXPECT_FALSE(f->test, f->work_running);
+	f->fabric_locked = true;
+}
+
+static void fabric_binding_drain_test(struct kunit *test)
+{
+	static const struct dcp_fabric_drain_ops ops = {
+		.reserve_revoke = fabric_drain_reserve,
+		.invalidate = fabric_drain_invalidate,
+		.unlock = fabric_drain_unlock,
+		.drain = fabric_drain_wait,
+		.lock = fabric_drain_lock,
+	};
+	unsigned int i;
+
+	/* The shared executor drives both failed-attach and detach drain paths. */
+	for (i = 0; i < 2; i++) {
+		struct fabric_drain_fake f = {
+			.test = test, .lease = 11, .admitted = 11,
+			.fabric_locked = true, .cable = true, .work_running = true,
+		};
+
+		dcp_fabric_drain_binding(&ops, &f);
+		KUNIT_EXPECT_EQ(test, f.step, 5U);
+		KUNIT_EXPECT_FALSE(test, f.work_running);
+		KUNIT_EXPECT_TRUE(test, f.fabric_locked);
+		/* Only now may the caller release its lease/reservation and return. */
+		f.lease = 0;
+		f.reserved = false;
+		KUNIT_EXPECT_EQ(test, dcp_fabric_binding_request(f.lease, 1, true, false), 0);
+	}
+}
+
+static unsigned long relink_ms(unsigned long t, unsigned int ms)
+{
+	return t + msecs_to_jiffies(ms);
+}
+
+/* An enabled state for attachment @generation, whose link came up @t. */
+static void relink_fresh(struct dcp_relink_state *s, u64 generation,
+			 unsigned long t)
+{
+	*s = (struct dcp_relink_state){};
+	dcp_relink_enable(s, true);
+	dcp_relink_attach(s, generation);
+	dcp_relink_link_up(s, generation, t);
+}
+
+/* DCP dropping a sink right after its link came up, and only then. */
+static void relink_unplug_test(struct kunit *test)
+{
+	unsigned long t = 100000;
+	struct dcp_relink_state s;
+
+	relink_fresh(&s, 5, t);
+	KUNIT_EXPECT_TRUE(test, dcp_relink_unplug(&s, 5, relink_ms(t, 2000)));
+	KUNIT_EXPECT_EQ(test, s.tries, 1U);
+	KUNIT_EXPECT_TRUE(test, s.active);
+
+	/* a sink dropped long after its link came up is unplugged */
+	relink_fresh(&s, 5, t);
+	KUNIT_EXPECT_FALSE(test, dcp_relink_unplug(&s, 5,
+				relink_ms(t, DCP_RELINK_LINKUP_MS + 1)));
+	/* also one of an attachment whose link-up was not seen */
+	KUNIT_EXPECT_FALSE(test, dcp_relink_unplug(&s, 6, relink_ms(t, 10)));
+	KUNIT_EXPECT_FALSE(test, s.active);
+	KUNIT_EXPECT_EQ(test, s.tries, 0U);
+
+	/* a link that came up late, after a failed first connect */
+	relink_fresh(&s, 5, t);
+	dcp_relink_link_up(&s, 5, relink_ms(t, 30000));
+	KUNIT_EXPECT_TRUE(test, dcp_relink_unplug(&s, 5, relink_ms(t, 32000)));
+
+	/* a reconnect under a new generation is no link-up of the attachment */
+	relink_fresh(&s, 5, t);
+	dcp_relink_link_up(&s, 6, relink_ms(t, 30000));
+	KUNIT_EXPECT_FALSE(test, dcp_relink_unplug(&s, 6, relink_ms(t, 32000)));
+	dcp_relink_attach(&s, 7);
+	KUNIT_EXPECT_FALSE(test, dcp_relink_unplug(&s, 7, relink_ms(t, 32000)));
+
+	/* a DPMS wake brings the link up again */
+	dcp_relink_wake(&s, 7, relink_ms(t, 60000));
+	KUNIT_EXPECT_TRUE(test, dcp_relink_unplug(&s, 7, relink_ms(t, 62000)));
+}
+
+/* One relink at a time; the replay keeps the retries of its attachment. */
+static void relink_running_test(struct kunit *test)
+{
+	unsigned long t = 100000;
+	struct dcp_relink_state s;
+
+	relink_fresh(&s, 5, t);
+	KUNIT_EXPECT_TRUE(test, dcp_relink_unplug(&s, 5, t));
+	/* another drop meanwhile is an unplug, and starts nothing */
+	KUNIT_EXPECT_FALSE(test, dcp_relink_unplug(&s, 5, t));
+	KUNIT_EXPECT_EQ(test, s.tries, 1U);
+	KUNIT_EXPECT_TRUE(test, s.active);
+
+	/* its own unplug and replug change the generation */
+	dcp_relink_reattach(&s, 7, relink_ms(t, 1000));
+	dcp_relink_link_up(&s, 7, relink_ms(t, 1200));
+	dcp_relink_end(&s);
+	KUNIT_EXPECT_FALSE(test, s.active);
+	KUNIT_EXPECT_EQ(test, s.tries, 1U);
+
+	/* dropped again right after the relink: the next try */
+	KUNIT_EXPECT_TRUE(test, dcp_relink_unplug(&s, 7, relink_ms(t, 3200)));
+	KUNIT_EXPECT_EQ(test, s.tries, 2U);
+}
+
+/* Three relinks per attachment or wake; a new attachment starts afresh. */
+static void relink_budget_test(struct kunit *test)
+{
+	unsigned long t = 100000;
+	struct dcp_relink_state s;
+	unsigned int i;
+
+	relink_fresh(&s, 5, t);
+	for (i = 0; i < DCP_RELINK_RETRIES; i++) {
+		KUNIT_EXPECT_TRUE(test, dcp_relink_unplug(&s, 5, t));
+		dcp_relink_reattach(&s, 5, t);
+		dcp_relink_end(&s);
+	}
+	KUNIT_EXPECT_FALSE(test, dcp_relink_unplug(&s, 5, t));
+	KUNIT_EXPECT_EQ(test, s.tries, (u32)DCP_RELINK_RETRIES);
+
+	dcp_relink_wake(&s, 5, t);
+	KUNIT_EXPECT_EQ(test, s.tries, 0U);
+	KUNIT_EXPECT_TRUE(test, dcp_relink_unplug(&s, 5, t));
+	dcp_relink_end(&s);
+
+	dcp_relink_attach(&s, 9);
+	dcp_relink_link_up(&s, 9, t);
+	KUNIT_EXPECT_EQ(test, s.tries, 0U);
+	KUNIT_EXPECT_TRUE(test, dcp_relink_unplug(&s, 9, t));
+	KUNIT_EXPECT_EQ(test, s.tries, 1U);
+}
+
+/* Disabled relinks are never queued, and a queued one is dropped. */
+static void relink_disabled_test(struct kunit *test)
+{
+	struct dcp_relink_state s;
+
+	relink_fresh(&s, 5, 1000);
+	KUNIT_EXPECT_TRUE(test, dcp_relink_unplug(&s, 5, 1000));
+	dcp_relink_enable(&s, false);
+	KUNIT_EXPECT_FALSE(test, s.active);
+	KUNIT_EXPECT_FALSE(test, dcp_relink_unplug(&s, 5, 1000));
+	KUNIT_EXPECT_FALSE(test, s.active);
+	dcp_relink_enable(&s, true);
+	KUNIT_EXPECT_TRUE(test, dcp_relink_unplug(&s, 5, 1000));
+}
+
+/* A jiffies value of 0 still marks the link-up time. */
+static void relink_stamp_test(struct kunit *test)
+{
+	struct dcp_relink_state s;
+
+	relink_fresh(&s, 1, 0);
+	KUNIT_EXPECT_NE(test, s.linked, 0UL);
+	KUNIT_EXPECT_TRUE(test, dcp_relink_unplug(&s, 1, 3));
 }
 
 static struct kunit_case fabric_tests[] = {
+	KUNIT_CASE(relink_unplug_test),
+	KUNIT_CASE(relink_running_test),
+	KUNIT_CASE(relink_budget_test),
+	KUNIT_CASE(relink_disabled_test),
+	KUNIT_CASE(relink_stamp_test),
+	KUNIT_CASE(fabric_t6030_dual_policy_test),
 	KUNIT_CASE(fabric_t6030_clock_routes_test),
+	KUNIT_CASE(fabric_t6030_clock_header_parity_test),
 	KUNIT_CASE(fabric_t6030_plan_test),
 	KUNIT_CASE(fabric_t6030_follow_test),
 	KUNIT_CASE(fabric_reclaim_transaction_test),
 	KUNIT_CASE_PARAM(fabric_shared_wiring_test, fabric_wiring_gen_params),
+	KUNIT_CASE(fabric_binding_cookie_test),
+	KUNIT_CASE(fabric_reconnect_session_test),
+	KUNIT_CASE(fabric_binding_drain_test),
 	KUNIT_CASE(fabric_rebind_presence_test),
 	KUNIT_CASE(fabric_nonhybrid_hdmi_resume_test),
 	KUNIT_CASE(fabric_resume_no_connect_test),
 	KUNIT_CASE(fabric_connector_flow_core_test),
 	KUNIT_CASE(fabric_capacity_notification_test),
-	KUNIT_CASE(fabric_binding_cookie_test),
-	KUNIT_CASE(fabric_reconnect_session_test),
-	KUNIT_CASE(fabric_binding_drain_test),
 	KUNIT_CASE_PARAM(fabric_scenario_test, fabric_scenario_gen_params),
 	KUNIT_CASE(fabric_dark_tunnel_test),
 	KUNIT_CASE(fabric_effect_failure_core_test),
@@ -2195,4 +2402,5 @@ static struct kunit_suite fabric_suite = {
 
 kunit_test_suite(fabric_suite);
 
+MODULE_DESCRIPTION("KUnit tests for the Apple DCP display fabric");
 MODULE_LICENSE("Dual MIT/GPL");

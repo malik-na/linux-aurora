@@ -940,7 +940,8 @@ asmlinkage long sys_seccomp(unsigned int op, unsigned int flags,
 asmlinkage long sys_getrandom(char __user *buf, size_t count,
 			      unsigned int flags);
 asmlinkage long sys_memfd_create(const char __user *uname_ptr, unsigned int flags);
-asmlinkage long sys_bpf(int cmd, union bpf_attr __user *attr, unsigned int size);
+asmlinkage long sys_bpf(int cmd, union bpf_attr __user *attr, unsigned int size,
+			struct bpf_common_attr __user *attr_common, unsigned int size_common);
 asmlinkage long sys_execveat(int dfd, const char __user *filename,
 			const char __user *const __user *argv,
 			const char __user *const __user *envp, int flags);
@@ -1261,6 +1262,11 @@ static inline int ksys_fadvise64_64(int fd, loff_t offset, loff_t len,
 unsigned long ksys_mmap_pgoff(unsigned long addr, unsigned long len,
 			      unsigned long prot, unsigned long flags,
 			      unsigned long fd, unsigned long pgoff);
+#ifdef CONFIG_MM_SUBPAGE
+unsigned long ksys_mmap_user(unsigned long addr, unsigned long len,
+		unsigned long prot, unsigned long flags, unsigned long fd, unsigned long offset);
+#endif
+
 ssize_t ksys_readahead(int fd, loff_t offset, size_t count);
 int ksys_ipc(unsigned int call, int first, unsigned long second,
 	unsigned long third, void __user * ptr, long fifth);

@@ -5,6 +5,8 @@
  * Copyright The Asahi Linux Contributors
  */
 
+#include <kunit/static_stub.h>
+
 #include <linux/bitfield.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -18,6 +20,7 @@
 #include <linux/of_platform.h>
 #include <linux/overflow.h>
 #include <linux/platform_device.h>
+#include <linux/suspend.h>
 #include <linux/soc/apple/rtkit.h>
 #include <linux/unaligned.h>
 
@@ -57,6 +60,13 @@ static const struct mfd_cell apple_smc_devs[] = {
 static const struct mfd_cell apple_smc_low_gpio_dev =
 	MFD_CELL_OF("macsmc-low-gpio", NULL, NULL, 0, 0, "apple,smc-low-gpio");
 
+static void apple_smc_read_sram(struct apple_smc *smc, void *buf, size_t size)
+{
+	if (IS_ENABLED(CONFIG_MFD_MACSMC_KUNIT_TEST))
+		KUNIT_STATIC_STUB_REDIRECT(apple_smc_read_sram, smc, buf, size);
+	memcpy_fromio(buf, smc->shmem.iomem, size);
+}
+
 static int apple_smc_cmd_locked(struct apple_smc *smc, u64 cmd, u64 arg,
 				  u64 size, u64 wsize, u32 *ret_data)
 {
@@ -65,6 +75,9 @@ static int apple_smc_cmd_locked(struct apple_smc *smc, u64 cmd, u64 arg,
 	u64 msg;
 
 	lockdep_assert_held(&smc->mutex);
+	if (IS_ENABLED(CONFIG_MFD_MACSMC_KUNIT_TEST))
+		KUNIT_STATIC_STUB_REDIRECT(apple_smc_cmd_locked, smc, cmd, arg, size, wsize,
+					   ret_data);
 
 	if (smc->boot_stage != APPLE_SMC_INITIALIZED)
 		return -EIO;
@@ -157,6 +170,9 @@ static int apple_smc_rw_locked(struct apple_smc *smc, smc_key key,
 	if (ret < 0)
 		return ret;
 
+	if (rsize && ret > rsize)
+		return -EIO;
+
 	if (rsize) {
 		/*
 		 * Small data <= 4 bytes is returned as part of the reply
@@ -165,9 +181,9 @@ static int apple_smc_rw_locked(struct apple_smc *smc, smc_key key,
 		 * Device memory.
 		 */
 		if (rsize <= 4)
-			memcpy(rbuf, &rdata, rsize);
+			memcpy(rbuf, &rdata, ret);
 		else
-			memcpy_fromio(rbuf, smc->shmem.iomem, rsize);
+			apple_smc_read_sram(smc, rbuf, ret);
 	}
 
 	return ret;
@@ -175,6 +191,9 @@ static int apple_smc_rw_locked(struct apple_smc *smc, smc_key key,
 
 int apple_smc_read(struct apple_smc *smc, smc_key key, void *buf, size_t size)
 {
+	if (IS_ENABLED(CONFIG_MFD_MACSMC_KUNIT_TEST))
+		KUNIT_STATIC_STUB_REDIRECT(apple_smc_read, smc, key, buf, size);
+
 	guard(mutex)(&smc->mutex);
 
 	return apple_smc_rw_locked(smc, key, NULL, 0, buf, size);
@@ -183,6 +202,9 @@ EXPORT_SYMBOL(apple_smc_read);
 
 int apple_smc_write(struct apple_smc *smc, smc_key key, const void *buf, size_t size)
 {
+	if (IS_ENABLED(CONFIG_MFD_MACSMC_KUNIT_TEST))
+		KUNIT_STATIC_STUB_REDIRECT(apple_smc_write, smc, key, buf, size);
+
 	guard(mutex)(&smc->mutex);
 
 	return apple_smc_rw_locked(smc, key, buf, size, NULL, 0);
@@ -200,11 +222,17 @@ EXPORT_SYMBOL(apple_smc_rw);
 
 int apple_smc_get_key_by_index(struct apple_smc *smc, int index, smc_key *key)
 {
+	u32 data;
 	int ret;
 
-	ret = apple_smc_cmd(smc, SMC_MSG_GET_KEY_BY_INDEX, index, 0, 0, key);
+	if (index < 0 || index >= smc->key_count)
+		return -EINVAL;
 
-	*key = swab32(*key);
+	ret = apple_smc_cmd(smc, SMC_MSG_GET_KEY_BY_INDEX, index, 0, 0, &data);
+	if (ret < 0)
+		return ret;
+
+	*key = swab32(data);
 	return ret;
 }
 EXPORT_SYMBOL(apple_smc_get_key_by_index);
@@ -214,9 +242,11 @@ int apple_smc_get_key_info(struct apple_smc *smc, smc_key key, struct apple_smc_
 	u8 key_info[6];
 	int ret;
 
-	ret = apple_smc_cmd(smc, SMC_MSG_GET_KEY_INFO, key, 0, 0, NULL);
+	guard(mutex)(&smc->mutex);
+
+	ret = apple_smc_cmd_locked(smc, SMC_MSG_GET_KEY_INFO, key, 0, 0, NULL);
 	if (ret >= 0 && info) {
-		memcpy_fromio(key_info, smc->shmem.iomem, sizeof(key_info));
+		apple_smc_read_sram(smc, key_info, sizeof(key_info));
 		info->size = key_info[0];
 		info->type_code = get_unaligned_be32(&key_info[1]);
 		info->flags = key_info[5];
@@ -415,7 +445,7 @@ static int apple_smc_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct device_node *np;
 	struct apple_smc *smc;
-	__be32 count;
+	__be32 count = 0;
 	int ret;
 
 	smc = devm_kzalloc(dev, sizeof(*smc), GFP_KERNEL);
@@ -467,8 +497,10 @@ static int apple_smc_probe(struct platform_device *pdev)
 	BLOCKING_INIT_NOTIFIER_HEAD(&smc->event_handlers);
 
 	ret = apple_smc_read(smc, SMC_KEY(#KEY), &count, sizeof(count));
-	if (ret >= 0 && ret != sizeof(count))
-		ret = -EINVAL;
+	if (ret >= 0 && ret != sizeof(count)) {
+		count = 0;
+		ret = -EIO;
+	}
 	if (ret < 0)
 		return dev_err_probe(smc->dev, ret, "Failed to get key count");
 	smc->key_count = be32_to_cpu(count);
@@ -503,6 +535,83 @@ static int apple_smc_probe(struct platform_device *pdev)
 	return 0;
 }
 
+/*
+ * System sleep handshake, as macOS does it around a real suspend-to-RAM (t8103 traces):
+ * MBSE 'slpw' (sleep warning) about 0.9 s before the commit, WKTP = 2 about 0.3 s before,
+ * then MBSE 'slpa' and an AP-only SET_AP_POWER 0x201 just before. The SMC itself keeps
+ * running (no IOP power change). On the way back: SET_AP_POWER 0x20, MBSE 'waka', WKTP = 0.
+ * Only for "mem" (deep) suspend; s2idle is untouched.
+ */
+#define SMC_AP_POWER_IDLE	0x201
+#define SMC_AP_POWER_ON		0x20
+
+static bool apple_smc_sleep_handshake = true;
+module_param_named(sleep_handshake, apple_smc_sleep_handshake, bool, 0644);
+MODULE_PARM_DESC(sleep_handshake, "send the macOS SMC sleep/wake handshake around deep (mem) suspend");
+
+#if IS_ENABLED(CONFIG_APPLE_S2R)
+void apple_s2r_note_smc(u8 bits);
+#else
+static inline void apple_s2r_note_smc(u8 bits) { }
+#endif
+static u8 apple_smc_handshake_bits;
+
+static bool apple_smc_deep_suspend(void)
+{
+	return apple_smc_sleep_handshake && pm_suspend_target_state == PM_SUSPEND_MEM;
+}
+
+static int apple_smc_suspend(struct device *dev)
+{
+	struct apple_smc *smc = dev_get_drvdata(dev);
+	int ret;
+
+	if (!apple_smc_deep_suspend())
+		return 0;
+	ret = apple_smc_write_u32(smc, SMC_KEY(MBSE), SMC_KEY(slpw));
+	apple_smc_handshake_bits = ret ? 0 : BIT(0);
+	apple_s2r_note_smc(apple_smc_handshake_bits);
+	dev_info(dev, "sleep handshake: MBSE slpw (%d)\n", ret);
+	return 0;
+}
+
+static int apple_smc_suspend_late(struct device *dev)
+{
+	struct apple_smc *smc = dev_get_drvdata(dev);
+	int r1, r2, r3;
+
+	if (!apple_smc_deep_suspend())
+		return 0;
+	r1 = apple_smc_write_u8(smc, SMC_KEY(WKTP), 2);
+	r2 = apple_smc_write_u32(smc, SMC_KEY(MBSE), SMC_KEY(slpa));
+	r3 = apple_rtkit_set_ap_power(smc->rtk, SMC_AP_POWER_IDLE);
+	apple_smc_handshake_bits |= (r1 ? 0 : BIT(1)) | (r2 ? 0 : BIT(2)) | (r3 ? 0 : BIT(3));
+	apple_s2r_note_smc(apple_smc_handshake_bits);
+	dev_info(dev, "sleep handshake: WKTP=2 (%d), MBSE slpa (%d), AP power 0x201 (%d)\n",
+		 r1, r2, r3);
+	return 0;
+}
+
+static int apple_smc_resume_early(struct device *dev)
+{
+	struct apple_smc *smc = dev_get_drvdata(dev);
+	int r1, r2, r3;
+
+	if (!apple_smc_deep_suspend())
+		return 0;
+	r1 = apple_rtkit_set_ap_power(smc->rtk, SMC_AP_POWER_ON);
+	r2 = apple_smc_write_u32(smc, SMC_KEY(MBSE), SMC_KEY(waka));
+	r3 = apple_smc_write_u8(smc, SMC_KEY(WKTP), 0);
+	dev_info(dev, "wake handshake: AP power 0x20 (%d), MBSE waka (%d), WKTP=0 (%d)\n",
+		 r1, r2, r3);
+	return 0;
+}
+
+static const struct dev_pm_ops apple_smc_pm_ops = {
+	SYSTEM_SLEEP_PM_OPS(apple_smc_suspend, NULL)
+	LATE_SYSTEM_SLEEP_PM_OPS(apple_smc_suspend_late, apple_smc_resume_early)
+};
+
 static const struct of_device_id apple_smc_of_match[] = {
 	{ .compatible = "apple,t8103-smc" },
 	{ .compatible = "apple,smc" },
@@ -514,6 +623,7 @@ static struct platform_driver apple_smc_driver = {
 	.driver = {
 		.name = "macsmc",
 		.of_match_table = apple_smc_of_match,
+		.pm = pm_sleep_ptr(&apple_smc_pm_ops),
 	},
 	.probe = apple_smc_probe,
 };
@@ -523,3 +633,7 @@ MODULE_AUTHOR("Hector Martin <marcan@marcan.st>");
 MODULE_AUTHOR("Sven Peter <sven@kernel.org>");
 MODULE_LICENSE("Dual MIT/GPL");
 MODULE_DESCRIPTION("Apple SMC driver");
+
+#if IS_ENABLED(CONFIG_MFD_MACSMC_KUNIT_TEST)
+#include "macsmc-test.c"
+#endif

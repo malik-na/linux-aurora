@@ -9,12 +9,14 @@
 
 #include <linux/acpi.h>
 #include <linux/bitfield.h>
+#include <linux/bpf_defs.h>
 #include <linux/extable.h>
 #include <linux/kfence.h>
 #include <linux/signal.h>
 #include <linux/mm.h>
 #include <linux/hardirq.h>
 #include <linux/init.h>
+#include <linux/irqflags.h>
 #include <linux/kasan.h>
 #include <linux/kprobes.h>
 #include <linux/uaccess.h>
@@ -75,6 +77,8 @@ static void data_abort_decode(unsigned long esr)
 		pr_alert("  SF = %lu, AR = %lu\n",
 			 (esr & ESR_ELx_SF) >> ESR_ELx_SF_SHIFT,
 			 (esr & ESR_ELx_AR) >> ESR_ELx_AR_SHIFT);
+		pr_alert("  Xs = %llu\n",
+			 (iss2 & ESR_ELx_Xs_MASK) >> ESR_ELx_Xs_SHIFT);
 	} else {
 		pr_alert("  ISV = 0, ISS = 0x%08lx, ISS2 = 0x%08lx\n",
 			 esr & ESR_ELx_ISS_MASK, iss2);
@@ -86,11 +90,10 @@ static void data_abort_decode(unsigned long esr)
 		 (iss2 & ESR_ELx_TnD) >> ESR_ELx_TnD_SHIFT,
 		 (iss2 & ESR_ELx_TagAccess) >> ESR_ELx_TagAccess_SHIFT);
 
-	pr_alert("  GCS = %ld, Overlay = %lu, DirtyBit = %lu, Xs = %llu\n",
+	pr_alert("  GCS = %ld, Overlay = %lu, DirtyBit = %lu\n",
 		 (iss2 & ESR_ELx_GCS) >> ESR_ELx_GCS_SHIFT,
 		 (iss2 & ESR_ELx_Overlay) >> ESR_ELx_Overlay_SHIFT,
-		 (iss2 & ESR_ELx_DirtyBit) >> ESR_ELx_DirtyBit_SHIFT,
-		 (iss2 & ESR_ELx_Xs_MASK) >> ESR_ELx_Xs_SHIFT);
+		 (iss2 & ESR_ELx_DirtyBit) >> ESR_ELx_DirtyBit_SHIFT);
 }
 
 static void mem_abort_decode(unsigned long esr)
@@ -150,8 +153,11 @@ static void show_pte(unsigned long addr)
 	}
 
 	pr_alert("%s pgtable: %luk pages, %llu-bit VAs, pgdp=%016lx\n",
-		 mm == &init_mm ? "swapper" : "user", PAGE_SIZE / SZ_1K,
+		 mm == &init_mm ? "swapper" : "user", mm_page_size(mm) / SZ_1K,
 		 vabits_actual, mm_to_pgd_phys(mm));
+
+	guard(irqsave)();
+
 	pgdp = pgd_offset(mm, addr);
 	pgd = READ_ONCE(*pgdp);
 	pr_alert("[%016lx] pgd=%016llx", addr, pgd_val(pgd));
@@ -165,25 +171,29 @@ static void show_pte(unsigned long addr)
 		if (pgd_none(pgd) || pgd_bad(pgd))
 			break;
 
-		p4dp = p4d_offset(pgdp, addr);
+		p4dp = arm64_mm_alt_granule(mm) ? p4d_offset_mm(mm, pgdp, addr) :
+						  p4d_offset_lockless(pgdp, pgd, addr);
 		p4d = READ_ONCE(*p4dp);
 		pr_cont(", p4d=%016llx", p4d_val(p4d));
-		if (p4d_none(p4d) || p4d_bad(p4d))
+		if (p4d_none_mm(mm, p4d) || p4d_bad_mm(mm, p4d))
 			break;
 
-		pudp = pud_offset(p4dp, addr);
+		pudp = arm64_mm_alt_granule(mm) ? pud_offset_mm(mm, p4dp, addr) :
+						  pud_offset_lockless(p4dp, p4d, addr);
 		pud = READ_ONCE(*pudp);
 		pr_cont(", pud=%016llx", pud_val(pud));
 		if (pud_none(pud) || pud_bad(pud))
 			break;
 
-		pmdp = pmd_offset(pudp, addr);
+		pmdp = arm64_mm_alt_granule(mm) ? pmd_offset_mm(mm, pudp, addr) :
+						  pmd_offset_lockless(pudp, pud, addr);
 		pmd = READ_ONCE(*pmdp);
 		pr_cont(", pmd=%016llx", pmd_val(pmd));
 		if (pmd_none(pmd) || pmd_bad(pmd))
 			break;
 
-		ptep = pte_offset_map(pmdp, addr);
+		ptep = arm64_mm_alt_granule(mm) ? pte_offset_map_mm(mm, pmdp, addr) :
+						  pte_offset_map(&pmd, addr);
 		if (!ptep)
 			break;
 
@@ -241,19 +251,15 @@ int __ptep_set_access_flags_anysz(struct vm_area_struct *vma,
 	 * flush_tlb_fix_spurious_fault().
 	 */
 	if (dirty) {
-		switch (pgsize) {
-		case PAGE_SIZE:
+		if (pgsize == mm_page_size(vma->vm_mm)) {
 			level = 3;
-			break;
-		case PMD_SIZE:
+		} else if (pgsize == pmd_size_mm(vma->vm_mm)) {
 			level = 2;
-			break;
 #ifndef __PAGETABLE_PMD_FOLDED
-		case PUD_SIZE:
+		} else if (pgsize == pud_size_mm(vma->vm_mm)) {
 			level = 1;
-			break;
 #endif
-		default:
+		} else {
 			level = TLBI_TTL_UNKNOWN;
 			WARN_ON(1);
 		}
@@ -436,9 +442,12 @@ static void __do_kernel_fault(unsigned long addr, unsigned long esr,
 	} else if (is_pkvm_stage2_abort(esr)) {
 		msg = "access to hypervisor-protected memory";
 	} else {
-		if (esr_fsc_is_translation_fault(esr) &&
-		    kfence_handle_page_fault(addr, esr & ESR_ELx_WNR, regs))
-			return;
+		if (esr_fsc_is_translation_fault(esr)) {
+			if (kfence_handle_page_fault(addr, esr & ESR_ELx_WNR, regs))
+				return;
+			if (bpf_arena_handle_page_fault(addr, esr & ESR_ELx_WNR, regs->pc))
+				return;
+		}
 
 		msg = "paging request";
 	}
@@ -1002,8 +1011,8 @@ NOKPROBE_SYMBOL(do_sp_pc_abort);
 /*
  * Used during anonymous page fault handling.
  */
-struct folio *vma_alloc_zeroed_movable_folio(struct vm_area_struct *vma,
-						unsigned long vaddr)
+struct folio *vma_alloc_zeroed_movable_folio_order(struct vm_area_struct *vma,
+					 unsigned long vaddr, unsigned int order)
 {
 	gfp_t flags = GFP_HIGHUSER_MOVABLE | __GFP_ZERO;
 
@@ -1015,7 +1024,7 @@ struct folio *vma_alloc_zeroed_movable_folio(struct vm_area_struct *vma,
 	if (vma->vm_flags & VM_MTE)
 		flags |= __GFP_ZEROTAGS;
 
-	return vma_alloc_folio(flags, 0, vma, vaddr);
+	return vma_alloc_folio(flags, order, vma, vaddr);
 }
 
 bool tag_clear_highpages(struct page *page, int numpages, bool clear_pages)

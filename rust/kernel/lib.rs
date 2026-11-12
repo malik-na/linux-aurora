@@ -16,6 +16,9 @@
 // Please see https://github.com/Rust-for-Linux/linux/issues/2 for details on
 // the unstable features in use.
 //
+// Stable since Rust 1.87.0.
+#![feature(unsigned_is_multiple_of)]
+//
 // Stable since Rust 1.89.0.
 #![feature(generic_arg_infer)]
 //
@@ -59,6 +62,7 @@ pub mod addr;
 pub mod alloc;
 #[cfg(CONFIG_AUXILIARY_BUS)]
 pub mod auxiliary;
+pub mod bitfield;
 pub mod bitmap;
 pub mod bits;
 #[cfg(CONFIG_BLOCK)]
@@ -74,20 +78,17 @@ pub mod cpufreq;
 pub mod cpumask;
 pub mod cred;
 pub mod debugfs;
-#[cfg(CONFIG_DEV_COREDUMP)]
-pub mod devcoredump;
 pub mod device;
 pub mod device_id;
 pub mod devres;
 pub mod dma;
+#[cfg(CONFIG_DRM = "y")]
 pub mod dma_buf;
 #[cfg(CONFIG_DMA_SHARED_BUFFER)]
 pub mod dma_fence;
 pub mod driver;
 #[cfg(CONFIG_DRM = "y")]
 pub mod drm;
-#[cfg(CONFIG_DRM_ASAHI_NEO)]
-pub mod drm_neo;
 pub mod error;
 pub mod faux;
 #[cfg(CONFIG_RUST_FW_LOADER_ABSTRACTIONS)]
@@ -108,7 +109,6 @@ pub mod interop;
 pub mod io;
 pub mod ioctl;
 pub mod iommu;
-pub mod iosys_map;
 pub mod iov;
 pub mod irq;
 pub mod jump_label;

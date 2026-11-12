@@ -18,6 +18,7 @@
  *	t8103	0	0x84000 + 0x4000 * port	BIT(0), rmw	BIT(1)
  *	t8112	0x63	0x8000 / 0x4000	BIT(0), rmw	BIT(1)
  *	t8122	0x62	0x8		BIT(slot)	BIT(16 + slot)
+ *	t8142	0x62	0x30		BIT(2 * port)	BIT(2 * port + 1)
  *	t6000	0	0x1a034		BIT(port)	BIT(16 + port)
  *	t6020	0	0xa02c		BIT(port)	BIT(16 + port)
  *	t6030	0x4c	0x8		BIT(slot)	BIT(16 + slot)
@@ -36,10 +37,12 @@
  * separate 16 KiB page at 0x350780000, so the register is 0x350780008. The
  * device tree describes that page as its own syscon. t8122 is unresolved.
  *
- * t8132 and t8142 use a different, per-port layout and are not supported.
+ * On t8142, RegMap 0x62 is a separate MMIO region at 0x380780000.
+ * The t8132 layout has not been decoded.
  *
- * Every implementation polls the busy bits, stores the request, then polls
- * again, with a 192 ms budget. The first poll's result is discarded.
+ * Reference firmware polls the busy bits, stores the request, then polls
+ * again, with a 192 ms budget. It discards the first poll's result. The
+ * t8142 implementation below instead refuses to issue a request while busy.
  */
 
 #include <linux/bits.h>
@@ -62,6 +65,11 @@
 #define T6000_CIO_CTRL_INIT_REQ(port) BIT(port)
 #define T6000_CIO_CTRL_INIT_BUSY(port) BIT(16 + (port))
 
+#define T8142_CIO_CTRL 0x30
+#define T8142_CIO_CTRL_INIT_REQ(port) BIT(2 * (port))
+#define T8142_CIO_CTRL_INIT_BUSY(port) BIT(2 * (port) + 1)
+#define T8142_CIO_CTRL_BUSY_MASK 0xaa
+
 struct apple_cio_reset;
 
 struct apple_cio_reset_variant {
@@ -76,7 +84,7 @@ struct apple_cio_reset {
 	struct device *dev;
 	struct regmap *regmap;
 	u32 offset;
-	struct mutex lock;
+	struct mutex lock; /* serializes access to the shared t600x register */
 };
 
 static int t8103_cio_deassert(struct apple_cio_reset *priv, unsigned long id)
@@ -86,6 +94,11 @@ static int t8103_cio_deassert(struct apple_cio_reset *priv, unsigned long id)
 	int ret;
 
 	/*
+	 * After writing BIT(0) the reset is deasserted and the CIO block comes up.
+	 * Once the sequence is done BIT(0) is cleared automatically and then BIT(2)
+	 * is set. There's no way to assert the reset again other than cutting the power
+	 * to the entire CIO block. Writing the bit again has no effect.
+	 *
 	 * Wait for a reconfiguration already in flight, as Apple does, and like Apple
 	 * carry on regardless of the result. See the t6000 variant for why this is only
 	 * a warning.
@@ -117,6 +130,16 @@ static int t6000_cio_deassert(struct apple_cio_reset *priv, unsigned long id)
 	u32 val;
 	int ret;
 
+	/*
+	 * Note that even the mutex is likely paranoid and not actually required
+	 * here: The way this controller works is that setting bit N immediately
+	 * results in bit 16+n being set. Once the reset is fully released both
+	 * bits are cleared again but macOS specifically waits for the upper one
+	 * to clear before continuing.
+	 * Manually clearing bits is ignored and has no effect, the only way to
+	 * put the block into reset again is shut down its power domains.
+	 * Thus, there's no need to either RMW here or wait before polling.
+	 */
 	guard(mutex)(&priv->lock);
 
 	/*
@@ -142,6 +165,37 @@ static int t6000_cio_deassert(struct apple_cio_reset *priv, unsigned long id)
 					APPLE_CIO_RESET_POLL_US,
 					APPLE_CIO_RESET_TIMEOUT_US);
 }
+
+static int t8142_cio_deassert(struct apple_cio_reset *priv, unsigned long id)
+{
+	u32 val;
+	int ret;
+
+	guard(mutex)(&priv->lock);
+
+	/* Serialize all four ports sharing the request register. */
+	ret = regmap_read_poll_timeout(priv->regmap, T8142_CIO_CTRL, val,
+				       !(val & T8142_CIO_CTRL_BUSY_MASK),
+				       APPLE_CIO_RESET_POLL_US,
+				       APPLE_CIO_RESET_TIMEOUT_US);
+	if (ret)
+		return ret;
+
+	ret = regmap_write(priv->regmap, T8142_CIO_CTRL,
+			   T8142_CIO_CTRL_INIT_REQ(id));
+	if (ret)
+		return ret;
+
+	return regmap_read_poll_timeout(priv->regmap, T8142_CIO_CTRL, val,
+				       !(val & T8142_CIO_CTRL_INIT_BUSY(id)),
+				       APPLE_CIO_RESET_POLL_US,
+				       APPLE_CIO_RESET_TIMEOUT_US);
+}
+
+static const struct apple_cio_reset_variant apple_t8142_cio_reset = {
+	.nr_resets = 4,
+	.deassert = t8142_cio_deassert,
+};
 
 static const struct apple_cio_reset_variant apple_t8103_cio_reset = {
 	.nr_resets = 2,
@@ -183,6 +237,8 @@ static int apple_cio_reset_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	priv->variant = of_device_get_match_data(dev);
+	if (!priv->variant)
+		return -ENODEV;
 	priv->dev = dev;
 
 	ret = devm_mutex_init(dev, &priv->lock);
@@ -193,11 +249,11 @@ static int apple_cio_reset_probe(struct platform_device *pdev)
 		priv->regmap = syscon_node_to_regmap(dev->of_node->parent);
 		if (IS_ERR(priv->regmap))
 			return dev_err_probe(dev, PTR_ERR(priv->regmap),
-					     "Failed to get parent regmap");
+					     "Failed to get parent regmap\n");
 
 		ret = of_property_read_u32(dev->of_node, "reg", &priv->offset);
 		if (ret)
-			return dev_err_probe(dev, ret, "Failed to read reg offset");
+			return dev_err_probe(dev, ret, "Failed to read reg offset\n");
 	} else {
 		void __iomem *base;
 
@@ -209,7 +265,7 @@ static int apple_cio_reset_probe(struct platform_device *pdev)
 						     &apple_cio_reset_regmap_config);
 		if (IS_ERR(priv->regmap))
 			return dev_err_probe(dev, PTR_ERR(priv->regmap),
-					     "Failed to init MMIO regmap");
+					     "Failed to init MMIO regmap\n");
 	}
 
 	priv->rcdev.owner = THIS_MODULE;
@@ -221,6 +277,10 @@ static int apple_cio_reset_probe(struct platform_device *pdev)
 }
 
 static const struct of_device_id apple_cio_reset_match[] = {
+	{
+		.compatible = "apple,t8142-cio-reset",
+		.data = &apple_t8142_cio_reset,
+	},
 	{
 		.compatible = "apple,t8103-cio-reset",
 		.data = &apple_t8103_cio_reset,

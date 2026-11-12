@@ -34,6 +34,7 @@ properties:
               - apple,t6000-spmi
               - apple,t8112-spmi
           - const: apple,spmi
+      - const: apple,t8142-spmi
 
   reg:
     maxItems: 1
@@ -50,9 +51,25 @@ properties:
   power-domains:
     maxItems: 1
 
-required:
-  - compatible
-  - reg
+if:
+  properties:
+    compatible:
+      contains:
+        enum:
+          - apple,t8122-spmi
+          - apple,t6030-spmi
+          - apple,t6031-spmi
+then:
+  required:
+    - compatible
+    - reg
+    - interrupt-controller
+    - "#interrupt-cells"
+    - interrupts
+else:
+  required:
+    - compatible
+    - reg
 
 unevaluatedProperties: false
 

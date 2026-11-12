@@ -78,6 +78,7 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/mempolicy.h>
+#include <linux/mm_subpage.h>
 #include <linux/pagewalk.h>
 #include <linux/highmem.h>
 #include <linux/hugetlb.h>
@@ -653,12 +654,14 @@ static void queue_folios_pmd(pmd_t *pmd, struct mm_walk *walk)
 {
 	struct folio *folio;
 	struct queue_pages *qp = walk->private;
+	pmd_t pmdval = pmdp_get(pmd);
 
-	if (unlikely(pmd_is_migration_entry(*pmd))) {
-		qp->nr_failed++;
+	if (unlikely(!pmd_present(pmdval))) {
+		if (pmd_is_migration_entry(pmdval))
+			qp->nr_failed++;
 		return;
 	}
-	folio = pmd_folio(*pmd);
+	folio = pmd_folio(pmdval);
 	if (is_huge_zero_folio(folio)) {
 		walk->action = ACTION_CONTINUE;
 		return;
@@ -688,6 +691,8 @@ static int queue_folios_pte_range(pmd_t *pmd, unsigned long addr,
 	struct folio *folio;
 	struct queue_pages *qp = walk->private;
 	unsigned long flags = qp->flags;
+	unsigned int page_shift = mm_page_shift(walk->mm);
+	unsigned long page_size = 1UL << page_shift;
 	pte_t *pte, *mapped_pte;
 	pte_t ptent;
 	spinlock_t *ptl;
@@ -705,8 +710,8 @@ static int queue_folios_pte_range(pmd_t *pmd, unsigned long addr,
 		walk->action = ACTION_AGAIN;
 		return 0;
 	}
-	for (; addr != end; pte += nr, addr += nr * PAGE_SIZE) {
-		max_nr = (end - addr) >> PAGE_SHIFT;
+	for (; addr != end; pte += nr, addr += nr * page_size) {
+		max_nr = (end - addr) >> page_shift;
 		nr = 1;
 		ptent = ptep_get(pte);
 		if (pte_none(ptent))
@@ -721,7 +726,11 @@ static int queue_folios_pte_range(pmd_t *pmd, unsigned long addr,
 		folio = vm_normal_folio(vma, addr, ptent);
 		if (!folio || folio_is_zone_device(folio))
 			continue;
-		if (folio_test_large(folio) && max_nr != 1)
+#ifdef CONFIG_MM_SUBPAGE
+		if (page_shift < PAGE_SHIFT)
+			nr = folio_subpage_pte_batch(vma, folio, pte, ptent, max_nr, 0);
+#endif
+		if (page_shift >= PAGE_SHIFT && folio_test_large(folio) && max_nr != 1)
 			nr = folio_pte_batch(folio, pte, ptent, max_nr);
 		/*
 		 * vm_normal_folio() filters out zero pages, but there might
@@ -731,9 +740,10 @@ static int queue_folios_pte_range(pmd_t *pmd, unsigned long addr,
 			continue;
 		if (!queue_folio_required(folio, qp))
 			continue;
-		if (folio_test_large(folio)) {
+		if (folio_test_large(folio) || page_shift < PAGE_SHIFT) {
 			/*
-			 * A large folio can only be isolated from LRU once,
+			 * A native folio backing smaller leaves, like a large
+			 * folio, can only be isolated from LRU once,
 			 * but may be mapped by many PTEs (and Copy-On-Write may
 			 * intersperse PTEs of other, order 0, folios).  This is
 			 * a common case, so don't mistake it for failure (but
@@ -755,7 +765,7 @@ static int queue_folios_pte_range(pmd_t *pmd, unsigned long addr,
 		if (!(flags & (MPOL_MF_MOVE | MPOL_MF_MOVE_ALL)) ||
 		    !vma_migratable(vma) ||
 		    !migrate_folio_add(folio, qp->pagelist, flags)) {
-			qp->nr_failed += nr;
+			qp->nr_failed += page_shift < PAGE_SHIFT ? 1 : nr;
 			if (strictly_unmovable(flags))
 				break;
 		}
@@ -824,6 +834,7 @@ unlock:
  * @folio: The folio whose mapping considered for being made NUMA hintable
  * @vma: The VMA that the folio belongs to.
  * @is_private_single_threaded: Is this a single-threaded private VMA or not
+ * @shared: Is the mapped memory potentially shared between address spaces
  *
  * This function checks to see if the folio actually indicates that
  * we need to make the mapping one which causes a NUMA hinting fault,
@@ -833,7 +844,7 @@ unlock:
  * Return: True if the mapping of the folio needs to be changed, false otherwise.
  */
 bool folio_can_map_prot_numa(struct folio *folio, struct vm_area_struct *vma,
-		bool is_private_single_threaded)
+		bool is_private_single_threaded, bool shared)
 {
 	int nid;
 
@@ -841,7 +852,7 @@ bool folio_can_map_prot_numa(struct folio *folio, struct vm_area_struct *vma,
 		return false;
 
 	/* Also skip shared copy-on-write folios */
-	if (is_cow_mapping(vma->vm_flags) && folio_maybe_mapped_shared(folio))
+	if (is_cow_mapping(vma->vm_flags) && shared)
 		return false;
 
 	/* Folios are pinned and can't be migrated */
@@ -1050,6 +1061,12 @@ static int mbind_range(struct vma_iterator *vmi, struct vm_area_struct *vma,
 		vmstart = vma->vm_start;
 	}
 
+	/* Shared policy is indexed by native page-cache allocation units. */
+	if (vma_is_shmem(vma) &&
+	    (vma_page_offset_at(vma, vmstart).offset ||
+	     ((vmend - vmstart) & ~PAGE_MASK)))
+		return -EINVAL;
+
 	if (mpol_equal(vma->vm_policy, new_pol)) {
 		*prev = vma;
 		return 0;
@@ -1135,6 +1152,18 @@ static int lookup_node(struct mm_struct *mm, unsigned long addr)
 	struct page *p = NULL;
 	int ret;
 
+#ifdef CONFIG_MM_SUBPAGE
+	if (mm_page_shift(mm) != PAGE_SHIFT) {
+		struct user_page_fragment fragment;
+
+		ret = get_user_fragments_remote(mm, addr, 1, 0, &fragment, 1);
+		if (ret > 0) {
+			ret = folio_nid(fragment.folio);
+			release_user_fragments(&fragment, 1, false);
+		}
+		return ret;
+	}
+#endif
 	ret = get_user_pages_fast(addr & PAGE_MASK, 1, 0, &p);
 	if (ret > 0) {
 		ret = page_to_nid(p);
@@ -1502,13 +1531,13 @@ static long do_mbind(unsigned long start, unsigned long len,
 	if ((flags & MPOL_MF_MOVE_ALL) && !capable(CAP_SYS_NICE))
 		return -EPERM;
 
-	if (start & ~PAGE_MASK)
+	if (start & ~mm_page_mask(mm))
 		return -EINVAL;
 
 	if (mode == MPOL_DEFAULT)
 		flags &= ~MPOL_MF_STRICT;
 
-	len = PAGE_ALIGN(len);
+	len = mm_page_align(mm, len);
 	end = start + len;
 
 	if (end < start)
@@ -1768,7 +1797,7 @@ SYSCALL_DEFINE4(set_mempolicy_home_node, unsigned long, start, unsigned long, le
 	VMA_ITERATOR(vmi, mm, start);
 
 	start = untagged_addr(start);
-	if (start & ~PAGE_MASK)
+	if (start & ~mm_page_mask(mm))
 		return -EINVAL;
 	/*
 	 * flags is used for future extension if any.
@@ -1783,7 +1812,7 @@ SYSCALL_DEFINE4(set_mempolicy_home_node, unsigned long, start, unsigned long, le
 	if (home_node >= MAX_NUMNODES || !node_online(home_node))
 		return -EINVAL;
 
-	len = PAGE_ALIGN(len);
+	len = mm_page_align(mm, len);
 	end = start + len;
 
 	if (end < start)
@@ -2049,7 +2078,7 @@ struct mempolicy *get_vma_policy(struct vm_area_struct *vma,
 	if (pol->mode == MPOL_INTERLEAVE ||
 	    pol->mode == MPOL_WEIGHTED_INTERLEAVE) {
 		*ilx += vma->vm_pgoff >> order;
-		*ilx += (addr - vma->vm_start) >> (PAGE_SHIFT + order);
+		*ilx += (vma_page_offset_at(vma, addr).index - vma->vm_pgoff) >> order;
 	}
 	return pol;
 }
@@ -2057,24 +2086,15 @@ struct mempolicy *get_vma_policy(struct vm_area_struct *vma,
 bool vma_policy_mof(struct vm_area_struct *vma)
 {
 	struct mempolicy *pol;
+	pgoff_t ilx;
+	bool mof;
 
-	if (vma->vm_ops && vma->vm_ops->get_policy) {
-		bool ret = false;
-		pgoff_t ilx;		/* ignored here */
-
-		pol = vma->vm_ops->get_policy(vma, vma->vm_start, &ilx);
-		if (pol && (pol->flags & MPOL_F_MOF))
-			ret = true;
-		mpol_cond_put(pol);
-
-		return ret;
-	}
-
-	pol = vma->vm_policy;
+	pol = __get_vma_policy(vma, vma->vm_start, &ilx);
 	if (!pol)
 		pol = get_task_policy(current);
-
-	return pol->flags & MPOL_F_MOF;
+	mof = pol->flags & MPOL_F_MOF;
+	mpol_cond_put(pol);
+	return mof;
 }
 
 bool apply_policy_zone(struct mempolicy *policy, enum zone_type zone)
@@ -2683,7 +2703,7 @@ static unsigned long alloc_pages_bulk_weighted_interleave(gfp_t gfp,
 	prev_node = node;
 
 	/* create a local copy of node weights to operate on outside rcu */
-	weights = kzalloc(nr_node_ids, GFP_KERNEL);
+	weights = kmalloc(nr_node_ids, gfp & GFP_RECLAIM_MASK);
 	if (!weights)
 		return total_allocated;
 
@@ -2865,7 +2885,7 @@ bool __mpol_equal(struct mempolicy *a, struct mempolicy *b)
 	case MPOL_PREFERRED:
 	case MPOL_PREFERRED_MANY:
 	case MPOL_WEIGHTED_INTERLEAVE:
-		return !!nodes_equal(a->nodes, b->nodes);
+		return nodes_equal(a->nodes, b->nodes);
 	case MPOL_LOCAL:
 		return true;
 	default:
@@ -3253,6 +3273,10 @@ int mpol_set_shared_policy(struct shared_policy *sp,
 	int err;
 	struct sp_node *new = NULL;
 	unsigned long sz = vma_pages(vma);
+
+	/* Never truncate a partial cache-page policy update to zero or a neighbour. */
+	if (vma_subpage_offset(vma) || ((vma->vm_end - vma->vm_start) & ~PAGE_MASK))
+		return -EINVAL;
 
 	if (pol) {
 		new = sp_alloc(vma->vm_pgoff, vma->vm_pgoff + sz, pol);

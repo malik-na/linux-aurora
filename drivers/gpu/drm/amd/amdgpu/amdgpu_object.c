@@ -720,13 +720,17 @@ int amdgpu_bo_create(struct amdgpu_device *adev,
 	    bo->tbo.resource->mem_type == TTM_PL_VRAM) {
 		struct dma_fence *fence;
 
-		r = amdgpu_ttm_clear_buffer(bo, bo->tbo.base.resv, &fence);
+		r = amdgpu_ttm_clear_buffer(amdgpu_ttm_next_clear_entity(adev),
+					    bo, bo->tbo.base.resv, &fence,
+					    true, AMDGPU_KERNEL_JOB_ID_TTM_CLEAR_BUFFER);
 		if (unlikely(r))
 			goto fail_unreserve;
 
-		dma_resv_add_fence(bo->tbo.base.resv, fence,
-				   DMA_RESV_USAGE_KERNEL);
-		dma_fence_put(fence);
+		if (fence) {
+			dma_resv_add_fence(bo->tbo.base.resv, fence,
+					   DMA_RESV_USAGE_KERNEL);
+			dma_fence_put(fence);
+		}
 	}
 	if (!bp->resv)
 		amdgpu_bo_unreserve(bo);
@@ -1328,9 +1332,9 @@ void amdgpu_bo_release_notify(struct ttm_buffer_object *bo)
 	if (r)
 		goto out;
 
-	r = amdgpu_fill_buffer(amdgpu_ttm_next_clear_entity(adev),
-			       abo, 0, &bo->base._resv,
-			       &fence, AMDGPU_KERNEL_JOB_ID_CLEAR_ON_RELEASE);
+	r = amdgpu_ttm_clear_buffer(amdgpu_ttm_next_clear_entity(adev),
+				    abo, &bo->base._resv, &fence,
+				    false, AMDGPU_KERNEL_JOB_ID_CLEAR_ON_RELEASE);
 	if (WARN_ON(r))
 		goto out;
 
@@ -1362,6 +1366,28 @@ vm_fault_t amdgpu_bo_fault_reserve_notify(struct ttm_buffer_object *bo)
 
 	/* Remember that this BO was accessed by the CPU */
 	abo->flags |= AMDGPU_GEM_CREATE_CPU_ACCESS_REQUIRED;
+
+	/*
+	 * Behind a non-posted BAR the CPU reaches VRAM as Device-nGnRnE memory, where memcpy() and unaligned stores in userspace take an
+	 * alignment fault. A BO the CPU faults on moves to GTT and stays there; a pinned BO cannot move.
+	 */
+	if (pci_resource_flags(adev->pdev, 0) & IORESOURCE_MEM_NONPOSTED) {
+		if (bo->resource->mem_type != TTM_PL_VRAM)
+			return 0;
+		if (abo->tbo.pin_count > 0)
+			return VM_FAULT_SIGBUS;
+
+		abo->preferred_domains = AMDGPU_GEM_DOMAIN_GTT;
+		abo->allowed_domains = AMDGPU_GEM_DOMAIN_GTT;
+		amdgpu_bo_placement_from_domain(abo, AMDGPU_GEM_DOMAIN_GTT);
+		r = ttm_bo_validate(bo, &abo->placement, &ctx);
+		if (unlikely(r == -EBUSY || r == -ERESTARTSYS))
+			return VM_FAULT_NOPAGE;
+		if (unlikely(r) || bo->resource->mem_type == TTM_PL_VRAM)
+			return VM_FAULT_SIGBUS;
+		ttm_bo_move_to_lru_tail_unlocked(bo);
+		return 0;
+	}
 
 	if (amdgpu_res_cpu_visible(adev, bo->resource))
 		return 0;

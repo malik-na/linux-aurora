@@ -3,6 +3,7 @@
  * Copyright (C) 2001 Jens Axboe <axboe@kernel.dk>
  */
 #include <linux/mm.h>
+#include <linux/mm_subpage.h>
 #include <linux/swap.h>
 #include <linux/bio-integrity.h>
 #include <linux/blkdev.h>
@@ -246,6 +247,10 @@ void bio_init(struct bio *bio, struct block_device *bdev, struct bio_vec *table,
 #endif
 #ifdef CONFIG_BLK_DEV_INTEGRITY
 	bio->bi_integrity = NULL;
+#endif
+#ifdef CONFIG_MM_SUBPAGE
+	bio->bi_user_fragments = NULL;
+	bio->bi_nr_user_fragments = 0;
 #endif
 	bio->bi_vcnt = 0;
 
@@ -555,6 +560,14 @@ struct bio *bio_alloc_bioset(struct block_device *bdev, unsigned short nr_vecs,
 		bio = bio_alloc_percpu_cache(bs);
 	} else {
 		opf &= ~REQ_ALLOC_CACHE;
+	}
+
+	/*
+	 * For a bioset without a percpu cache, or when the percpu cache was
+	 * empty, try a slab allocation with optimistic GFP_ flags before
+	 * falling back to the mempool.
+	 */
+	if (!bio) {
 		p = kmem_cache_alloc(bs->bio_slab, gfp);
 		if (p)
 			bio = p + bs->front_pad;
@@ -635,15 +648,15 @@ struct bio *bio_kmalloc(unsigned short nr_vecs, gfp_t gfp_mask)
 }
 EXPORT_SYMBOL(bio_kmalloc);
 
-void zero_fill_bio_iter(struct bio *bio, struct bvec_iter start)
+void zero_fill_bio(struct bio *bio)
 {
 	struct bio_vec bv;
 	struct bvec_iter iter;
 
-	__bio_for_each_segment(bv, bio, iter, start)
+	bio_for_each_segment(bv, bio, iter)
 		memzero_bvec(&bv);
 }
-EXPORT_SYMBOL(zero_fill_bio_iter);
+EXPORT_SYMBOL(zero_fill_bio);
 
 /**
  * bio_truncate - truncate the bio to small size of @new_size
@@ -851,6 +864,7 @@ static int __bio_clone(struct bio *bio, struct bio *bio_src, gfp_t gfp)
 	bio->bi_ioprio = bio_src->bi_ioprio;
 	bio->bi_write_hint = bio_src->bi_write_hint;
 	bio->bi_write_stream = bio_src->bi_write_stream;
+	bio->bi_bvec_gap_bit = bio_src->bi_bvec_gap_bit;
 	bio->bi_iter = bio_src->bi_iter;
 
 	if (bio->bi_bdev) {
@@ -1159,6 +1173,18 @@ void __bio_release_pages(struct bio *bio, bool mark_dirty)
 {
 	struct folio_iter fi;
 
+#ifdef CONFIG_MM_SUBPAGE
+	if (bio->bi_user_fragments) {
+		release_user_fragments(bio->bi_user_fragments,
+				       bio->bi_nr_user_fragments, mark_dirty);
+		kfree(bio->bi_user_fragments);
+		bio->bi_user_fragments = NULL;
+		bio->bi_nr_user_fragments = 0;
+		bio_clear_flag(bio, BIO_PAGE_PINNED);
+		return;
+	}
+#endif
+
 	bio_for_each_folio_all(fi, bio) {
 		size_t nr_pages;
 
@@ -1191,7 +1217,7 @@ void bio_iov_bvec_set(struct bio *bio, const struct iov_iter *iter)
  * for the next iteration.
  */
 static int bio_iov_iter_align_down(struct bio *bio, struct iov_iter *iter,
-			    unsigned len_align_mask)
+				   struct bio_vec *bv, unsigned len_align_mask)
 {
 	size_t nbytes = bio->bi_iter.bi_size & len_align_mask;
 
@@ -1200,30 +1226,189 @@ static int bio_iov_iter_align_down(struct bio *bio, struct iov_iter *iter,
 
 	iov_iter_revert(iter, nbytes);
 	bio->bi_iter.bi_size -= nbytes;
-	do {
-		struct bio_vec *bv = &bio->bi_io_vec[bio->bi_vcnt - 1];
-
-		if (nbytes < bv->bv_len) {
-			bv->bv_len -= nbytes;
-			break;
-		}
-
+	while (nbytes >= bv->bv_len) {
 		if (bio_flagged(bio, BIO_PAGE_PINNED))
 			unpin_user_page(bv->bv_page);
 
-		bio->bi_vcnt--;
+		if (!--bio->bi_vcnt)
+			return -EFAULT;
 		nbytes -= bv->bv_len;
-	} while (nbytes);
-
-	if (!bio->bi_vcnt)
-		return -EFAULT;
+		bv--;
+	}
+	bv->bv_len -= nbytes;
 	return 0;
 }
+
+#ifdef CONFIG_DEBUG_KERNEL
+static inline bool bio_iov_bvec_aligned(const struct bio *bio,
+					unsigned mem_align_mask)
+{
+	struct bvec_iter iter;
+	struct bio_vec bv;
+
+	/*
+	 * Correct callers never break the alignment requirements, so this
+	 * exhaustive check is only paid for in debug builds.
+	 */
+	for_each_mp_bvec(bv, bio->bi_io_vec, iter, bio->bi_iter)
+		if ((bv.bv_offset | bv.bv_len) & mem_align_mask)
+			return false;
+	return true;
+}
+#else
+static inline bool bio_iov_bvec_aligned(const struct bio *bio,
+					unsigned mem_align_mask)
+{
+	/*
+	 * We forward the bio_vec as-is, so ITER_BVEC callers must provide
+	 * segments already aligned to the device's DMA alignment. The only
+	 * unchecked user-controllable offset that reaches here is an io_uring
+	 * registered buffer where just the first segment can be unaligned
+	 * (the rest is virtually contiguous), so checking only that one is
+	 * sufficient to know if the entire vector is valid.
+	 */
+	return !(mp_bvec_iter_offset(bio->bi_io_vec, bio->bi_iter) &
+							mem_align_mask);
+}
+#endif
+
+#ifdef CONFIG_MM_SUBPAGE
+static bool bio_subpage_iter(const struct iov_iter *iter)
+{
+	return user_backed_iter(iter) && current->mm &&
+		mm_page_size(current->mm) < PAGE_SIZE;
+}
+
+int bio_iov_user_vecs(const struct iov_iter *iter, int max_vecs)
+{
+	struct iov_iter walk = *iter;
+	unsigned long size;
+	unsigned int count = 0;
+
+	if (!bio_subpage_iter(iter))
+		return iov_iter_npages(iter, max_vecs);
+	size = mm_user_fragment_size(current->mm);
+	while (iov_iter_count(&walk) && count < max_vecs) {
+		size_t len, offset, nr;
+
+		iov_iter_advance(&walk, 0);
+		len = min(iter_iov_len(&walk), iov_iter_count(&walk));
+		if (WARN_ON_ONCE(!len))
+			return max_vecs;
+		offset = (unsigned long)iter_iov_addr(&walk) & (size - 1);
+		nr = len / size + DIV_ROUND_UP(offset + (len & (size - 1)), size);
+		if (nr >= max_vecs - count)
+			return max_vecs;
+		count += nr;
+		iov_iter_advance(&walk, len);
+	}
+	return count;
+}
+EXPORT_SYMBOL_GPL(bio_iov_user_vecs);
+
+/* Pins belong to the submitting bio, just as with ordinary BIO_PAGE_PINNED.
+ * Split/cloned bios borrow its vectors and complete before their owner does.
+ */
+static int bio_iov_iter_get_fragments(struct bio *bio, struct iov_iter *iter,
+				    unsigned int align_mask)
+{
+	unsigned int capacity = bio->bi_max_vecs, total = 0;
+	unsigned int flags = iov_iter_rw(iter) == READ ? FOLL_WRITE : 0;
+	int ret = 0;
+
+	if (WARN_ON_ONCE(bio->bi_vcnt || bio->bi_user_fragments || !capacity))
+		return -EINVAL;
+	if (iter->nofault)
+		flags |= FOLL_NOFAULT;
+	bio->bi_user_fragments = kmalloc_array(capacity,
+				 sizeof(*bio->bi_user_fragments), GFP_KERNEL);
+	if (!bio->bi_user_fragments)
+		return -ENOMEM;
+	while (iov_iter_count(iter) && bio->bi_nr_user_fragments < capacity &&
+	       total < BIO_MAX_SIZE) {
+		unsigned int i, bytes = 0;
+		long nr;
+
+		iov_iter_advance(iter, 0);
+		nr = pin_user_fragments_remote(current->mm,
+			(unsigned long)iter_iov_addr(iter),
+			min3(iter_iov_len(iter), iov_iter_count(iter),
+			     (size_t)(BIO_MAX_SIZE - total)), flags,
+			bio->bi_user_fragments + bio->bi_nr_user_fragments,
+			capacity - bio->bi_nr_user_fragments);
+		if (nr <= 0) {
+			ret = nr ?: -EFAULT;
+			break;
+		}
+		for (i = 0; i < nr; i++) {
+			struct user_page_fragment *fragment =
+				&bio->bi_user_fragments[bio->bi_nr_user_fragments++];
+			struct page *page = folio_page(fragment->folio,
+					fragment->offset >> PAGE_SHIFT);
+			unsigned int offset = offset_in_page(fragment->offset);
+			struct bio_vec *prev = bio->bi_vcnt ?
+				&bio->bi_io_vec[bio->bi_vcnt - 1] : NULL;
+
+			/* Coalesce physically adjacent quarters within one folio. */
+			if (prev && page_folio(prev->bv_page) == fragment->folio &&
+			    page_to_phys(prev->bv_page) + prev->bv_offset + prev->bv_len ==
+				page_to_phys(page) + offset)
+				prev->bv_len += fragment->length;
+			else
+				bvec_set_page(&bio->bi_io_vec[bio->bi_vcnt++], page,
+					      fragment->length, offset);
+			bytes += fragment->length;
+		}
+		iov_iter_advance(iter, bytes);
+		total += bytes;
+	}
+	/* Trim pins separately from vectors: several pins may share one bvec. */
+	if (total & align_mask) {
+		unsigned int trim = total & align_mask, left = trim;
+
+		while (left) {
+			struct user_page_fragment *fragment =
+				&bio->bi_user_fragments[bio->bi_nr_user_fragments - 1];
+			unsigned int bytes = min(left, fragment->length);
+
+			if (bytes == fragment->length) {
+				release_user_fragments(fragment, 1, false);
+				bio->bi_nr_user_fragments--;
+			} else {
+				fragment->length -= bytes;
+			}
+			left -= bytes;
+		}
+		left = trim;
+		while (left) {
+			struct bio_vec *bv = &bio->bi_io_vec[bio->bi_vcnt - 1];
+			unsigned int bytes = min(left, bv->bv_len);
+
+			bv->bv_len -= bytes;
+			if (!bv->bv_len)
+				bio->bi_vcnt--;
+			left -= bytes;
+		}
+		iov_iter_revert(iter, trim);
+		total -= trim;
+	}
+	bio->bi_iter.bi_size = total;
+	if (!total) {
+		kfree(bio->bi_user_fragments);
+		bio->bi_user_fragments = NULL;
+		return ret ?: -EFAULT;
+	}
+	bio_set_flag(bio, BIO_PAGE_PINNED);
+	return 0;
+}
+#endif
 
 /**
  * bio_iov_iter_get_pages - add user or kernel pages to a bio
  * @bio: bio to add pages to
  * @iter: iov iterator describing the region to be added
+ * @mem_align_mask: the mask the source address and length must be aligned to,
+ *	0 for no requirement
  * @len_align_mask: the mask to align the total size to, 0 for any length
  *
  * This takes either an iterator pointing to user memory, or one pointing to
@@ -1242,7 +1427,7 @@ static int bio_iov_iter_align_down(struct bio *bio, struct iov_iter *iter,
  * is returned only if 0 pages could be pinned.
  */
 int bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter,
-			   unsigned len_align_mask)
+			   unsigned mem_align_mask, unsigned len_align_mask)
 {
 	iov_iter_extraction_t flags = 0;
 
@@ -1251,9 +1436,18 @@ int bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter,
 
 	if (iov_iter_is_bvec(iter)) {
 		bio_iov_bvec_set(bio, iter);
+
+		if (!bio_iov_bvec_aligned(bio, mem_align_mask))
+			return -EINVAL;
+
 		iov_iter_advance(iter, bio->bi_iter.bi_size);
 		return 0;
 	}
+
+#ifdef CONFIG_MM_SUBPAGE
+	if (bio_subpage_iter(iter))
+		return bio_iov_iter_get_fragments(bio, iter, len_align_mask);
+#endif
 
 	if (iov_iter_extract_will_pin(iter))
 		bio_set_flag(bio, BIO_PAGE_PINNED);
@@ -1265,8 +1459,19 @@ int bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter,
 
 		ret = iov_iter_extract_bvecs(iter, bio->bi_io_vec,
 				BIO_MAX_SIZE - bio->bi_iter.bi_size,
-				&bio->bi_vcnt, bio->bi_max_vecs, flags);
+				&bio->bi_vcnt, bio->bi_max_vecs,
+				mem_align_mask, flags);
 		if (ret <= 0) {
+			/*
+			 * A misaligned vector fails the whole I/O.  Release any
+			 * pages pinned by earlier iterations before returning
+			 * since this bio won't be submitted to release them.
+			 */
+			if (ret == -EINVAL) {
+				bio_release_pages(bio, false);
+				bio_clear_flag(bio, BIO_PAGE_PINNED);
+				bio->bi_vcnt = 0;
+			}
 			if (!bio->bi_vcnt)
 				return ret;
 			break;
@@ -1276,7 +1481,8 @@ int bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter,
 
 	if (is_pci_p2pdma_page(bio->bi_io_vec->bv_page))
 		bio->bi_opf |= REQ_NOMERGE;
-	return bio_iov_iter_align_down(bio, iter, len_align_mask);
+	return bio_iov_iter_align_down(bio, iter,
+			&bio->bi_io_vec[bio->bi_vcnt - 1], len_align_mask);
 }
 
 static struct folio *folio_alloc_greedy(gfp_t gfp, size_t *size,
@@ -1285,7 +1491,8 @@ static struct folio *folio_alloc_greedy(gfp_t gfp, size_t *size,
 	struct folio *folio;
 
 	while (*size > minsize) {
-		folio = folio_alloc(gfp | __GFP_NORETRY, get_order(*size));
+		folio = folio_alloc(gfp | __GFP_NORETRY | __GFP_NOWARN,
+				    get_order(*size));
 		if (folio)
 			return folio;
 		*size = rounddown_pow_of_two(*size - 1);
@@ -1300,9 +1507,9 @@ static void bio_free_folios(struct bio *bio)
 	int i;
 
 	bio_for_each_bvec_all(bv, bio, i) {
-		struct folio *folio = page_folio(bv->bv_page);
+		struct folio *folio = bvec_folio(bv);
 
-		if (!is_zero_folio(folio))
+		if (!is_zero_folio(folio) && !is_huge_zero_folio(folio))
 			folio_put(folio);
 	}
 }
@@ -1321,6 +1528,7 @@ static int bio_iov_iter_bounce_write(struct bio *bio, struct iov_iter *iter,
 
 	do {
 		size_t this_len = min(total_len, SZ_1M);
+		size_t copied;
 		struct folio *folio;
 
 		if (this_len > minsize * 2)
@@ -1334,18 +1542,33 @@ static int bio_iov_iter_bounce_write(struct bio *bio, struct iov_iter *iter,
 			break;
 		bio_add_folio_nofail(bio, folio, this_len, 0);
 
-		if (copy_from_iter(folio_address(folio), this_len, iter) !=
-				this_len) {
+		if (iter->nofault)
+			copied = copy_folio_from_iter_atomic(folio, 0, this_len,
+							     iter);
+		else
+			copied = copy_folio_from_iter(folio, 0, this_len, iter);
+		if (copied < this_len) {
+			/*
+			 * Need to revert the iov iter for all bytes we have
+			 * copied.
+			 *
+			 * However the bio size differs from the real copied
+			 * bytes as @this_len is queued but only advanced
+			 * less than that.
+			 * Need to compensate that for the revert.
+			 */
+			iov_iter_revert(iter, bio->bi_iter.bi_size - this_len +
+					copied);
 			bio_free_folios(bio);
 			return -EFAULT;
 		}
-
 		total_len -= this_len;
 	} while (total_len && bio->bi_vcnt < bio->bi_max_vecs);
 
 	if (!bio->bi_iter.bi_size)
 		return -ENOMEM;
-	return bio_iov_iter_align_down(bio, iter, minsize - 1);
+	return bio_iov_iter_align_down(bio, iter,
+			&bio->bi_io_vec[bio->bi_vcnt - 1], minsize - 1);
 }
 
 static int bio_iov_iter_bounce_read(struct bio *bio, struct iov_iter *iter,
@@ -1353,21 +1576,18 @@ static int bio_iov_iter_bounce_read(struct bio *bio, struct iov_iter *iter,
 {
 	size_t len = min3(iov_iter_count(iter), maxlen, SZ_1M);
 	struct folio *folio;
+	ssize_t ret;
 
 	folio = folio_alloc_greedy(GFP_KERNEL, &len, minsize);
 	if (!folio)
 		return -ENOMEM;
 
 	do {
-		ssize_t ret;
-
 		ret = iov_iter_extract_bvecs(iter, bio->bi_io_vec + 1, len,
-				&bio->bi_vcnt, bio->bi_max_vecs - 1, 0);
+				&bio->bi_vcnt, bio->bi_max_vecs - 1, 0, 0);
 		if (ret <= 0) {
-			if (!bio->bi_vcnt) {
-				folio_put(folio);
-				return ret;
-			}
+			if (!bio->bi_vcnt)
+				goto out_folio_put;
 			break;
 		}
 		len -= ret;
@@ -1383,7 +1603,20 @@ static int bio_iov_iter_bounce_read(struct bio *bio, struct iov_iter *iter,
 	bvec_set_folio(&bio->bi_io_vec[0], folio, bio->bi_iter.bi_size, 0);
 	if (iov_iter_extract_will_pin(iter))
 		bio_set_flag(bio, BIO_PAGE_PINNED);
-	return bio_iov_iter_align_down(bio, iter, minsize - 1);
+
+	/* The first vec stores the bounce buffer, so do not subtract 1 here. */
+	ret = bio_iov_iter_align_down(bio, iter,
+			&bio->bi_io_vec[bio->bi_vcnt], minsize - 1);
+	if (ret)
+		goto out_folio_put;
+
+	/* Update the bounc buffer bv_len to the aligned down size. */
+	bio->bi_io_vec[0].bv_len = bio->bi_iter.bi_size;
+	return 0;
+
+out_folio_put:
+	folio_put(folio);
+	return ret;
 }
 
 /**
@@ -1409,7 +1642,7 @@ int bio_iov_iter_bounce(struct bio *bio, struct iov_iter *iter, size_t maxlen,
 
 static void bvec_unpin(struct bio_vec *bv, bool mark_dirty)
 {
-	struct folio *folio = page_folio(bv->bv_page);
+	struct folio *folio = bvec_folio(bv);
 	size_t nr_pages = (bv->bv_offset + bv->bv_len - 1) / PAGE_SIZE -
 			bv->bv_offset / PAGE_SIZE + 1;
 
@@ -1443,7 +1676,7 @@ static void bio_iov_iter_unbounce_read(struct bio *bio, bool is_error,
 			bvec_unpin(&bio->bi_io_vec[1 + i], mark_dirty);
 	}
 
-	folio_put(page_folio(bio->bi_io_vec[0].bv_page));
+	folio_put(bvec_folio(&bio->bi_io_vec[0]));
 }
 
 /**
@@ -1578,26 +1811,6 @@ void __bio_advance(struct bio *bio, unsigned bytes)
 }
 EXPORT_SYMBOL(__bio_advance);
 
-void bio_copy_data_iter(struct bio *dst, struct bvec_iter *dst_iter,
-			struct bio *src, struct bvec_iter *src_iter)
-{
-	while (src_iter->bi_size && dst_iter->bi_size) {
-		struct bio_vec src_bv = bio_iter_iovec(src, *src_iter);
-		struct bio_vec dst_bv = bio_iter_iovec(dst, *dst_iter);
-		unsigned int bytes = min(src_bv.bv_len, dst_bv.bv_len);
-		void *src_buf = bvec_kmap_local(&src_bv);
-		void *dst_buf = bvec_kmap_local(&dst_bv);
-
-		memcpy(dst_buf, src_buf, bytes);
-
-		kunmap_local(dst_buf);
-		kunmap_local(src_buf);
-
-		bio_advance_iter_single(src, src_iter, bytes);
-		bio_advance_iter_single(dst, dst_iter, bytes);
-	}
-}
-EXPORT_SYMBOL(bio_copy_data_iter);
 
 /**
  * bio_copy_data - copy contents of data buffers from one bio to another
@@ -1612,7 +1825,21 @@ void bio_copy_data(struct bio *dst, struct bio *src)
 	struct bvec_iter src_iter = src->bi_iter;
 	struct bvec_iter dst_iter = dst->bi_iter;
 
-	bio_copy_data_iter(dst, &dst_iter, src, &src_iter);
+	while (src_iter.bi_size && dst_iter.bi_size) {
+		struct bio_vec src_bv = bio_iter_iovec(src, src_iter);
+		struct bio_vec dst_bv = bio_iter_iovec(dst, dst_iter);
+		unsigned int bytes = min(src_bv.bv_len, dst_bv.bv_len);
+		void *src_buf = bvec_kmap_local(&src_bv);
+		void *dst_buf = bvec_kmap_local(&dst_bv);
+
+		memcpy(dst_buf, src_buf, bytes);
+
+		kunmap_local(dst_buf);
+		kunmap_local(src_buf);
+
+		bio_advance_iter_single(src, &src_iter, bytes);
+		bio_advance_iter_single(dst, &dst_iter, bytes);
+	}
 }
 EXPORT_SYMBOL(bio_copy_data);
 
@@ -1659,7 +1886,6 @@ void bio_set_pages_dirty(struct bio *bio)
 		folio_unlock(fi.folio);
 	}
 }
-EXPORT_SYMBOL_GPL(bio_set_pages_dirty);
 
 /*
  * bio_check_pages_dirty() will check that all the BIO's pages are still dirty.
@@ -1718,7 +1944,6 @@ defer:
 	spin_unlock_irqrestore(&bio_dirty_lock, flags);
 	schedule_work(&bio_dirty_work);
 }
-EXPORT_SYMBOL_GPL(bio_check_pages_dirty);
 
 static inline bool bio_remaining_done(struct bio *bio)
 {
@@ -1842,6 +2067,14 @@ struct bio *bio_split(struct bio *bio, int sectors,
 
 	bio_advance(bio, split->bi_iter.bi_size);
 
+	/*
+	 * The gap bit is set when splitting to limits and only applies to the
+	 * front bio that was split off. The remaining bio will calcualte its
+	 * gap value when it is subsequently split to limits, so it is safe to
+	 * re-initialize the value back to 0.
+	 */
+	bio->bi_bvec_gap_bit = 0;
+
 	if (bio_flagged(bio, BIO_TRACE_COMPLETION))
 		bio_set_flag(split, BIO_TRACE_COMPLETION);
 
@@ -1884,7 +2117,7 @@ EXPORT_SYMBOL_GPL(bio_trim);
  * create memory pools for biovec's in a bio_set.
  * use the global biovec slabs created for general use.
  */
-int biovec_init_pool(mempool_t *pool, int pool_entries)
+static int biovec_init_pool(mempool_t *pool, int pool_entries)
 {
 	struct biovec_slab *bp = bvec_slabs + ARRAY_SIZE(bvec_slabs) - 1;
 

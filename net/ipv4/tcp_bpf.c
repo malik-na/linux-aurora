@@ -44,6 +44,7 @@ static int bpf_tcp_ingress(struct sock *sk, struct sk_psock *psock,
 		return -ENOMEM;
 
 	lock_sock(sk);
+	sk_msg_subpages_share(tmp, msg);
 	tmp->sg.start = msg->sg.start;
 	i = msg->sg.start;
 	do {
@@ -76,6 +77,7 @@ static int bpf_tcp_ingress(struct sock *sk, struct sk_psock *psock,
 
 	if (!ret) {
 		msg->sg.start = i;
+		sk_msg_subpages_drop_empty(msg);
 		if (!sk_psock_queue_msg(psock, tmp))
 			atomic_sub(copied, &sk->sk_rmem_alloc);
 		sk_psock_data_ready(sk, psock);
@@ -147,6 +149,7 @@ retry:
 			break;
 	}
 
+	sk_msg_subpages_drop_empty(msg);
 	return 0;
 }
 
@@ -334,6 +337,7 @@ unlock:
 
 static int tcp_bpf_ioctl(struct sock *sk, int cmd, int *karg)
 {
+	struct sk_psock *psock;
 	bool slow;
 
 	if (cmd != SIOCINQ)
@@ -344,7 +348,21 @@ static int tcp_bpf_ioctl(struct sock *sk, int cmd, int *karg)
 		return -EINVAL;
 
 	slow = lock_sock_fast(sk);
-	*karg = sk_psock_msg_inq(sk);
+	psock = sk_psock_get(sk);
+	if (unlikely(!psock)) {
+		unlock_sock_fast(sk, slow);
+		return tcp_ioctl(sk, cmd, karg);
+	}
+	*karg = sk_psock_get_msg_len_nolock(psock);
+	/* Without a verdict program, ingress data is never diverted to
+	 * ingress_msg: it stays in sk_receive_queue and is read through
+	 * the fallback to tcp_recvmsg(), so account for it like
+	 * tcp_ioctl() does.
+	 */
+	if (!READ_ONCE(psock->progs.stream_verdict) &&
+	    !READ_ONCE(psock->progs.skb_verdict))
+		*karg += tcp_inq(sk);
+	sk_psock_put(sk, psock);
 	unlock_sock_fast(sk, slow);
 
 	return 0;
@@ -434,6 +452,8 @@ more_data:
 			}
 		}
 		memcpy(psock->cork, msg, sizeof(*msg));
+		if (psock->cork != msg)
+			sk_msg_subpages_transfer(psock->cork, msg);
 		return 0;
 	}
 

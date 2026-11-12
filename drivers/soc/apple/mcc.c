@@ -18,6 +18,10 @@
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 
+#if IS_ENABLED(CONFIG_APPLE_MCC_KUNIT_TEST)
+#include <kunit/static_stub.h>
+#endif
+
 #define MCC_ALLOC_DISABLE	0x82c
 #define MCC_CACHE_WAYS		0x2800
 #define MCC_CACHE_WAYS_ENABLED	GENMASK(4, 0)
@@ -36,6 +40,15 @@ struct apple_mcc {
 	bool enabled;
 };
 
+static void apple_mcc_writel(struct apple_mcc *mcc, unsigned int plane,
+			     u32 value, u32 offset)
+{
+#if IS_ENABLED(CONFIG_APPLE_MCC_KUNIT_TEST)
+	KUNIT_STATIC_STUB_REDIRECT(apple_mcc_writel, mcc, plane, value, offset);
+#endif
+	writel(value, mcc->planes[plane] + offset);
+}
+
 static int apple_mcc_wait_boot_dma(struct device *dev)
 {
 	struct of_phandle_iterator it;
@@ -48,9 +61,10 @@ static int apple_mcc_wait_boot_dma(struct device *dev)
 		if (pdev)
 			put_device(&pdev->dev);
 		if (!bound) {
+			ret = dev_err_probe(dev, -EPROBE_DEFER, "waiting for %pOF to bind\n",
+					    it.node);
 			of_node_put(it.node);
-			return dev_err_probe(dev, -EPROBE_DEFER, "waiting for %pOF to bind\n",
-					     it.node);
+			return ret;
 		}
 	}
 
@@ -72,6 +86,24 @@ static bool apple_mcc_plane_ready(struct apple_mcc *mcc, unsigned int plane)
 	return false;
 }
 
+/* Stop allocating on the first @count planes, then write back and invalidate them. */
+static void apple_mcc_disable_planes(struct apple_mcc *mcc, unsigned int count)
+{
+	unsigned int i;
+	u32 val;
+
+	for (i = 0; i < count; i++) {
+		apple_mcc_writel(mcc, i, 1, MCC_ALLOC_DISABLE);
+		apple_mcc_writel(mcc, i, 1, MCC_CACHE_FLUSH);
+	}
+
+	for (i = 0; i < count; i++)
+		if (readl_poll_timeout_atomic(mcc->planes[i] + MCC_CACHE_FLUSH, val,
+					      !(val & MCC_CACHE_FLUSH_BUSY), 10,
+					      MCC_FLUSH_TIMEOUT_US))
+			dev_err(mcc->dev, "plane %u flush timed out\n", i);
+}
+
 static int apple_mcc_enable(struct apple_mcc *mcc)
 {
 	unsigned int i;
@@ -81,9 +113,15 @@ static int apple_mcc_enable(struct apple_mcc *mcc)
 			return -EBUSY;
 
 	for (i = 0; i < mcc->nr_planes; i++) {
-		writel(0, mcc->planes[i] + MCC_ALLOC_DISABLE);
+		apple_mcc_writel(mcc, i, 0, MCC_ALLOC_DISABLE);
 		if (readl(mcc->planes[i] + MCC_ALLOC_DISABLE)) {
 			dev_err(mcc->dev, "plane %u did not enable allocation\n", i);
+			/*
+			 * The driver will not bind, so nothing disables these
+			 * planes on shutdown: disable the ones enabled so far,
+			 * and this one, whose state is unknown, now.
+			 */
+			apple_mcc_disable_planes(mcc, i + 1);
 			return -EIO;
 		}
 	}
@@ -91,26 +129,12 @@ static int apple_mcc_enable(struct apple_mcc *mcc)
 	return 0;
 }
 
-/* Stop allocating, then write back and invalidate the cache. */
 static void apple_mcc_quiesce(struct apple_mcc *mcc)
 {
-	unsigned int i;
-	u32 val;
-
 	if (!mcc->enabled)
 		return;
 
-	for (i = 0; i < mcc->nr_planes; i++) {
-		writel(1, mcc->planes[i] + MCC_ALLOC_DISABLE);
-		writel(1, mcc->planes[i] + MCC_CACHE_FLUSH);
-	}
-
-	for (i = 0; i < mcc->nr_planes; i++)
-		if (readl_poll_timeout_atomic(mcc->planes[i] + MCC_CACHE_FLUSH, val,
-					      !(val & MCC_CACHE_FLUSH_BUSY), 10,
-					      MCC_FLUSH_TIMEOUT_US))
-			dev_err(mcc->dev, "plane %u flush timed out\n", i);
-
+	apple_mcc_disable_planes(mcc, mcc->nr_planes);
 	mcc->enabled = false;
 }
 
@@ -187,3 +211,7 @@ module_platform_driver(apple_mcc_driver);
 MODULE_AUTHOR("Ryan Murray <ryan@aurorasilicon.org>");
 MODULE_DESCRIPTION("Apple T8140 system level cache allocation");
 MODULE_LICENSE("Dual MIT/GPL");
+
+#if IS_ENABLED(CONFIG_APPLE_MCC_KUNIT_TEST)
+#include "mcc-test.c"
+#endif

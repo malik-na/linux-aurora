@@ -14,6 +14,8 @@
  */
 
 #include <linux/migrate.h>
+#include <linux/mm_subpage.h>
+#include <linux/shmem_fs.h>
 #include <linux/export.h>
 #include <linux/swap.h>
 #include <linux/leafops.h>
@@ -340,14 +342,50 @@ struct rmap_walk_arg {
 	bool map_unused_to_zeropage;
 };
 
+#ifdef CONFIG_MM_SUBPAGE
+static void remove_migration_subpage(struct folio *folio,
+		struct page_vma_mapped_walk *pvmw, pte_t old)
+{
+	struct vm_area_struct *vma = pvmw->vma;
+	softleaf_t entry = softleaf_from_pte(old);
+	struct mm_subpage *slot;
+	pte_t pte;
+	int ret;
+
+	slot = mm_subpage_migrate_restore(folio, pte_swp_subpage_offset(old));
+	pte = phys_pte_mm(vma->vm_mm, mm_subpage_phys(slot), READ_ONCE(vma->vm_page_prot));
+	if (!softleaf_is_migration_young(entry))
+		pte = pte_mkold(pte);
+	if (folio_test_dirty(folio) && softleaf_is_migration_dirty(entry))
+		pte = pte_mkdirty(pte);
+	if (pte_swp_soft_dirty(old))
+		pte = pte_mksoft_dirty(pte);
+	else
+		pte = pte_clear_soft_dirty(pte);
+	if (softleaf_is_migration_write(entry))
+		pte = pte_mkwrite(pte, vma);
+	else if (pte_swp_uffd_wp(old))
+		pte = pte_mkuffd_wp(pte);
+	if (!softleaf_is_migration_read(entry))
+		mm_subpage_set_exclusive(slot);
+	ret = mm_subpage_add_anon_rmap(slot, vma, pvmw->address);
+	VM_BUG_ON_FOLIO(ret, folio);
+	set_pte_at(vma->vm_mm, pvmw->address, pvmw->pte, pte);
+	if (READ_ONCE(vma->vm_flags) & VM_LOCKED)
+		mlock_drain_local();
+	trace_remove_migration_pte(pvmw->address, pte_val(pte), 0);
+	update_mmu_cache(vma, pvmw->address, pvmw->pte);
+}
+#endif
+
 /*
  * Restore a potential migration pte to a working pte entry
  */
 static bool remove_migration_pte(struct folio *folio,
-		struct vm_area_struct *vma, unsigned long addr, void *arg)
+		struct vm_area_struct *vma, struct rmap_walk_range rmap, void *arg)
 {
 	struct rmap_walk_arg *rmap_walk_arg = arg;
-	DEFINE_FOLIO_VMA_WALK(pvmw, rmap_walk_arg->folio, vma, addr, PVMW_SYNC | PVMW_MIGRATION);
+	DEFINE_FOLIO_RMAP_WALK(pvmw, rmap_walk_arg->folio, vma, rmap, PVMW_SYNC | PVMW_MIGRATION);
 
 	while (page_vma_mapped_walk(&pvmw)) {
 		rmap_t rmap_flags = RMAP_NONE;
@@ -371,13 +409,33 @@ static bool remove_migration_pte(struct folio *folio,
 			continue;
 		}
 #endif
-		old_pte = ptep_get(pvmw.pte);
+		if (folio_test_hugetlb(folio))
+			old_pte = huge_ptep_get(vma->vm_mm, pvmw.address,
+						pvmw.pte);
+		else
+			old_pte = ptep_get(pvmw.pte);
+#ifdef CONFIG_MM_SUBPAGE
+		if (mm_page_size(vma->vm_mm) < PAGE_SIZE && folio_test_anon(folio)) {
+			remove_migration_subpage(folio, &pvmw, old_pte);
+			continue;
+		}
+#endif
 		if (rmap_walk_arg->map_unused_to_zeropage &&
 		    try_to_map_unused_to_zeropage(&pvmw, folio, old_pte, idx))
 			continue;
 
-		folio_get(folio);
+		/* Match the native-page references dropped by try_to_migrate_one(). */
+		if (!folio_test_hugetlb(folio))
+			folio_ref_add(folio, mm_pte_native_pages(vma->vm_mm));
+		else
+			folio_get(folio);
 		pte = mk_pte(new, READ_ONCE(vma->vm_page_prot));
+
+#ifdef CONFIG_MM_SUBPAGE
+		if (mm_page_size(vma->vm_mm) < PAGE_SIZE)
+			pte = phys_pte_mm(vma->vm_mm, page_to_phys(new) +
+					  pte_swp_subpage_offset(old_pte), READ_ONCE(vma->vm_page_prot));
+#endif
 
 		entry = softleaf_from_pte(old_pte);
 		if (!softleaf_is_migration_young(entry))
@@ -431,8 +489,10 @@ static bool remove_migration_pte(struct folio *folio,
 			if (folio_test_anon(folio))
 				folio_add_anon_rmap_pte(folio, new, vma,
 							pvmw.address, rmap_flags);
-			else
+			else {
+				mm_subpage_file_map_add(vma, pte_phys_mm(vma->vm_mm, pte));
 				folio_add_file_rmap_pte(folio, new, vma);
+			}
 			set_pte_at(vma->vm_mm, pvmw.address, pvmw.pte, pte);
 		}
 		if (READ_ONCE(vma->vm_flags) & VM_LOCKED)
@@ -590,7 +650,8 @@ static int __folio_migrate_mapping(struct address_space *mapping,
 		/* No turning back from here */
 		newfolio->index = folio->index;
 		newfolio->mapping = folio->mapping;
-		if (folio_test_anon(folio) && folio_test_large(folio))
+		if (folio_test_anon(folio) && folio_test_large(folio) &&
+		    !folio_test_hugetlb(folio))
 			mod_mthp_stat(folio_order(folio), MTHP_STAT_NR_ANON, 1);
 		if (folio_test_swapbacked(folio))
 			__folio_set_swapbacked(newfolio);
@@ -640,10 +701,12 @@ static int __folio_migrate_mapping(struct address_space *mapping,
 		folio_set_dirty(newfolio);
 	}
 
-	if (folio_test_swapcache(folio))
+	if (folio_test_swapcache(folio)) {
 		__swap_cache_replace_folio(ci, folio, newfolio);
-	else
+	} else {
+		shmem_uffd_migrate(newfolio, folio);
 		xas_store(&xas, newfolio);
+	}
 
 	/*
 	 * Drop cache reference from old folio by unfreezing
@@ -1135,26 +1198,24 @@ static int move_to_new_folio(struct folio *dst, struct folio *src,
  * This is safe because nobody is using it except us.
  */
 enum {
-	PAGE_WAS_MAPPED = BIT(0),
-	PAGE_WAS_MLOCKED = BIT(1),
-	PAGE_OLD_STATES = PAGE_WAS_MAPPED | PAGE_WAS_MLOCKED,
+	FOLIO_WAS_MAPPED = BIT(0),
+	FOLIO_WAS_MLOCKED = BIT(1),
+	FOLIO_OLD_STATES = FOLIO_WAS_MAPPED | FOLIO_WAS_MLOCKED,
 };
 
 static void __migrate_folio_record(struct folio *dst,
-				   int old_page_state,
-				   struct anon_vma *anon_vma)
+		int old_folio_state, struct anon_vma *anon_vma)
 {
-	dst->private = (void *)anon_vma + old_page_state;
+	dst->private = (void *)anon_vma + old_folio_state;
 }
 
 static void __migrate_folio_extract(struct folio *dst,
-				   int *old_page_state,
-				   struct anon_vma **anon_vmap)
+		int *old_folio_state, struct anon_vma **anon_vmap)
 {
 	unsigned long private = (unsigned long)dst->private;
 
-	*anon_vmap = (struct anon_vma *)(private & ~PAGE_OLD_STATES);
-	*old_page_state = private & PAGE_OLD_STATES;
+	*anon_vmap = (struct anon_vma *)(private & ~FOLIO_OLD_STATES);
+	*old_folio_state = private & FOLIO_OLD_STATES;
 	dst->private = NULL;
 }
 
@@ -1170,8 +1231,10 @@ static void migrate_folio_undo_src(struct folio *src,
 	/* Drop an anon_vma reference if we took one */
 	if (anon_vma)
 		put_anon_vma(anon_vma);
-	if (locked)
+	if (locked) {
+		mm_subpage_migrate_finish(src);
 		folio_unlock(src);
+	}
 	if (ret)
 		list_move_tail(&src->lru, ret);
 }
@@ -1180,8 +1243,10 @@ static void migrate_folio_undo_src(struct folio *src,
 static void migrate_folio_undo_dst(struct folio *dst, bool locked,
 		free_folio_t put_new_folio, unsigned long private)
 {
-	if (locked)
+	if (locked) {
+		mm_subpage_migrate_finish(dst);
 		folio_unlock(dst);
+	}
 	if (put_new_folio)
 		put_new_folio(dst, private);
 	else
@@ -1209,7 +1274,7 @@ static int migrate_folio_unmap(new_folio_t get_new_folio,
 {
 	struct folio *dst;
 	int rc = -EAGAIN;
-	int old_page_state = 0;
+	int old_folio_state = 0;
 	struct anon_vma *anon_vma = NULL;
 	bool locked = false;
 	bool dst_locked = false;
@@ -1253,12 +1318,12 @@ static int migrate_folio_unmap(new_folio_t get_new_folio,
 	}
 	locked = true;
 	if (folio_test_mlocked(src))
-		old_page_state |= PAGE_WAS_MLOCKED;
+		old_folio_state |= FOLIO_WAS_MLOCKED;
 
 	if (folio_test_writeback(src)) {
 		/*
 		 * Only in the case of a full synchronous migration is it
-		 * necessary to wait for PageWriteback. In the async case,
+		 * necessary to wait for writeback. In the async case,
 		 * the retry loop is too short and in the sync-light case,
 		 * the overhead of stalling is too much
 		 */
@@ -1302,9 +1367,14 @@ static int migrate_folio_unmap(new_folio_t get_new_folio,
 	dst_locked = true;
 
 	if (unlikely(page_has_movable_ops(&src->page))) {
-		__migrate_folio_record(dst, old_page_state, anon_vma);
+		__migrate_folio_record(dst, old_folio_state, anon_vma);
 		return 0;
 	}
+
+	rc = mm_subpage_migrate_prepare(src, dst);
+	if (rc)
+		goto out;
+	rc = -EAGAIN;
 
 	/*
 	 * Corner case handling:
@@ -1328,11 +1398,11 @@ static int migrate_folio_unmap(new_folio_t get_new_folio,
 		VM_BUG_ON_FOLIO(folio_test_anon(src) &&
 			       !folio_test_ksm(src) && !anon_vma, src);
 		try_to_migrate(src, mode == MIGRATE_ASYNC ? TTU_BATCH_FLUSH : 0);
-		old_page_state |= PAGE_WAS_MAPPED;
+		old_folio_state |= FOLIO_WAS_MAPPED;
 	}
 
 	if (!folio_mapped(src)) {
-		__migrate_folio_record(dst, old_page_state, anon_vma);
+		__migrate_folio_record(dst, old_folio_state, anon_vma);
 		return 0;
 	}
 
@@ -1344,7 +1414,7 @@ out:
 	if (rc == -EAGAIN)
 		ret = NULL;
 
-	migrate_folio_undo_src(src, old_page_state & PAGE_WAS_MAPPED,
+	migrate_folio_undo_src(src, old_folio_state & FOLIO_WAS_MAPPED,
 			       anon_vma, locked, ret);
 	migrate_folio_undo_dst(dst, dst_locked, put_new_folio, private);
 
@@ -1358,13 +1428,13 @@ static int migrate_folio_move(free_folio_t put_new_folio, unsigned long private,
 			      struct list_head *ret)
 {
 	int rc;
-	int old_page_state = 0;
+	int old_folio_state = 0;
 	struct anon_vma *anon_vma = NULL;
 	bool src_deferred_split = false;
 	bool src_partially_mapped = false;
 	struct list_head *prev;
 
-	__migrate_folio_extract(dst, &old_page_state, &anon_vma);
+	__migrate_folio_extract(dst, &old_folio_state, &anon_vma);
 	prev = dst->lru.prev;
 	list_del(&dst->lru);
 
@@ -1404,13 +1474,15 @@ static int migrate_folio_move(free_folio_t put_new_folio, unsigned long private,
 	 * isolated from the unevictable LRU: but this case is the easiest.
 	 */
 	folio_add_lru(dst);
-	if (old_page_state & PAGE_WAS_MLOCKED)
+	if (old_folio_state & FOLIO_WAS_MLOCKED)
 		lru_add_drain();
 
-	if (old_page_state & PAGE_WAS_MAPPED)
+	if (old_folio_state & FOLIO_WAS_MAPPED)
 		remove_migration_ptes(src, dst, 0);
 
 out_unlock_both:
+	mm_subpage_migrate_finish(src);
+	mm_subpage_migrate_finish(dst);
 	folio_unlock(dst);
 	folio_set_owner_migrate_reason(dst, reason);
 	/*
@@ -1439,11 +1511,11 @@ out:
 	 */
 	if (rc == -EAGAIN) {
 		list_add(&dst->lru, prev);
-		__migrate_folio_record(dst, old_page_state, anon_vma);
+		__migrate_folio_record(dst, old_folio_state, anon_vma);
 		return rc;
 	}
 
-	migrate_folio_undo_src(src, old_page_state & PAGE_WAS_MAPPED,
+	migrate_folio_undo_src(src, old_folio_state & FOLIO_WAS_MAPPED,
 			       anon_vma, true, ret);
 	migrate_folio_undo_dst(dst, true, put_new_folio, private);
 
@@ -1777,11 +1849,11 @@ static void migrate_folios_undo(struct list_head *src_folios,
 	dst = list_first_entry(dst_folios, struct folio, lru);
 	dst2 = list_next_entry(dst, lru);
 	list_for_each_entry_safe(folio, folio2, src_folios, lru) {
-		int old_page_state = 0;
+		int old_folio_state = 0;
 		struct anon_vma *anon_vma = NULL;
 
-		__migrate_folio_extract(dst, &old_page_state, &anon_vma);
-		migrate_folio_undo_src(folio, old_page_state & PAGE_WAS_MAPPED,
+		__migrate_folio_extract(dst, &old_folio_state, &anon_vma);
+		migrate_folio_undo_src(folio, old_folio_state & FOLIO_WAS_MAPPED,
 				anon_vma, true, ret_folios);
 		list_del(&dst->lru);
 		migrate_folio_undo_dst(dst, true, put_new_folio, private);
@@ -1831,7 +1903,7 @@ static int migrate_pages_batch(struct list_head *from,
 			is_thp = folio_test_pmd_mappable(folio);
 			nr_pages = folio_nr_pages(folio);
 
-			cond_resched();
+			cond_resched_tasks_rcu_qs();
 
 			/*
 			 * The rare folio on the deferred split list should
@@ -2557,24 +2629,29 @@ static struct mm_struct *find_mm_struct(pid_t pid, nodemask_t *mem_nodes)
 	}
 
 	task = find_get_task_by_vpid(pid);
-	if (!task) {
+	if (!task)
 		return ERR_PTR(-ESRCH);
-	}
 
+	if (down_read_killable(&task->signal->exec_update_lock)) {
+		mm = ERR_PTR(-EINTR);
+		goto out;
+	}
 	/*
 	 * Check if this process has the right to modify the specified
 	 * process. Use the regular "ptrace_may_access()" checks.
 	 */
 	if (!ptrace_may_access(task, PTRACE_MODE_READ_REALCREDS)) {
 		mm = ERR_PTR(-EPERM);
-		goto out;
+		goto unlock;
 	}
 
 	mm = ERR_PTR(security_task_movememory(task));
 	if (IS_ERR(mm))
-		goto out;
+		goto unlock;
 	*mem_nodes = cpuset_mems_allowed(task);
 	mm = get_task_mm(task);
+unlock:
+	up_read(&task->signal->exec_update_lock);
 out:
 	put_task_struct(task);
 	if (!mm)

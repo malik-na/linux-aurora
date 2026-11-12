@@ -312,9 +312,17 @@ static enum isp_firmware_version isp_read_fw_version(struct device *dev,
 						     const char *name)
 {
 	u32 ver[ISP_FW_VERSION_MAX_LEN];
-	int len = of_property_read_variable_u32_array(dev->of_node, name, ver,
-						      ISP_FW_VERSION_MIN_LEN,
-						      ISP_FW_VERSION_MAX_LEN);
+	int size, len;
+
+	/* The array reader truncates trailing bytes; require complete cells. */
+	if (of_find_property(dev->of_node, name, &size) && size % sizeof(u32)) {
+		dev_warn(dev, "could not parse %s: invalid length %d\n", name, size);
+		return ISP_FIRMWARE_V_UNKNOWN;
+	}
+
+	len = of_property_read_variable_u32_array(dev->of_node, name, ver,
+						  ISP_FW_VERSION_MIN_LEN,
+						  ISP_FW_VERSION_MAX_LEN);
 
 	switch (len) {
 	case -EINVAL:
@@ -354,6 +362,10 @@ isp_check_firmware_version(struct apple_isp *isp)
 	struct device *dev = isp->dev;
 	enum isp_firmware_version version, compat;
 
+	/* The H17 interface is selected by match data, not by version. */
+	if (isp->hw->fw_abi == ISP_FW_ABI_H17)
+		return ISP_FIRMWARE_V_UNKNOWN;
+
 	/* firmware version is just informative */
 	version = isp_read_fw_version(dev, "apple,firmware-version");
 	compat = isp_read_fw_version(dev, "apple,firmware-compat");
@@ -361,9 +373,7 @@ isp_check_firmware_version(struct apple_isp *isp)
 	dev_dbg(dev, "ISP firmware-compat: %s (FW: %s)\n", isp_fw2str(compat),
 		isp_fw2str(version));
 
-	/* The H17 interface does not depend on it. */
-	if (isp->hw->fw_abi == ISP_FW_ABI_LEGACY &&
-	    !of_property_present(dev->of_node, "apple,firmware-compat"))
+	if (!of_property_present(dev->of_node, "apple,firmware-compat"))
 		dev_warn(dev, "firmware compatibility version not provided, assuming 12.x\n");
 
 	return compat;
@@ -380,7 +390,11 @@ static int apple_isp_probe(struct platform_device *pdev)
 	if (err)
 		return err;
 
-	isp = devm_kzalloc(dev, sizeof(*isp), GFP_KERNEL);
+	/*
+	 * Not devres: an open video device file keeps this until it is
+	 * closed, also after unbind. See apple_isp_release().
+	 */
+	isp = kzalloc_obj(*isp);
 	if (!isp)
 		return -ENOMEM;
 
@@ -399,7 +413,7 @@ static int apple_isp_probe(struct platform_device *pdev)
 	if (err) {
 		dev_err(dev, "failed to get 'apple,platform-id' property: %d\n",
 			err);
-		return err;
+		goto free_isp;
 	}
 
 	err = of_property_read_u32(dev->of_node, "apple,temporal-filter",
@@ -407,16 +421,29 @@ static int apple_isp_probe(struct platform_device *pdev)
 	if (err)
 		isp->temporal_filter = 0;
 
+	/*
+	 * M3 MacBook Air firmware 14.7 stalls capture with temporal filter 1.
+	 * The J615 has the J613's sensor and ISP configuration; only the J613
+	 * has been tested.
+	 */
+	if ((of_machine_is_compatible("apple,j613") ||
+	     of_machine_is_compatible("apple,j615")) &&
+	    isp->fw_compat == ISP_FIRMWARE_V_14_7 &&
+	    isp->temporal_filter == 1) {
+		dev_info(dev, "using temporal filter 0 on M3 Air firmware 14.7\n");
+		isp->temporal_filter = 0;
+	}
+
 	err = apple_isp_init_presets(isp);
 	if (err) {
 		dev_err(dev, "failed to initialize presets\n");
-		return err;
+		goto free_isp;
 	}
 
 	err = apple_isp_attach_genpd(isp);
 	if (err) {
 		dev_err(dev, "failed to attatch power domains\n");
-		return err;
+		goto free_isp;
 	}
 
 	isp->coproc = devm_platform_ioremap_resource_byname(pdev, "coproc");
@@ -481,6 +508,8 @@ static int apple_isp_probe(struct platform_device *pdev)
 	spin_lock_init(&isp->buf_lock);
 	init_waitqueue_head(&isp->wait);
 	INIT_LIST_HEAD(&isp->gc);
+	INIT_LIST_HEAD(&isp->gc_released);
+	mutex_init(&isp->gc_lock);
 	INIT_LIST_HEAD(&isp->bufs_pending);
 	INIT_LIST_HEAD(&isp->bufs_submitted);
 	isp->wq = alloc_workqueue("apple-isp-wq", WQ_UNBOUND, 0);
@@ -529,6 +558,9 @@ destroy_wq:
 	destroy_workqueue(isp->wq);
 detach_genpd:
 	apple_isp_detach_genpd(isp);
+free_isp:
+	/* Nothing else can reach it before the video device is registered. */
+	kfree(isp);
 	return err;
 }
 
@@ -545,6 +577,8 @@ static void apple_isp_remove(struct platform_device *pdev)
 	apple_isp_free_iommu(isp);
 	destroy_workqueue(isp->wq);
 	apple_isp_detach_genpd(isp);
+	/* Freed now, or when the last open file is closed. */
+	v4l2_device_put(&isp->v4l2_dev);
 }
 
 static const struct apple_isp_hw apple_isp_hw_t8103 = {
@@ -653,7 +687,7 @@ static const struct apple_isp_hw apple_isp_hw_t6020 = {
 
 static const struct apple_isp_hw apple_isp_hw_t8122 = {
 	.gen = ISP_GEN_T8112,
-	.pmu_base = 0x2d07040000,
+	.pmu_base = 0x2d0704000,
 
 	.dsid_count = 1,
 	.dsid_clr_base0 = 0x2221c4000,

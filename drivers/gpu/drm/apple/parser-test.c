@@ -182,7 +182,7 @@ static struct dcp_display_mode *parse_blob(struct parser_blob *blob,
 	if (ret)
 		return ERR_PTR(ret);
 	ctx.dcp = &parser_dcp;
-	return enumerate_modes(&ctx, count, 500, 300, notch, internal);
+	return enumerate_modes(&ctx, count, 500, 300, notch, internal, false);
 }
 
 static void parser_score_presence(struct kunit *test)
@@ -486,7 +486,6 @@ static void parser_held_keeps_edid(struct kunit *test)
 	struct apple_dcp *dcp = kunit_kzalloc(test, sizeof(*dcp), GFP_KERNEL);
 	struct apple_connector *connector = kunit_kzalloc(test, sizeof(*connector), GFP_KERNEL);
 	struct platform_device *pipeline = kunit_kzalloc(test, sizeof(*pipeline), GFP_KERNEL);
-	u8 raw[EDID_LENGTH] = { 0 };
 	struct dcp_parse_ctx ctx;
 	struct parser_blob *blob;
 	unsigned int pass;
@@ -495,6 +494,7 @@ static void parser_held_keeps_edid(struct kunit *test)
 	KUNIT_ASSERT_NOT_NULL(test, connector);
 	KUNIT_ASSERT_NOT_NULL(test, pipeline);
 	dcp_modes_init(dcp);
+	spin_lock_init(&dcp->metadata.lock);
 	apple_connector_edid_init(connector);
 	apple_connector_set_pipeline(connector, pipeline);
 	dcp->connector = connector;
@@ -502,16 +502,8 @@ static void parser_held_keeps_edid(struct kunit *test)
 	KUNIT_ASSERT_NOT_NULL(test, blob);
 	/* Pass 0: not held. Pass 1: held. Pass 2: held, placeholder retried. */
 	for (pass = 0; pass < 3; pass++) {
-		const struct drm_edid *edid;
-		u64 generation;
-
-		KUNIT_ASSERT_TRUE(test, apple_connector_edid_begin(connector, pipeline,
-								   &generation));
-		raw[0] = pass + 1;
-		edid = drm_edid_alloc(raw, sizeof(raw));
-		KUNIT_ASSERT_NOT_NULL(test, edid);
-		KUNIT_ASSERT_TRUE(test, apple_connector_edid_install(connector, pipeline,
-								     generation, edid));
+		/* The cached EDID is dropped by marking it stale for get_modes(). */
+		WRITE_ONCE(connector->edid_invalidation_pending, false);
 		atomic_set(&dcp->external_held, pass != 0);
 		dcp->placeholder_retried = pass == 2;
 		KUNIT_ASSERT_EQ(test, parse(blob->data, blob->size, &ctx), 0);
@@ -519,12 +511,10 @@ static void parser_held_keeps_edid(struct kunit *test)
 		KUNIT_ASSERT_EQ(test, dcp_modes_replace(dcp, &ctx,
 							dcp_modes_transfer_begin(dcp)), 0);
 		if (pass == 1)
-			KUNIT_EXPECT_NOT_NULL(test, connector->drm_edid);
+			KUNIT_EXPECT_FALSE(test, connector->edid_invalidation_pending);
 		else
-			KUNIT_EXPECT_NULL(test, connector->drm_edid);
-		apple_connector_invalidate_edid(connector);
+			KUNIT_EXPECT_TRUE(test, connector->edid_invalidation_pending);
 	}
-	mutex_destroy(&connector->edid_lock);
 	kfree(dcp->modes);
 }
 
@@ -755,7 +745,7 @@ static void parser_route_programming_guard(struct kunit *test)
 	struct drm_crtc_state crtc_state = {};
 	struct __drm_crtcs_state crtcs[1] = { { .new_state = &crtc_state } };
 	struct __drm_connnectors_state connections[1] = {};
-	struct drm_atomic_state state = {
+	struct drm_atomic_commit state = {
 		.connectors = connections, .num_connector = 1, .crtcs = crtcs,
 	};
 	struct drm_encoder encoder = {};
@@ -819,8 +809,9 @@ static void parser_route_programming_guard(struct kunit *test)
 	dcp->typec_follow_gen = 4;
 	KUNIT_EXPECT_FALSE(test, dcp_crtc_needs_route_start(dcp));
 	dcp->typec_follow_gen = 5;
+	/* A moved Thunderbolt tunnel starts its link as a direct route does. */
 	dcp->active_typec_route->tunnel = true;
-	KUNIT_EXPECT_FALSE(test, dcp_crtc_needs_route_start(dcp));
+	KUNIT_EXPECT_TRUE(test, dcp_crtc_needs_route_start(dcp));
 	dcp->active_typec_route->tunnel = false;
 	KUNIT_EXPECT_FALSE(test, dcp_crtc_route_ready(&crtc->base, &state, true));
 	crtc_state.connector_mask = 0;
@@ -860,7 +851,7 @@ static void parser_route_invalid_own_mode(struct kunit *test)
 	struct platform_device *pdev = kunit_kzalloc(test, sizeof(*pdev), GFP_KERNEL);
 	struct drm_crtc_state crtc_state = { .enable = true, .mode_changed = true };
 	struct __drm_crtcs_state crtcs[1] = { { .new_state = &crtc_state } };
-	struct drm_atomic_state state = { .crtcs = crtcs };
+	struct drm_atomic_commit state = { .crtcs = crtcs };
 
 	KUNIT_ASSERT_NOT_NULL(test, dcp);
 	KUNIT_ASSERT_NOT_NULL(test, crtc);
@@ -1086,7 +1077,9 @@ static void parser_optional_flag_extent(struct kunit *test)
 static void parser_attribute_deferred(struct kunit *test)
 {
 	struct apple_dcp *dcp = kunit_kzalloc(test, sizeof(*dcp), GFP_KERNEL);
-	struct apple_connector *connector = kunit_kzalloc(test, sizeof(*connector), GFP_KERNEL);
+	struct parser_catalog_observer *observer =
+		kunit_kzalloc(test, sizeof(*observer), GFP_KERNEL);
+	struct apple_connector *connector = observer ? &observer->connector : NULL;
 	struct drm_device *dev = kunit_kzalloc(test, sizeof(*dev), GFP_KERNEL);
 	struct parser_blob *blob = kunit_kzalloc(test, sizeof(*blob), GFP_KERNEL);
 	struct dcp_parse_ctx ctx;
@@ -1097,6 +1090,8 @@ static void parser_attribute_deferred(struct kunit *test)
 	KUNIT_ASSERT_NOT_NULL(test, dev);
 	KUNIT_ASSERT_NOT_NULL(test, blob);
 	dcp_modes_init(dcp);
+	observer->dcp = dcp;
+	INIT_WORK(&connector->hotplug_wq, parser_catalog_ready);
 	mutex_init(&dev->mode_config.mutex);
 	connector->base.dev = dev;
 	dcp->connector = connector;
@@ -1118,6 +1113,8 @@ static void parser_attribute_deferred(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, dcp->modes[0].mode.width_mm, 520);
 	mutex_unlock(&dev->mode_config.mutex);
 	flush_work(&dcp->dimensions_wq);
+	flush_work(&connector->hotplug_wq);
+	KUNIT_EXPECT_EQ(test, observer->notifications, 1U);
 	KUNIT_EXPECT_EQ(test, connector->base.display_info.width_mm, 520U);
 	KUNIT_EXPECT_EQ(test, connector->base.display_info.height_mm, 290U);
 	dcp_modes_release(dcp);
@@ -1201,7 +1198,7 @@ static void parser_route_holder_snapshot(struct kunit *test)
 	struct drm_connector_state live = { .crtc = target };
 	struct drm_connector_state reserved = {};
 	struct __drm_connnectors_state conns[1] = {};
-	struct drm_atomic_state state = { .connectors = conns, .num_connector = 1 };
+	struct drm_atomic_commit state = { .connectors = conns, .num_connector = 1 };
 
 	KUNIT_ASSERT_NOT_NULL(test, back);
 	KUNIT_ASSERT_NOT_NULL(test, holder);

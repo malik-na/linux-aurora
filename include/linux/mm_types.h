@@ -20,6 +20,7 @@
 #include <linux/seqlock.h>
 #include <linux/percpu_counter.h>
 #include <linux/types.h>
+#include <linux/futex_types.h>
 #include <linux/rseq_types.h>
 #include <linux/bitmap.h>
 
@@ -558,7 +559,8 @@ FOLIO_MATCH(compound_info, _head_3);
  * @__page_mapping:   Aliases with page->mapping. Unused for page tables.
  * @pt_index:         Used for s390 gmap.
  * @pt_mm:            Used for x86 pgds.
- * @pt_frag_refcount: For fragmented page table tracking. Powerpc only.
+ * @pt_frag_refcount: For fragmented page table tracking (powerpc, arm64).
+ * @pt_frag_shift:    Immutable arm64 fragment granule, valid through RCU release.
  * @pt_share_count:   Used for HugeTLB PMD page table share count.
  * @_pt_pad_2:        Padding to ensure proper alignment.
  * @ptl:              Lock for the page table.
@@ -585,7 +587,15 @@ struct ptdesc {
 	union {
 		pgoff_t pt_index;
 		struct mm_struct *pt_mm;
+#ifdef CONFIG_ARM64_USER4K_EXPERIMENTAL
+		/* arm64 is 64-bit: use the spare half of this existing word. */
+		struct {
+			atomic_t pt_frag_refcount;
+			u8 pt_frag_shift;
+		};
+#else
 		atomic_t pt_frag_refcount;
+#endif
 #ifdef CONFIG_HUGETLB_PMD_PAGE_TABLE_SHARING
 		atomic_t pt_share_count;
 #endif
@@ -829,6 +839,9 @@ struct mmap_action {
 			unsigned long start_pfn;
 			unsigned long size;
 			pgprot_t pgprot;
+#ifdef CONFIG_MM_SUBPAGE
+			unsigned int offset;
+#endif
 		} remap;
 		struct {
 			phys_addr_t start_phys_addr;
@@ -844,23 +857,10 @@ struct mmap_action {
 	enum mmap_action_type type;
 
 	/*
-	 * If specified, this hook is invoked after the selected action has been
-	 * successfully completed. Note that the VMA write lock still held.
-	 *
-	 * The absolute minimum ought to be done here.
-	 *
-	 * Returns 0 on success, or an error code.
+	 * If non-zero, replace errors that arise from mmap actions with this
+	 * value instead. Only valid error codes may be specified.
 	 */
-	int (*success_hook)(const struct vm_area_struct *vma);
-
-	/*
-	 * If specified, this hook is invoked when an error occurred when
-	 * attempting the selected action.
-	 *
-	 * The hook can return an error code in order to filter the error, but
-	 * it is not valid to clear the error here.
-	 */
-	int (*error_hook)(int err);
+	int error_override;
 
 	/*
 	 * This should be set in rare instances where the operation required
@@ -905,6 +905,9 @@ struct vm_area_desc {
 
 	/* Mutable fields. Populated with initial state. */
 	pgoff_t pgoff;
+#ifdef CONFIG_MM_SUBPAGE
+	unsigned int subpage_offset;
+#endif
 	struct file *vm_file;
 	vma_flags_t vma_flags;
 	pgprot_t page_prot;
@@ -992,6 +995,9 @@ struct vm_area_struct {
 	/* Information about our backing store: */
 	unsigned long vm_pgoff;		/* Offset (within vm_file) in PAGE_SIZE
 					   units */
+#ifdef CONFIG_MM_SUBPAGE
+	unsigned int vm_subpage_offset; /* Byte offset within vm_pgoff. */
+#endif
 	struct file * vm_file;		/* File we map to (can be NULL). */
 	void * vm_private_data;		/* was vm_pte (shared mem) */
 
@@ -1222,6 +1228,8 @@ struct mm_struct {
 		/* MM CID related storage */
 		struct mm_mm_cid mm_cid;
 
+		/* sched_cache related statistics */
+		struct sched_cache_group *sched_cache_grp;
 #ifdef CONFIG_MMU
 		atomic_long_t pgtables_bytes;	/* size of all page tables */
 #endif
@@ -1270,23 +1278,20 @@ struct mm_struct {
 		 */
 		seqcount_t mm_lock_seq;
 #endif
-#ifdef CONFIG_FUTEX_PRIVATE_HASH
-		struct mutex			futex_hash_lock;
-		struct futex_private_hash	__rcu *futex_phash;
-		struct futex_private_hash	*futex_phash_new;
-		/* futex-ref */
-		unsigned long			futex_batches;
-		struct rcu_head			futex_rcu;
-		atomic_long_t			futex_atomic;
-		unsigned int			__percpu *futex_ref;
+		struct futex_mm_data	futex;
+
+		unsigned long hiwater_rss; /* Peak RSS in user granules */
+		unsigned long hiwater_vm;  /* Peak VM in user granules */
+
+		unsigned long total_vm;	   /* Mapped user granules */
+#ifdef CONFIG_MM_SUBPAGE
+		/* VM_ACCOUNT granules; global commitment rounds this sum once. */
+		unsigned long committed_user_pages;
+		/* Shared COW slots; never inherited by a forked mm. */
+		struct mm_subpage_cow_pools *cow_subpage_pool;
 #endif
-
-		unsigned long hiwater_rss; /* High-watermark of RSS usage */
-		unsigned long hiwater_vm;  /* High-water virtual memory usage */
-
-		unsigned long total_vm;	   /* Total pages mapped */
-		unsigned long locked_vm;   /* Pages that have PG_mlocked set */
-		atomic64_t    pinned_vm;   /* Refcount permanently increased */
+		unsigned long locked_vm;   /* Locked bytes >> MM_ACCOUNT_SHIFT */
+		atomic64_t    pinned_vm;   /* Pinned native physical pages */
 		unsigned long data_vm;	   /* VM_WRITE & ~VM_SHARED & ~VM_STACK */
 		unsigned long exec_vm;	   /* VM_EXEC & ~VM_WRITE & ~VM_STACK */
 		unsigned long stack_vm;	   /* VM_STACK */
@@ -1342,7 +1347,6 @@ struct mm_struct {
 		 */
 		struct task_struct __rcu *owner;
 #endif
-		struct user_namespace *user_ns;
 
 		/* store ref to file /proc/<pid>/exe symlink points to */
 		struct file __rcu *exe_file;
@@ -1628,6 +1632,31 @@ static inline unsigned int mm_cid_size(void)
 # define MM_CID_STATIC_SIZE	0
 #endif /* CONFIG_SCHED_MM_CID */
 
+#ifdef CONFIG_SCHED_CACHE
+int mm_init_sched(struct mm_struct *mm,
+		  struct sched_cache_time __percpu *pcpu_sched);
+void mm_destroy_sched(struct mm_struct *mm);
+
+static inline int mm_alloc_sched_noprof(struct mm_struct *mm)
+{
+	struct sched_cache_time __percpu *pcpu_sched =
+		alloc_percpu_noprof(struct sched_cache_time);
+
+	if (!pcpu_sched)
+		return -ENOMEM;
+
+	return mm_init_sched(mm, pcpu_sched);
+}
+
+#define mm_alloc_sched(...)	alloc_hooks(mm_alloc_sched_noprof(__VA_ARGS__))
+
+#else /* !CONFIG_SCHED_CACHE */
+
+static inline int mm_alloc_sched(struct mm_struct *mm) { return 0; }
+static inline void mm_destroy_sched(struct mm_struct *mm) { }
+
+#endif /* CONFIG_SCHED_CACHE */
+
 struct mmu_gather;
 extern void tlb_gather_mmu(struct mmu_gather *tlb, struct mm_struct *mm);
 extern void tlb_gather_mmu_fullmm(struct mmu_gather *tlb, struct mm_struct *mm);
@@ -1907,11 +1936,11 @@ enum {
 /* mm flags */
 
 /*
- * The first two bits represent core dump modes for set-user-ID,
- * the modes are SUID_DUMP_* defined in linux/sched/coredump.h
+ * Bits 0 and 1 were dumpability; that moved to task->exec_state.  Reserve
+ * the bits so MMF_DUMP_FILTER_* positions stay stable for the
+ * /proc/<pid>/coredump_filter ABI.
  */
 #define MMF_DUMPABLE_BITS 2
-#define MMF_DUMPABLE_MASK (BIT(MMF_DUMPABLE_BITS) - 1)
 /* coredump filter bits */
 #define MMF_DUMP_ANON_PRIVATE	2
 #define MMF_DUMP_ANON_SHARED	3
@@ -1972,7 +2001,7 @@ enum {
 #define MMF_TOPDOWN		31	/* mm searches top down by default */
 #define MMF_TOPDOWN_MASK	BIT(MMF_TOPDOWN)
 
-#define MMF_INIT_LEGACY_MASK	(MMF_DUMPABLE_MASK | MMF_DUMP_FILTER_MASK |\
+#define MMF_INIT_LEGACY_MASK	(MMF_DUMP_FILTER_MASK |\
 				 MMF_DISABLE_THP_MASK | MMF_HAS_MDWE_MASK |\
 				 MMF_VM_MERGE_ANY_MASK | MMF_TOPDOWN_MASK)
 

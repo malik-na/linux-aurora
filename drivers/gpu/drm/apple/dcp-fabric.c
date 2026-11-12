@@ -17,6 +17,8 @@
 
 #include <drm/drm_file.h>
 
+#include <kunit/static_stub.h>
+
 #include "afk.h"
 #include "dcp.h"
 #include "dcp-fabric.h"
@@ -24,6 +26,7 @@
 #include "dcp-hdmi.h"
 #include "dcpext_scanout.h"
 #include "ibootep.h"
+#include "dcp-internal.h"
 #include "parser.h"
 
 static bool tiled_split = true;
@@ -60,10 +63,15 @@ struct apple_dcp_typec_port {
 	u32 applied_status;
 	u32 applied_conf;
 	bool applied_valid;
+	/* SAFE preparation retains this owner until the set phase completes. */
+	bool safe_pending;
+	bool safe_finish_ready;
 	bool hpd;
 	/* Direct DP-alt: the port is in DP mode, routed or not, and its HPD. */
 	bool dp_wanted;
 	bool dp_hpd;
+	/* the wait for a pipeline was logged since the port entered DP mode */
+	bool busy_noted;
 	/* dcp_typec_rebalance_locked()'s plan for the port's two streams */
 	struct apple_dcp_typec_route *target;
 	struct apple_dcp_typec_route *secondary_target;
@@ -71,9 +79,17 @@ struct apple_dcp_typec_port {
 	bool plan_dark;
 };
 
-/* Lifetime serialization is outside the fabric lock, including drain waits. */
-static DEFINE_MUTEX(dcp_tb_handoff_lock);
+/*
+ * HDMI hotplug often blinks: a monitor waking up or switching inputs drops
+ * HPD for a second or so.  A Thunderbolt tunnel never moves once it has a
+ * pipeline, so without dual-stream docks one may not take the hybrid until
+ * HDMI has been quiet for this long, or a tunnel waiting for a pipeline
+ * would take it in the blink and keep the returning HDMI display dark.
+ */
+#define DCP_HDMI_HOLD_MS	10000
+
 static DEFINE_MUTEX(dcp_typec_fabric_lock);
+
 static LIST_HEAD(dcp_typec_ports);
 /* Current DTs wire the same stream capacity on every physical port. */
 static atomic_t dcp_dual_stream_routes = ATOMIC_INIT(0);
@@ -102,6 +118,14 @@ bool dcp_uses_t6020_tunnel_flow(struct apple_dcp *dcp)
 
 	return dcp_fabric_t6020_flow(dcp_is_usb4_output(dcp),
 				     dcp->hw.t6020_tunnel_flow, connector_wired);
+}
+
+bool dcp_hdmi_port_attached(struct apple_dcp *dcp)
+{
+	KUNIT_STATIC_STUB_REDIRECT(dcp_hdmi_port_attached, dcp);
+
+	return dcp->hdmi_hpd && !READ_ONCE(dcp->active_typec_route) &&
+	       gpiod_get_value_cansleep(dcp->hdmi_hpd) > 0;
 }
 
 static bool dcp_typec_route_is_dp(const struct typec_mux_state *state)
@@ -134,6 +158,17 @@ static bool dcp_typec_route_fixed_output_busy(struct apple_dcp_typec_route *rout
 				     gpiod_get_value_cansleep(dcp->hdmi_hpd));
 }
 
+/* A port in SAFE retains this pipeline until the mux set phase completes. */
+static bool dcp_typec_safe_held(struct apple_dcp *dcp)
+{
+	struct apple_dcp_typec_port *port;
+
+	list_for_each_entry(port, &dcp_typec_ports, link)
+		if (port->safe_pending && port->owner && port->owner->dcp == dcp)
+			return true;
+	return false;
+}
+
 /*
  * A pipeline that can take no Type-C display: its fixed output is live, or
  * it is a T6030 external processor that failed (handoff check, start, or a
@@ -151,11 +186,12 @@ static bool dcp_typec_route_busy(struct apple_dcp_typec_route *route)
 static bool dcp_typec_route_available(struct apple_dcp_typec_route *route)
 {
 	struct dcp_fabric_pipeline pipeline = {
-		.owned = !!route->dcp->active_typec_route || route->dcp->tb_retiring,
+		.owned = !!route->dcp->active_typec_route ||
+			 dcp_typec_safe_held(route->dcp),
 		.fixed_busy = dcp_typec_route_busy(route),
 	};
 
-	struct dcp_fabric_policy policy = { .dual_stream = dcp_typec_dual_stream() };
+	struct dcp_fabric_policy policy = { .dual_stream = dcp_typec_ordered_dual_stream() };
 
 	pipeline.presence = dcp_hdmi_presence(route->dcp);
 	return dcp_fabric_available(&pipeline, &policy);
@@ -169,6 +205,13 @@ static bool dcp_typec_route_available(struct apple_dcp_typec_route *route)
 bool dcp_typec_dual_stream(void)
 {
 	return atomic_read(&dcp_dual_stream_routes) > 0;
+}
+
+/* Keep native T6030 routes pinned to their owning processor, on either DPIN. */
+bool dcp_typec_ordered_dual_stream(void)
+{
+	return dcp_fabric_ordered_dual_stream(dcp_typec_dual_stream(),
+					    of_machine_is_compatible("apple,t6030"));
 }
 
 /*
@@ -198,7 +241,8 @@ static bool dcp_typec_port_follows(struct apple_dcp_typec_port *port)
 /* Is a routed port's possible_crtcs narrowed to the pipeline driving it? */
 static bool dcp_typec_narrows(struct apple_dcp *dcp)
 {
-	return !dcp_typec_dual_stream() && !dcp_typec_follows_crtc(dcp);
+	/* This tree narrows on dual-stream machines too. */
+	return !dcp_typec_follows_crtc(dcp);
 }
 
 bool dcp_is_typec_only(struct platform_device *pdev)
@@ -208,6 +252,38 @@ bool dcp_is_typec_only(struct platform_device *pdev)
 	return !dcp->fixed_phy;
 }
 
+static int dcp_route_clock_rate(struct apple_dcp_typec_route *route,
+				struct phy *phy, unsigned int dpin, u8 rate)
+{
+	int ret;
+
+	if (of_machine_is_compatible("apple,t6030")) {
+		typeof(apple_atc_dp_tunnel_rate_source) *fn;
+
+		if (dcp_fabric_t6030_pclk(route->mux_index, dpin) < 0)
+			return -EOPNOTSUPP;
+		fn = symbol_get(apple_atc_dp_tunnel_rate_source);
+		if (fn) {
+			ret = fn(phy, route->mux_index, dpin, rate);
+			symbol_put(apple_atc_dp_tunnel_rate_source);
+			return ret;
+		}
+		/* An older ATC provider clocks source 0 only, as before. */
+		if (route->mux_index != 0)
+			return -ENOENT;
+	}
+	{
+		typeof(apple_atc_dp_tunnel_rate) *fn;
+
+		fn = symbol_get(apple_atc_dp_tunnel_rate);
+		if (!fn)
+			return -ENOENT;
+		ret = fn(phy, dpin, rate);
+		symbol_put(apple_atc_dp_tunnel_rate);
+	}
+	return ret;
+}
+
 static int dcp_typec_route_activate(struct apple_dcp_typec_route *route,
 				    struct mux_control *xbar);
 static int dcp_typec_route_deactivate(struct apple_dcp_typec_route *route);
@@ -215,7 +291,7 @@ static int dcp_dpxbar_preselect(struct mux_control *mux, int state);
 
 static int dcp_dpxbar_tunnel_select_source(struct mux_control *mux, int state)
 {
-	typeof(apple_dpxbar_tunnel_select_source) *select =
+	typeof(&apple_dpxbar_tunnel_select_source) select =
 		symbol_get(apple_dpxbar_tunnel_select_source);
 	int ret;
 
@@ -235,6 +311,8 @@ static int dcp_typec_route_activate(struct apple_dcp_typec_route *route,
 		route->port->secondary_connector : route->port->connector;
 	int ret;
 
+	dcp_firmware_metadata_connection(dcp, READ_ONCE(dcp->typec_generation), false);
+
 	/*
 	 * The fixed output's HPD handler leaves disconnects to DCP, so the port
 	 * can still be marked connected to a display that is gone. Release it
@@ -246,9 +324,9 @@ static int dcp_typec_route_activate(struct apple_dcp_typec_route *route,
 
 	if (dcp->fixed_route_selected) {
 		ret = mux_control_deselect(dcp->xbar);
+		dcp->fixed_route_selected = false;
 		if (ret)
 			return ret;
-		dcp->fixed_route_selected = false;
 	}
 
 	/*
@@ -304,11 +382,11 @@ static int dcp_typec_route_activate(struct apple_dcp_typec_route *route,
 		 * Offering it the choice makes it pair the port with a pipeline
 		 * holding a different monitor's mode list, and the modeset is
 		 * rejected with no way for it to recover.  The hotplug that
-		 * follows makes it re-read this.  Dual-stream machines keep
-		 * fixed possible_crtcs instead: compositors that read them once
-		 * (e.g. aquamarine/Hyprland) never see the narrowing.  So do
-		 * pipelines whose routes follow the CRTC they are paired with:
-		 * the pairing is the compositor's to make there.
+		 * follows publishes the actual binding on dual-stream machines
+		 * too. Clients must re-read encoder topology after a hotplug.
+		 * Pipelines whose direct routes follow the CRTC they are
+		 * paired with keep the full set: the pairing is the
+		 * compositor's to make there.
 		 */
 		if (connector->port_encoder && dcp->crtc &&
 		    dcp_typec_narrows(dcp))
@@ -320,6 +398,8 @@ static int dcp_typec_route_activate(struct apple_dcp_typec_route *route,
 	}
 	dcp->active_typec_route = route;
 	scoped_guard(mutex, &dcp->tb_lock) {
+		route->deactivate_xbar_done = false;
+		route->deactivate_error = 0;
 		route->active_xbar = xbar;
 		route->tunnel = xbar != route->xbar;
 		route->xbar_up = !route->tunnel;
@@ -345,31 +425,41 @@ static int dcp_typec_route_deactivate(struct apple_dcp_typec_route *route)
 	bool ended_attachment;
 	int ret = 0;
 
+	guard(mutex)(&dcp->external_lock);
+	if (dcp_is_external_h17p(dcp) &&
+	    (dcp->external_error || (dcp->external_power_attempted && !dcp->external_stopped)))
+		return dcp->external_error ?: -EAGAIN;
+
+	dcp_firmware_metadata_connection(dcp, READ_ONCE(dcp->typec_generation), false);
+
 	/*
 	 * Under tb_lock so a DCP link (re)configuration can neither select the
 	 * crossbar nor restart the tunnel pixel clock behind our back.
 	 */
 	scoped_guard(mutex, &dcp->tb_lock) {
-		if (!route->tunnel || route->xbar_up)
-			ret = mux_control_deselect(route->active_xbar ?: route->xbar);
-		else
-			dcp_dpxbar_preselect(route->active_xbar, MUX_IDLE_DISCONNECT);
-		/* mux_control_deselect releases its semaphore even on failure. */
-		route->xbar_up = false;
-		if (ret)
-			dev_warn(dcp->dev, "crossbar deselect failed: %d\n", ret);
-		/* Ownership is released; let the caller release its route owner too. */
-		ret = 0;
+		if (route->deactivate_error)
+			return route->deactivate_error;
+		if (!route->deactivate_xbar_done) {
+			if (!route->tunnel || route->xbar_up)
+				ret = mux_control_deselect(route->active_xbar ?: route->xbar);
+			else
+				ret = dcp_dpxbar_preselect(route->active_xbar, MUX_IDLE_DISCONNECT);
+			/* Deselect always unlocks: never consume that selection twice. */
+			route->deactivate_xbar_done = true;
+			route->xbar_up = false;
+			if (ret) {
+				/* Idle is unproven; retain the owner and the real error. */
+				route->deactivate_error = ret;
+				return ret;
+			}
+		}
 
 		if (route->tunnel && dcp->phy) {
 			/* the tunnel pixel clock must not outlive the tunnel */
-			typeof(apple_atc_dp_tunnel_rate) *stop =
-				symbol_get(apple_atc_dp_tunnel_rate);
+			int err = dcp_route_clock_rate(route, dcp->phy, route->tunnel_dpin, 0);
 
-			if (stop) {
-				stop(dcp->phy, route->tunnel_dpin, 0);
-				symbol_put(apple_atc_dp_tunnel_rate);
-			}
+			if (err)
+				dev_warn(dcp->dev, "DP tunnel clock stop failed: %d\n", err);
 		}
 		route->active_xbar = NULL;
 		route->tunnel = false;
@@ -388,6 +478,8 @@ static int dcp_typec_route_deactivate(struct apple_dcp_typec_route *route)
 		if (sel && sel != -EOPNOTSUPP)
 			dev_warn(dcp->dev, "DP tunnel source reset failed: %d\n", sel);
 	}
+	if (dcp_is_external_h17p(dcp))
+		dpavservep_detach(dcp);
 	route->selected = false;
 	ended_attachment = dcp_modes_end_typec(dcp, route);
 	if (dcp->active_typec_route == route)
@@ -411,7 +503,7 @@ static int dcp_typec_route_deactivate(struct apple_dcp_typec_route *route)
 		schedule_work(&connector->bl_sync_wq);
 
 		/* Unrouted: the port could go to any of its pipelines again. */
-		if (connector->port_encoder && !dcp_typec_dual_stream())
+		if (connector->port_encoder)
 			connector->port_encoder->possible_crtcs =
 				connector->candidate_crtcs;
 	}
@@ -438,7 +530,7 @@ static int dcp_typec_route_deactivate(struct apple_dcp_typec_route *route)
 			dcp->phy = dcp->fixed_phy;
 			dcp->dptx_phy = dcp->fixed_dptx_phy;
 
-			if (dcp->xbar) {
+			if (dcp->xbar && !dcp->fixed_route_selected) {
 				ret = mux_control_select(dcp->xbar,
 							 dcp->fixed_mux_index);
 				if (ret)
@@ -517,22 +609,13 @@ static bool dcp_typec_keep_order(void)
 {
 	struct drm_device *drm;
 
-	if (!dcp_typec_dual_stream())
+	if (!dcp_typec_ordered_dual_stream())
 		return false;
 	drm = dcp_typec_drm();
 	if (!drm || !READ_ONCE(drm->registered))
 		return false;
 	return dcp_fabric_keep_order(true, true, dcp_typec_frozen(drm));
 }
-
-/*
- * HDMI hotplug often blinks: a monitor waking up or switching inputs drops
- * HPD for a second or so.  A Thunderbolt tunnel never moves once it has a
- * pipeline, so without dual-stream docks one may not take the hybrid until
- * HDMI has been quiet for this long, or a tunnel waiting for a pipeline
- * would take it in the blink and keep the returning HDMI display dark.
- */
-#define DCP_HDMI_HOLD_MS	10000
 
 static void dcp_typec_pipeline_freed(void);
 static int dcp_fixed_output_select(struct apple_dcp *dcp);
@@ -541,7 +624,7 @@ static bool dcp_hdmi_settle_enabled(struct apple_dcp *dcp)
 {
 	return dcp->hdmi_hpd &&
 	       dcp_fabric_hdmi_settle_enabled(!!dcp->fixed_phy, dcp->nr_typec_routes,
-					      dcp_typec_dual_stream());
+					      dcp_typec_ordered_dual_stream());
 }
 
 static enum dcp_fabric_presence_state dcp_hdmi_presence(struct apple_dcp *dcp)
@@ -802,17 +885,18 @@ static void dcp_fabric_snapshot_port(struct apple_dcp_typec_port *port,
 		struct apple_dcp *dcp = route->dcp;
 		struct dcp_fabric_pipeline *pipeline = &dcp->fabric;
 
-		pipeline->bound = !!dcp->crtc && !dcp->tb_retiring;
+		pipeline->bound = !!dcp->crtc;
 		pipeline->crtc_index =
 			dcp->crtc ? drm_crtc_index(&dcp->crtc->base) : 0;
 		pipeline->has_fixed = !!dcp->fixed_phy;
 		pipeline->fixed_busy = dcp_typec_route_busy(route);
-		pipeline->owned = !!dcp->active_typec_route || dcp->tb_retiring;
+		pipeline->owned = !!dcp->active_typec_route ||
+				  dcp_typec_safe_held(dcp);
 		pipeline->tunnel_held = dcp_typec_tunnel_held(dcp);
 		pipeline->presence = dcp_hdmi_presence(dcp);
 		pipeline->terminal = tunnel && dcpext_scanout_terminal(dcp);
-		pipeline->services_ready = !dcp->tb_retiring &&
-			(!tunnel || dcp_tb_services_ready(dcp));
+		pipeline->services_ready = !tunnel ||
+					   dcp_tb_services_ready(dcp);
 		pipeline->external = dcp->external;
 		route->core.pipeline = pipeline;
 		route->core.tunnel = route->tunnel;
@@ -905,7 +989,7 @@ static struct apple_dcp_typec_route *
 dcp_typec_free_route(struct apple_dcp_typec_port *port)
 {
 	struct dcp_fabric_policy policy = {
-		.dual_stream = dcp_typec_dual_stream(),
+		.dual_stream = dcp_typec_ordered_dual_stream(),
 		.follow = dcp_typec_port_follows(port),
 	};
 
@@ -940,22 +1024,18 @@ static void dcp_typec_route_waiting(void)
 		if (!route || dcp_typec_route_activate(route, route->xbar))
 			continue;
 		port->owner = route;
+
 		dcp_typec_port_attach(port);
 	}
 }
 
 /*
- * Keep the Type-C routes where a compositor starting now expects them.
- * Dual-stream machines keep possible_crtcs fixed, and compositors read
- * them once and pair connectors with CRTCs themselves: aquamarine
- * (Hyprland) walks the CRTCs in index order and gives each to the first
- * connected connector, in connector order, that can use it.  A connector
- * paired with a pipeline other than the one routed to its display has its
- * modes checked against the other display's list, so its modesets fail.
- * The Type-C and Thunderbolt events that route the ports come in no
- * particular order, so until a compositor owns the display (see
- * dcp_typec_frozen()) every route change re-runs that pairing from
- * scratch (dcp_typec_plan()) and follows it.
+ * Prefer connector order when placing Type-C streams before a DRM master
+ * starts. This is an allocation policy, not a promise about the CRTC that
+ * userspace must choose: each connected encoder advertises only its actual
+ * route, and atomic encoder selection checks that ownership. Route changes
+ * publish the new mask through hotplug; the plan uses candidate_crtcs so
+ * narrowing the advertised mask does not remove hardware routing choices.
  *
  * Only direct DP-alt routes move: each goes to exactly its planned
  * pipeline.  A Thunderbolt tunnel never moves once set up, so where one
@@ -1071,6 +1151,9 @@ static bool dcp_rebalance_deactivate(void *data, void *entry)
 	struct dcp_deactivate_context ctx;
 	int ret;
 
+	/* A port in SAFE keeps its owner until the set phase completes. */
+	if (port->safe_pending)
+		return false;
 	if (!dcp_fabric_movable(owner ? &owner->core : NULL,
 				port->target ? &port->target->core : NULL))
 		return false;
@@ -1081,7 +1164,8 @@ static bool dcp_rebalance_deactivate(void *data, void *entry)
 	if (port->hpd || dcp->typec_cable_connected ||
 	    (dcp->typec_connector && dcp->typec_connector->connected)) {
 		ret = dcp_dptx_disconnect_oob(to_platform_device(dcp->dev), 0);
-		if (ret)
+		/* H17P external pipes keep their own stop recovery, as before. */
+		if (ret && !dcp_is_external_h17p(dcp))
 			return true;
 	}
 	port->hpd = false;
@@ -1182,13 +1266,116 @@ static void dcp_typec_pipeline_freed(void)
  */
 void dcp_typec_reorder(void)
 {
-	if (!dcp_typec_dual_stream())
+	if (!dcp_typec_ordered_dual_stream())
 		return;
 
 	guard(mutex)(&dcp_typec_fabric_lock);
 
 	if (dcp_typec_keep_order())
 		dcp_typec_rebalance_locked(NULL, 0);
+}
+
+static int dcp_typec_route_prepare(struct typec_mux_dev *mux,
+				   struct typec_mux_state *state)
+{
+	struct apple_dcp_typec_route *route = typec_mux_get_drvdata(mux);
+	struct apple_dcp_typec_port *port = route->port;
+	struct apple_dcp *dcp;
+	int ret;
+
+	guard(mutex)(&dcp_typec_fabric_lock);
+	if (state->mode != TYPEC_STATE_SAFE)
+		return port->safe_pending ? -EAGAIN : 0;
+	if (!port->owner || port->owner->tunnel)
+		return 0;
+	dcp = port->owner->dcp;
+	/* Stop new admission, but retain the owner until the set phase succeeds. */
+	if (!port->safe_pending)
+		port->safe_finish_ready = false;
+	port->safe_pending = true;
+	port->applied_valid = false;
+	port->dp_wanted = false;
+	port->dp_hpd = false;
+	/* HPD absence alone is not proof of a completed firmware shutdown. */
+	if (dcp_is_external_h17p(dcp)) {
+		scoped_guard(mutex, &dcp->external_lock) {
+			if (dcp->external_error)
+				return dcp->external_error;
+			if (!dcp->external_cable && dcp->external_stopped &&
+			    !READ_ONCE(dcp->dptxport[0].connected)) {
+				port->hpd = false;
+				return 0;
+			}
+		}
+	}
+	ret = dcp_dptx_disconnect_oob(to_platform_device(dcp->dev), 0);
+	if (ret)
+		return ret;
+	port->hpd = false;
+	return 0;
+}
+
+static int dcp_typec_route_finish(struct typec_mux_dev *mux,
+				  struct typec_mux_state *state)
+{
+	struct apple_dcp_typec_port *port =
+		((struct apple_dcp_typec_route *)typec_mux_get_drvdata(mux))->port;
+	int ret;
+
+	guard(mutex)(&dcp_typec_fabric_lock);
+	if (state->mode != TYPEC_STATE_SAFE || !port->safe_pending ||
+	    port->safe_finish_ready)
+		return 0;
+	ret = port->owner ? dcp_typec_route_deactivate(port->owner) : 0;
+	if (ret)
+		return ret;
+	port->safe_finish_ready = true;
+	return 0;
+}
+
+static void dcp_typec_route_commit(struct typec_mux_dev *mux,
+				   struct typec_mux_state *state)
+{
+	struct apple_dcp_typec_port *port =
+		((struct apple_dcp_typec_route *)typec_mux_get_drvdata(mux))->port;
+
+	guard(mutex)(&dcp_typec_fabric_lock);
+	if (state->mode != TYPEC_STATE_SAFE || !port->safe_pending)
+		return;
+	if (port->owner)
+		port->preferred_route = port->owner;
+	port->owner = NULL;
+	port->safe_pending = false;
+	port->safe_finish_ready = false;
+	port->applied_alt = state->alt;
+	port->applied_mode = state->mode;
+	port->applied_status = 0;
+	port->applied_conf = 0;
+	port->applied_valid = true;
+	dcp_typec_pipeline_freed();
+}
+
+/*
+ * A DP display on @port gets no pipeline: every one that could drive it
+ * drives another display. Say so once per plug, with the display's HPD up;
+ * the port controller only logs the -ENOSPC. When one of those displays goes,
+ * the freed pipeline takes a waiting display without a replug (see
+ * dcp_typec_pipeline_freed()).
+ */
+static int dcp_typec_port_busy(struct apple_dcp_typec_port *port,
+			       struct apple_dcp *dcp)
+{
+	const char *label = NULL;
+
+	/* This tree reports a port without a pipeline as -ENOSPC. */
+	if (port->busy_noted)
+		return -ENOSPC;
+	port->busy_noted = true;
+	of_property_read_string(port->connector_np, "label", &label);
+	dev_info(dcp->dev,
+		 "display on %s waits for a free external display pipeline (each one drives another display); it lights up on its own when one of those displays is unplugged\n",
+		 label ?: "a USB-C port");
+	return -ENOSPC;
 }
 
 static int dcp_typec_route_set(struct typec_mux_dev *mux,
@@ -1205,11 +1392,24 @@ static int dcp_typec_route_set(struct typec_mux_dev *mux,
 	bool was_counted;
 	int ret = 0;
 
+	/* A failed T8122 dcpext drives nothing; USB on the port goes on. */
+	if (READ_ONCE(route->dcp->ext_dead))
+		return 0;
+
 	guard(mutex)(&dcp_typec_fabric_lock);
+
+	if (state->mode == TYPEC_STATE_SAFE && port->safe_pending)
+		return 0;
+	/* The previous SAFE transition has not finished; retry. */
+	if (port->safe_pending)
+		return -EAGAIN;
 
 	/*
 	 * Every candidate route for this port is notified with the same state,
 	 * so only the first to arrive does the work; the others return early.
+	 * That includes a sink's IRQ_HPD request: the port controller sends a
+	 * new one as a changed status, clearing IRQ_HPD first when the route
+	 * still holds the previous request (cd321x_dp_send()).
 	 *
 	 * Deliberately not a nominated coordinator: fwnode_typec_mux_get()
 	 * caps the providers one connector may have and drops the remainder
@@ -1234,7 +1434,8 @@ static int dcp_typec_route_set(struct typec_mux_dev *mux,
 		if (port->hpd || dcp->typec_cable_connected ||
 		    (dcp->typec_connector && dcp->typec_connector->connected)) {
 			ret = dcp_dptx_disconnect_oob(to_platform_device(dcp->dev), 0);
-			if (ret)
+			/* H17P external pipes keep their own stop recovery, as before. */
+			if (ret && !dcp_is_external_h17p(dcp))
 				return ret;
 		}
 	}
@@ -1245,6 +1446,7 @@ static int dcp_typec_route_set(struct typec_mux_dev *mux,
 	if (!is_dp) {
 		port->dp_wanted = false;
 		port->dp_hpd = false;
+		port->busy_noted = false;
 
 		/* a Thunderbolt/USB4 DP tunnel is torn down by its own path */
 		if (port->owner && port->owner->tunnel) {
@@ -1260,6 +1462,7 @@ static int dcp_typec_route_set(struct typec_mux_dev *mux,
 			if (ret)
 				return ret;
 			port->owner = NULL;
+
 			if (dcp->hdmi_hpd && dcp->active &&
 			    gpiod_get_value_cansleep(dcp->hdmi_hpd))
 				dcp_dptx_connect(dcp, 0);
@@ -1269,6 +1472,7 @@ static int dcp_typec_route_set(struct typec_mux_dev *mux,
 			dcp_typec_rebalance_locked(NULL, 0);
 		}
 
+		port->safe_pending = false;
 		/* Data-only USB4 changes do not invalidate other display routes. */
 		port->applied_valid = true;
 		return 0;
@@ -1302,7 +1506,7 @@ static int dcp_typec_route_set(struct typec_mux_dev *mux,
 			dcp_typec_rebalance_locked(NULL, 0);
 		if (!port->owner) {
 			if (hpd)
-				return -EBUSY;
+				return dcp_typec_port_busy(port, route->dcp);
 			port->applied_valid = true;
 			return 0;
 		}
@@ -1315,13 +1519,16 @@ static int dcp_typec_route_set(struct typec_mux_dev *mux,
 
 	if (!port->owner) {
 		best = dcp_typec_free_route(port);
+		/* Every pipeline is driving another port's display. */
 		if (!best)
-			return -EBUSY;
+			return hpd ? dcp_typec_port_busy(port, route->dcp) : -ENOSPC;
 
 		ret = dcp_typec_route_activate(best, best->xbar);
 		if (ret)
 			return ret;
 		port->owner = best;
+		/* a later wait of this plug is reported again */
+		port->busy_noted = false;
 	}
 
 	if (hpd && !port->hpd) {
@@ -1336,22 +1543,36 @@ static int dcp_typec_route_set(struct typec_mux_dev *mux,
 		/*
 		 * A T6030 external processor services the request itself, and
 		 * reads the display again if it changed; elsewhere the active
-		 * mode is applied again.
+		 * mode is applied again. H17P always applies it again. A running
+		 * relink connects the sink anew; see dcp_typec_sink_relink().
 		 */
-		if (dcp->typec_connector && dcp->external_native)
-			dcp_external_sink_irq(dcp);
-		else if (dcp->typec_connector &&
-			 !READ_ONCE(dcp->typec_connector->connected)) {
-			ret = dcp_dptx_recover_irq(dcp);
-			if (ret)
-				return ret;
-		} else if (dcp->typec_connector)
+		if (dcp->typec_connector && dcp->fw_compat == DCP_FIRMWARE_H17P)
 			dcp_retrain_oob(dcp->typec_connector);
+		else if (dcp->typec_connector && dcp->external_native)
+			dcp_external_sink_irq(dcp);
+		else if (dcp->typec_connector && !dcp_typec_sink_relink(dcp)) {
+			if (!READ_ONCE(dcp->typec_connector->connected)) {
+				ret = dcp_dptx_recover_irq(dcp);
+				if (ret)
+					return ret;
+			} else {
+				dcp_retrain_oob(dcp->typec_connector);
+			}
+		}
 	}
 	port->hpd = hpd;
 	port->applied_valid = true;
 
 	return 0;
+}
+
+/* Limited to the T6030 14.7 pipeline; other T602X tunnels keep their order. */
+static bool dcp_t602x_tunnel_route(struct apple_dcp_typec_route *route)
+{
+	return route && route->tunnel && route->active_xbar &&
+		route->dcp->fw_compat == DCP_FIRMWARE_V_14_7 &&
+		of_device_is_compatible(route->active_xbar->chip->dev.parent->of_node,
+					"apple,t6020-display-crossbar");
 }
 
 /*
@@ -1360,7 +1581,7 @@ static int dcp_typec_route_set(struct typec_mux_dev *mux,
  */
 static int dcp_dpxbar_link(struct mux_control *mux, bool up)
 {
-	typeof(apple_dpxbar_link_up) *fn;
+	typeof(&apple_dpxbar_link_up) fn;
 	int ret;
 
 	fn = up ? symbol_get(apple_dpxbar_link_up) :
@@ -1377,7 +1598,7 @@ static int dcp_dpxbar_link(struct mux_control *mux, bool up)
 
 static int dcp_dpxbar_preselect(struct mux_control *mux, int state)
 {
-	typeof(apple_dpxbar_preselect) *fn = symbol_get(apple_dpxbar_preselect);
+	typeof(&apple_dpxbar_preselect) fn = symbol_get(apple_dpxbar_preselect);
 	int ret;
 
 	if (!fn)
@@ -1398,7 +1619,7 @@ static int dcp_dpxbar_preselect(struct mux_control *mux, int state)
 static void dcp_tunnel_prepare(struct apple_dcp_typec_route *route,
 			       struct mux_control *xbar)
 {
-	typeof(apple_atc_dp_tunnel_open) *open;
+	typeof(&apple_atc_dp_tunnel_open) open;
 	struct apple_dcp *dcp = route->dcp;
 	int ret;
 
@@ -1419,6 +1640,7 @@ static void dcp_tunnel_prepare(struct apple_dcp_typec_route *route,
 static int dcp_tunnel_dpin_locked(struct apple_dcp *dcp, bool active)
 {
 	lockdep_assert_held(&dcp->tb_lock);
+	/* Only the binding admitted for the route DCP drives is called. */
 	if (!dcp->active_typec_route ||
 	    !dcp_fabric_callback_valid(dcp->active_typec_route->tunnel_generation,
 				       dcp->tb_generation))
@@ -1426,58 +1648,6 @@ static int dcp_tunnel_dpin_locked(struct apple_dcp *dcp, bool active)
 	if (!dcp->tb_dpin_set_active)
 		return -ENODEV;
 	return dcp->tb_dpin_set_active(dcp->tb_dpin_ctx, active);
-}
-
-/*
- * T6030 drives the DP IN outputs of its T6020-style crossbar directly: the mux
- * selection only routes, and the link is brought up separately. The M2 Pro and
- * M2 Max laptops share the layout but qualify their T6020 flow separately.
- */
-static bool dcp_link_has_xbar(void *ctx)
-{
-	struct apple_dcp_typec_route *route = ctx;
-
-	return route && route->active_xbar;
-}
-
-static bool dcp_link_is_tunnel(void *ctx)
-{
-	struct apple_dcp_typec_route *route = ctx;
-
-	return route->tunnel;
-}
-
-static bool dcp_link_t6020_xbar(void *ctx)
-{
-	struct apple_dcp_typec_route *route = ctx;
-	struct device_node *np = route->active_xbar->chip->dev.parent->of_node;
-
-	return of_device_is_compatible(np, "apple,t6020-display-crossbar");
-}
-
-static bool dcp_link_t6030_soc(void *ctx)
-{
-	return of_machine_is_compatible("apple,t6030");
-}
-
-static void dcp_link_record_soc(void *ctx, bool t6030)
-{
-	struct apple_dcp_typec_route *route = ctx;
-
-	route->dcp->fabric.t6030_dpin = t6030;
-}
-
-static const struct dcp_fabric_link_ops dcp_link_ops = {
-	.has_xbar = dcp_link_has_xbar,
-	.tunnel = dcp_link_is_tunnel,
-	.t6020_xbar = dcp_link_t6020_xbar,
-	.t6030_soc = dcp_link_t6030_soc,
-	.record_soc = dcp_link_record_soc,
-};
-
-static bool dcp_t6030_dpin_route(struct apple_dcp_typec_route *route)
-{
-	return dcp_fabric_run_t6030_link(&dcp_link_ops, route);
 }
 
 /*
@@ -1526,7 +1696,8 @@ int dcp_tunnel_crossbar_up(struct apple_dcp *dcp, u32 unit)
 	if (unit)
 		return dcp_tunnel_split_up_locked(dcp);
 	route = dcp->active_typec_route;
-	if (!route || !route->tunnel || !route->active_xbar)
+	if (!route || !route->tunnel || !route->active_xbar ||
+	    route->deactivate_xbar_done)
 		return -ENODEV;
 	if (!dcp_fabric_callback_valid(route->tunnel_generation, dcp->tb_generation))
 		return -ESTALE;
@@ -1539,8 +1710,8 @@ int dcp_tunnel_crossbar_up(struct apple_dcp *dcp, u32 unit)
 		ret = mux_control_try_select(route->active_xbar, route->mux_index);
 		if (!ret)
 			route->xbar_up = true;
-		/* T6030 DP IN selection reserves and routes the mux only. */
-		if (!ret && dcp_t6030_dpin_route(route))
+		/* T602X DP IN selection reserves and routes the mux only. */
+		if (!ret && dcp_t602x_tunnel_route(route))
 			ret = dcp_dpxbar_link(route->active_xbar, true);
 	} else {
 		ret = dcp_dpxbar_link(route->active_xbar, true);
@@ -1623,7 +1794,6 @@ int dcp_direct_crossbar_link(struct apple_dcp *dcp, bool up)
 int dcp_tunnel_set_rate(struct apple_dcp *dcp, struct phy *phy, u32 unit,
 			u32 link_rate)
 {
-	typeof(apple_atc_dp_tunnel_rate) *fn;
 	struct apple_dcp_typec_route *route;
 	int ret;
 
@@ -1635,18 +1805,11 @@ int dcp_tunnel_set_rate(struct apple_dcp *dcp, struct phy *phy, u32 unit,
 		return -ENODEV;
 	if (!dcp_fabric_callback_valid(route->tunnel_generation, dcp->tb_generation))
 		return -ESTALE;
-	/*
-	 * The T6030 tunnel clock supports only core0 -> DP IN0 (PCLK1) so far;
-	 * other routes need PCLK slot selection and accounting.
-	 */
-	if (link_rate && of_machine_is_compatible("apple,t6030") &&
-	    (route->mux_index != 0 || dcp->dptx_dfp_port != 1))
+	if (of_machine_is_compatible("apple,t6030") &&
+	    (unit || dcp->dptx_dfp_port != 1 + route->tunnel_dpin ||
+	     apple_dp_tunnel_t6030_pclk(route->mux_index,
+				      route->tunnel_dpin) < 0))
 		return -EOPNOTSUPP;
-	fn = symbol_get(apple_atc_dp_tunnel_rate);
-	if (!fn) {
-		dev_err(dcp->dev, "phy-apple-atc not loaded, no DP tunnel clock\n");
-		return -ENOENT;
-	}
 	if (unit) {
 		/* Each DP IN owns a reference, including on a shared clock. */
 		ret = 0;
@@ -1655,9 +1818,8 @@ int dcp_tunnel_set_rate(struct apple_dcp *dcp, struct phy *phy, u32 unit,
 		} else {
 			if (!link_rate && dcp->split.xbar_up)
 				dcp_dpxbar_link(dcp->split.xbar, false);
-			ret = fn(phy, 1, link_rate);
+			ret = dcp_route_clock_rate(route, phy, 1, link_rate);
 		}
-		symbol_put(apple_atc_dp_tunnel_rate);
 		dcp->split.clock_ok = !ret && link_rate;
 		if (ret)
 			dev_warn(dcp->dev, "tiled: dpin1 pixel clock (rate 0x%x) failed: %d\n",
@@ -1666,8 +1828,7 @@ int dcp_tunnel_set_rate(struct apple_dcp *dcp, struct phy *phy, u32 unit,
 	}
 	if (!link_rate && route->xbar_up)
 		dcp_dpxbar_link(route->active_xbar, false);
-	ret = fn(phy, route->tunnel_dpin, link_rate);
-	symbol_put(apple_atc_dp_tunnel_rate);
+	ret = dcp_route_clock_rate(route, phy, route->tunnel_dpin, link_rate);
 	dcp->tb_clock_ok = !ret && link_rate;
 	if (ret)
 		dev_warn(dcp->dev, "DP tunnel pixel clock (rate 0x%x) failed: %d\n",
@@ -1690,12 +1851,12 @@ int dcp_tunnel_dpin_activate(struct apple_dcp *dcp, u32 unit, bool active)
 		return dcp->split.set_active(dcp->split.binding, active);
 	}
 	/* Route the upstream engine before firmware begins AUX negotiation.
-	 * T6030 DP IN .set does not enable clocks; DidChange does that later.
+	 * T602X DP IN .set does not enable clocks; DidChange does that later.
 	 */
 	route = dcp->active_typec_route;
 	if (!route || !dcp_fabric_callback_valid(route->tunnel_generation, dcp->tb_generation))
 		return -ESTALE;
-	if (active && dcp_t6030_dpin_route(route)) {
+	if (active && dcp_t602x_tunnel_route(route)) {
 		if (!route->xbar_up) {
 			ret = mux_control_try_select(route->active_xbar, route->mux_index);
 			if (ret)
@@ -1722,66 +1883,6 @@ static bool dcp_tb_services_ready(struct apple_dcp *dcp)
 		return iomfb_v14_7_external_ready(dcp);
 	/* Pairs with DPTX RemotePort publication before tunnel acquisition. */
 	return smp_load_acquire(&dcp->dptxport[0].enabled) && ibootep_is_ready(dcp);
-}
-
-static void dcp_tb_reserve_revoke(void *data)
-{
-	struct apple_dcp *dcp = data;
-
-	WRITE_ONCE(dcp->tb_retiring, true);
-	scoped_guard(mutex, &dcp->tb_lock) {
-		dcp->tb_generation = 0;
-		if (dcp->active_typec_route && dcp->active_typec_route->tunnel)
-			dcp->active_typec_route->tunnel_generation = 0;
-		dcp->tb_dpin_set_active = NULL;
-		dcp->tb_dpin_ctx = NULL;
-	}
-}
-
-static void dcp_tb_invalidate(void *data)
-{
-	struct apple_dcp *dcp = data;
-
-	guard(mutex)(&dcp->hpd_mutex);
-	WRITE_ONCE(dcp->typec_cable_connected, false);
-	dcp->typec_generation++;
-}
-
-static void dcp_tb_drain_unlock(void *data)
-{
-	mutex_unlock(&dcp_typec_fabric_lock);
-}
-
-static void dcp_tb_drain_wait(void *data)
-{
-	struct apple_dcp *dcp = data;
-
-	lockdep_assert_not_held(&dcp_typec_fabric_lock);
-	lockdep_assert_not_held(&dcp->tb_lock);
-	/* Queue admission checks tb_retiring. Neither worker takes fabric_lock. */
-	cancel_delayed_work_sync(&dcp->typec_reconnect_wq);
-	cancel_delayed_work_sync(&dcp->placeholder_edid_wq);
-}
-
-static void dcp_tb_drain_lock(void *data)
-{
-	mutex_lock(&dcp_typec_fabric_lock);
-}
-
-static const struct dcp_fabric_drain_ops dcp_tb_drain_ops = {
-	.reserve_revoke = dcp_tb_reserve_revoke,
-	.invalidate = dcp_tb_invalidate,
-	.unlock = dcp_tb_drain_unlock,
-	.drain = dcp_tb_drain_wait,
-	.lock = dcp_tb_drain_lock,
-};
-
-/* Revoke before waiting; the slot/pipeline stays reserved until we relock. */
-static void dcp_tb_binding_drain(struct apple_dcp *dcp)
-{
-	lockdep_assert_held(&dcp_tb_handoff_lock);
-	lockdep_assert_held(&dcp_typec_fabric_lock);
-	dcp_fabric_drain_binding(&dcp_tb_drain_ops, dcp);
 }
 
 struct dcp_tb_attach_context {
@@ -1836,7 +1937,7 @@ static int dcp_tb_candidate(void *data)
 
 	{
 		struct dcp_fabric_policy policy = {
-			.dual_stream = dcp_typec_dual_stream(),
+			.dual_stream = dcp_typec_ordered_dual_stream(),
 			.follow = dcp_typec_port_follows(port),
 		};
 		struct dcp_fabric_route *chosen;
@@ -1867,6 +1968,7 @@ static int dcp_tb_activate(void *data)
 	struct dcp_tb_attach_context *ctx = data;
 	struct apple_dcp *dcp = ctx->best->dcp;
 
+	/* Admitted before the route goes live: Activate may run before we return. */
 	scoped_guard(mutex, &dcp->tb_lock) {
 		dcp->tb_dpin_set_active = ctx->set_active;
 		dcp->tb_dpin_ctx = ctx->binding;
@@ -1882,10 +1984,12 @@ static void dcp_tb_rollback(void *data)
 	struct dcp_tb_attach_context *ctx = data;
 	struct apple_dcp *dcp = ctx->best->dcp;
 
-	dcp_tb_binding_drain(dcp);
-	scoped_guard(mutex, &dcp->tb_lock)
-		ctx->best->tunnel_generation = 0;
-	WRITE_ONCE(dcp->tb_retiring, false);
+	/* The failed attempt's binding is retired before the provider hears of it. */
+	guard(mutex)(&dcp->tb_lock);
+	dcp->tb_dpin_set_active = NULL;
+	dcp->tb_dpin_ctx = NULL;
+	dcp->tb_generation = 0;
+	ctx->best->tunnel_generation = 0;
 }
 
 static void dcp_tb_claim(void *data)
@@ -1917,10 +2021,7 @@ static void dcp_tb_claim(void *data)
 	 */
 	if (!dcp->typec_connector && !dcp->external)
 		dev_warn(dcp->dev, "no Type-C connector for the DP tunnel\n");
-	scoped_guard(mutex, &dcp->hpd_mutex) {
-		WRITE_ONCE(dcp->typec_cable_connected, true);
-		dcp->typec_generation++;
-	}
+	WRITE_ONCE(dcp->typec_cable_connected, true);
 	port->hpd = true;
 }
 
@@ -1964,6 +2065,28 @@ static const struct dcp_fabric_attach_ops dcp_tb_attach_ops = {
 	.queue_reconnect = dcp_tb_queue_reconnect,
 	.connect_oob = dcp_tb_connect_oob,
 };
+
+/*
+ * Retire @dcp's Thunderbolt binding (and @route's, if given): no DCP callback,
+ * crossbar or clock change reaches it once this returns, and reconnect work
+ * queued or running for its session finds that session revoked. The source
+ * drains with the fabric lock dropped and the pipeline reserved by
+ * tb_retiring; this tree has no tb_retiring and keeps the fabric lock across
+ * the wait, as dcp_dptx_disconnect_oob() always has. Neither worker takes it.
+ */
+static void dcp_tb_binding_retire(struct apple_dcp *dcp,
+				  struct apple_dcp_typec_route *route)
+{
+	lockdep_assert_held(&dcp_typec_fabric_lock);
+	scoped_guard(mutex, &dcp->tb_lock) {
+		dcp->tb_generation = 0;
+		if (route)
+			route->tunnel_generation = 0;
+		dcp->tb_dpin_set_active = NULL;
+		dcp->tb_dpin_ctx = NULL;
+	}
+	cancel_delayed_work_sync(&dcp->typec_reconnect_wq);
+}
 
 /*
  * tiled_split: take the second half of a tiled display (dpin1) onto DPTX
@@ -2075,6 +2198,24 @@ unwind:
 	return ret;
 }
 
+/*
+ * Can no pipeline that drives @port take the second half of a tiled display?
+ * A tile joins DPTX port 1 of the pipeline that drives dpin0, which an
+ * external display processor never does (see dcp_tb_split_locked()). That is
+ * fixed when the processor probes, before its routes are registered, so it
+ * holds before any of its services are up. On T6030 every Type-C pipeline is
+ * an external processor. A port with no routes is not judged here.
+ */
+static bool dcp_typec_port_untileable(struct apple_dcp_typec_port *port)
+{
+	struct apple_dcp_typec_route *route;
+
+	list_for_each_entry(route, &port->routes, port_link)
+		if (!route->dcp->external)
+			return false;
+	return !list_empty(&port->routes);
+}
+
 /* -EOPNOTSUPP: not a tile, route dpin1 as a display of its own. */
 static int dcp_tb_split_locked(struct apple_dcp_typec_port *port,
 			       const struct dcp_tb_attach_context *req)
@@ -2091,6 +2232,7 @@ static int dcp_tb_split_locked(struct apple_dcp_typec_port *port,
 		if (ret || !req->active)
 			return ret;
 	}
+	/* Only the live cookie and binding may repeat or end a split dpin1. */
 	if (port->split_dcp) {
 		dcp = port->split_dcp;
 		scoped_guard(mutex, &dcp->tb_lock)
@@ -2105,6 +2247,9 @@ static int dcp_tb_split_locked(struct apple_dcp_typec_port *port,
 		return dcp_tb_split_teardown_locked(port, false);
 	}
 	if (!req->active)
+		return -EOPNOTSUPP;
+	/* No tile is possible here: there is no dpin0 to wait for. */
+	if (dcp_typec_port_untileable(port))
 		return -EOPNOTSUPP;
 	/* dpin0 first: the Thunderbolt side retries on -ENODEV */
 	if (!route || !route->tunnel || route->tunnel_dpin != 0)
@@ -2166,20 +2311,36 @@ static int dcp_tb_release_locked(struct apple_dcp_typec_port *port,
 			return ret;
 	}
 	dcp = (*slot)->dcp;
-	ret = dcp_dptx_disconnect_drained(dcp, 0);
-	if (ret)
-		return ret;
-	dcp_tb_binding_drain(dcp);
+	/* A refused display release keeps the route and its binding owned. */
+	if (port->hpd || dcp->typec_cable_connected) {
+		ret = dcp_dptx_disconnect_oob(to_platform_device(dcp->dev), 0);
+		if (ret)
+			return ret;
+	}
 	ret = dcp_typec_route_deactivate(*slot);
+	if (ret) {
+		/*
+		 * The caller's context is going away regardless: retire the
+		 * binding, the route stays owned for the next request to release.
+		 */
+		scoped_guard(mutex, &dcp->tb_lock) {
+			dcp->dptx_tunnel = false;
+			dcp->tb_dpin_set_active = NULL;
+			dcp->tb_dpin_ctx = NULL;
+			dcp->tb_generation = 0;
+			(*slot)->tunnel_generation = 0;
+		}
+		return ret;
+	}
 	*slot = NULL;
-	WRITE_ONCE(dcp->tb_retiring, false);
 	port->hpd = !!(port->owner || port->secondary_owner);
+	/* re-apply the next Type-C mux state in full */
 	port->applied_valid = false;
 	if (dcp->hdmi_hpd && dcp->active &&
 	    gpiod_get_value_cansleep(dcp->hdmi_hpd))
 		dcp_dptx_connect(dcp, 0);
 	dcp_typec_pipeline_freed();
-	return ret;
+	return 0;
 }
 
 static int dcp_tb_dispatch_request(void *data, const struct dcp_fabric_port *found)
@@ -2199,12 +2360,17 @@ static int dcp_tb_dispatch_request(void *data, const struct dcp_fabric_port *fou
 		if (ret != -EOPNOTSUPP)
 			return ret;
 	}
+	/* A retired binding leaves only hardware ownership to retry. */
 	if (*slot && (*slot)->tunnel && (*slot)->tunnel_dpin == dpin &&
-	    !(*slot)->tunnel_generation && READ_ONCE((*slot)->dcp->tb_retiring)) {
+	    !(*slot)->tunnel_generation) {
 		ret = dcp_tb_release_locked(port, dpin);
 		if (ret || !ctx->active)
 			return ret;
 	}
+	/*
+	 * Only the live cookie and binding may repeat or end a handed stream; a
+	 * mismatch is -ESTALE before anything changes.
+	 */
 	if (*slot && (*slot)->tunnel && (*slot)->tunnel_dpin == dpin) {
 		dcp = (*slot)->dcp;
 		scoped_guard(mutex, &dcp->tb_lock) {
@@ -2262,7 +2428,12 @@ static int dcp_tb_dispatch_request(void *data, const struct dcp_fabric_port *fou
 	return ret;
 }
 
-/* Failed attach and every detach return before the provider frees its binding. */
+/*
+ * Failed attach and every detach return before the provider frees its
+ * binding: the request's own cookie (and, for an attach, its own binding) is
+ * retired. A retired route keeps its hardware ownership for the next request
+ * to release (see dcp_tb_dispatch_request()).
+ */
 static void dcp_tb_finish_request(struct apple_dcp_typec_port *port,
 				  const struct dcp_tb_attach_context *request)
 {
@@ -2294,7 +2465,7 @@ static void dcp_tb_finish_request(struct apple_dcp_typec_port *port,
 			    (dcp->tb_dpin_ctx == request->binding &&
 			     dcp->tb_dpin_set_active == request->set_active));
 	if (matching)
-		dcp_tb_binding_drain(dcp);
+		dcp_tb_binding_retire(dcp, route);
 }
 
 static int dcp_tb_dispatch(void *data, const struct dcp_fabric_port *found)
@@ -2325,7 +2496,6 @@ int apple_dcp_tb_dp_tunnel(struct device_node *connector_np, unsigned int dpin,
 
 	if (!connector_np || dpin > 1 || !generation || (active && !set_active))
 		return -EINVAL;
-	guard(mutex)(&dcp_tb_handoff_lock);
 	guard(mutex)(&dcp_typec_fabric_lock);
 	list_for_each_entry(pos, &dcp_typec_ports, link) {
 		pos->core.key = (unsigned long)pos->connector_np;
@@ -2388,6 +2558,7 @@ static void dcp_follow_save_split(struct apple_dcp_typec_route *route,
 	if (route->port->split_dcp != dcp)
 		return;
 	scoped_guard(mutex, &dcp->tb_lock) {
+		/* A retired second stream cannot be carried into the move. */
 		if (!dcp->split.generation || !dcp->split.set_active)
 			return;
 		slot->split = true;
@@ -2406,7 +2577,7 @@ static bool dcp_follow_split_fits(struct apple_dcp_typec_route *route)
 
 struct dcp_typec_follow_context {
 	struct dcp_typec_follow_slot slots[2];
-	struct drm_atomic_state *state;
+	struct drm_atomic_commit *state;
 };
 
 /*
@@ -2418,17 +2589,14 @@ struct dcp_typec_follow_context {
  */
 #define DCP_FOLLOW_LOCK_MS	3000
 
+/* This tree serializes Thunderbolt handoffs under the fabric lock too. */
 static bool dcp_typec_follow_lock(bool handoff)
 {
 	unsigned long timeout = jiffies + msecs_to_jiffies(DCP_FOLLOW_LOCK_MS);
 
 	for (;;) {
-		if (!handoff || mutex_trylock(&dcp_tb_handoff_lock)) {
-			if (mutex_trylock(&dcp_typec_fabric_lock))
-				return true;
-			if (handoff)
-				mutex_unlock(&dcp_tb_handoff_lock);
-		}
+		if (mutex_trylock(&dcp_typec_fabric_lock))
+			return true;
 		if (time_after(jiffies, timeout))
 			return false;
 		msleep(20);
@@ -2438,8 +2606,6 @@ static bool dcp_typec_follow_lock(bool handoff)
 static void dcp_typec_follow_unlock(bool handoff)
 {
 	mutex_unlock(&dcp_typec_fabric_lock);
-	if (handoff)
-		mutex_unlock(&dcp_tb_handoff_lock);
 }
 
 static struct apple_dcp_typec_port *
@@ -2472,7 +2638,7 @@ dcp_typec_port_route(struct apple_dcp_typec_port *port, struct apple_dcp *dcp)
  * Is the display of @connector off in @state, or to be shown on @back's
  * pipeline, so that its route may give @crtc's pipeline up for that one?
  */
-bool dcp_typec_follow_holder_off(struct drm_atomic_state *state,
+bool dcp_typec_follow_holder_off(struct drm_atomic_commit *state,
 				 struct drm_crtc *crtc,
 				 struct apple_connector *connector,
 				 struct apple_dcp *back)
@@ -2500,11 +2666,11 @@ bool dcp_typec_follow_holder_off(struct drm_atomic_state *state,
 
 /* May @connector's route follow @crtc to @dcp's pipeline, and how? */
 static int dcp_typec_follow_decide(struct apple_dcp *dcp, struct drm_crtc *crtc,
-				   struct drm_atomic_state *state,
+				   struct drm_atomic_commit *state,
 				   struct apple_connector *connector,
 				   struct dcp_typec_follow *follow)
 {
-	struct dcp_fabric_policy policy = { .dual_stream = dcp_typec_dual_stream() };
+	struct dcp_fabric_policy policy = { .dual_stream = dcp_typec_ordered_dual_stream() };
 	struct apple_dcp_typec_route *from, *to, *holder, *back = NULL;
 	struct apple_dcp_typec_port *port, *other = NULL;
 	bool secondary, off = false;
@@ -2528,13 +2694,14 @@ static int dcp_typec_follow_decide(struct apple_dcp *dcp, struct drm_crtc *crtc,
 	if (!from || !READ_ONCE(connector->connected))
 		return -ENOENT;
 	/* A dock's second stream has one pipeline, and the plan rules first. */
-	if (secondary || !dcp_typec_follows_crtc(from->dcp) ||
-	    READ_ONCE(from->dcp->tb_retiring) || dcp_typec_keep_order())
+	/* A port in SAFE keeps its owner until the mux set phase completes. */
+	if (secondary || port->safe_pending ||
+	    !dcp_typec_follows_crtc(from->dcp) || dcp_typec_keep_order())
 		return -EINVAL;
 	holder = dcp->active_typec_route;
 	if (holder) {
 		other = holder->port;
-		if (holder != other->owner)
+		if (holder != other->owner || other->safe_pending)
 			return -EINVAL;
 		back = dcp_typec_port_route(other, from->dcp);
 		off = dcp_typec_follow_holder_off(state, crtc, other->connector,
@@ -2643,9 +2810,9 @@ static int dcp_follow_release(struct apple_dcp_typec_route *route)
 	WRITE_ONCE(dcp->connector, dcp->fixed_connector);
 	/* The binding moves on: no callback may reach it through here. */
 	if (tunnel) {
-		WRITE_ONCE(dcp->tb_retiring, true);
 		scoped_guard(mutex, &dcp->tb_lock) {
 			dcp->tb_generation = 0;
+			route->tunnel_generation = 0;
 			dcp->tb_dpin_set_active = NULL;
 			dcp->tb_dpin_ctx = NULL;
 		}
@@ -2653,7 +2820,6 @@ static int dcp_follow_release(struct apple_dcp_typec_route *route)
 	scoped_guard(mutex, &dcp->hpd_mutex)
 		WRITE_ONCE(dcp->typec_cable_connected, false);
 	ret = dcp_typec_route_deactivate(route);
-	WRITE_ONCE(dcp->tb_retiring, false);
 	if (route->port->owner == route)
 		route->port->owner = NULL;
 	return ret;
@@ -2801,7 +2967,7 @@ static const struct dcp_fabric_follow_ops dcp_follow_ops = {
 };
 
 static int dcp_typec_follow_move(struct dcp_typec_follow *follow,
-				 struct drm_atomic_state *state)
+				 struct drm_atomic_commit *state)
 {
 	struct dcp_typec_follow_context ctx = {
 		.state = state,
@@ -2861,7 +3027,7 @@ static int dcp_typec_follow_move(struct dcp_typec_follow *follow,
  * commit revalidates the route before making any destructive changes.
  */
 int dcp_typec_follow_check(struct apple_dcp *dcp, struct drm_crtc *crtc,
-			   struct drm_atomic_state *state,
+			   struct drm_atomic_commit *state,
 			   const struct drm_display_mode *mode)
 {
 	struct drm_connector_state *conn_state;
@@ -2926,7 +3092,7 @@ retry_holder:
 }
 
 static bool dcp_typec_direct_commit(struct drm_crtc *crtc,
-				    struct drm_atomic_state *state)
+				    struct drm_atomic_commit *state)
 {
 	struct drm_connector_state *conn_state;
 	struct drm_connector *conn;
@@ -2954,7 +3120,7 @@ static bool dcp_typec_direct_commit(struct drm_crtc *crtc,
 	return false;
 }
 
-static void dcp_follow_fail_commit(struct drm_crtc *crtc, struct drm_atomic_state *state)
+static void dcp_follow_fail_commit(struct drm_crtc *crtc, struct drm_atomic_commit *state)
 {
 	struct drm_connector_state *conn_state;
 	struct drm_connector *conn;
@@ -2976,7 +3142,7 @@ static void dcp_follow_fail_commit(struct drm_crtc *crtc, struct drm_atomic_stat
 }
 
 /* Hold route identity through power-on/modeset; caller releases on every exit. */
-int dcp_typec_follow_crtc(struct drm_crtc *crtc, struct drm_atomic_state *state,
+int dcp_typec_follow_crtc(struct drm_crtc *crtc, struct drm_atomic_commit *state,
 			  bool *locked)
 {
 	struct platform_device *pdev = to_apple_crtc(crtc)->dcp;
@@ -3116,6 +3282,29 @@ bool dcp_typec_port_has_candidate(unsigned int idx, struct platform_device *pdev
 	return false;
 }
 
+/*
+ * Is every pipeline that can drive port @idx unusable (a failed T8122
+ * dcpext)? Such a port gets no connector, rather than failing the DRM
+ * device of the internal panel.
+ */
+bool dcp_typec_port_unusable(unsigned int idx)
+{
+	struct apple_dcp_typec_port *port;
+	struct apple_dcp_typec_route *route;
+
+	guard(mutex)(&dcp_typec_fabric_lock);
+
+	port = dcp_typec_port_by_index(idx);
+	if (!port || list_empty(&port->routes))
+		return false;
+
+	list_for_each_entry(route, &port->routes, port_link)
+		if (!READ_ONCE(route->dcp->ext_dead))
+			return false;
+
+	return true;
+}
+
 void dcp_typec_port_set_connector(unsigned int idx, bool secondary,
 				  struct apple_connector *connector)
 {
@@ -3164,7 +3353,6 @@ static void dcp_typec_route_unregister(void *data)
 	struct apple_dcp_typec_route *route = data;
 	struct apple_dcp_typec_port *port = route->port;
 
-	guard(mutex)(&dcp_tb_handoff_lock);
 	typec_mux_unregister(route->typec_mux);
 
 	guard(mutex)(&dcp_typec_fabric_lock);
@@ -3172,28 +3360,29 @@ static void dcp_typec_route_unregister(void *data)
 		port->preferred_route = NULL;
 	if (port->split_dcp == route->dcp)
 		dcp_tb_split_teardown_locked(port, true);
-	if (route->tunnel) {
-		dcp_tb_binding_drain(route->dcp);
-		dcp_dptx_disconnect_drained(route->dcp, 0);
-	}
 	if (port->owner == route) {
 		struct apple_dcp *dcp = route->dcp;
 
-		if (!route->tunnel && (port->hpd || dcp->typec_cable_connected))
+		if (route->tunnel)
+			dcp_tb_binding_retire(dcp, route);
+		if (port->hpd || dcp->typec_cable_connected)
 			dcp_dptx_disconnect_oob(to_platform_device(dcp->dev), 0);
 		port->hpd = false;
-		dcp_typec_route_deactivate(route);
+		if (dcp_typec_route_deactivate(route) && dcp_is_external_h17p(dcp))
+			return;
 		port->owner = NULL;
 	}
 	if (port->secondary_owner == route) {
 		struct apple_dcp *dcp = route->dcp;
 
-		if (!route->tunnel && (port->hpd || dcp->typec_cable_connected))
+		if (route->tunnel)
+			dcp_tb_binding_retire(dcp, route);
+		if (port->hpd || dcp->typec_cable_connected)
 			dcp_dptx_disconnect_oob(to_platform_device(dcp->dev), 0);
-		dcp_typec_route_deactivate(route);
+		if (dcp_typec_route_deactivate(route) && dcp_is_external_h17p(dcp))
+			return;
 		port->secondary_owner = NULL;
 	}
-	WRITE_ONCE(route->dcp->tb_retiring, false);
 	port->hpd = !!(port->owner || port->secondary_owner);
 	list_del(&route->port_link);
 	if (route->dual_stream)
@@ -3254,6 +3443,13 @@ static int dcp_typec_route_wiring(struct apple_dcp_typec_route *route,
 				return -EINVAL;
 		}
 	}
+	if (!named[0] && !named[1] && !legacy &&
+	    apple_dp_tunnel_t6030_legacy_mux(dev->of_node, index)) {
+		if (route->xbar != &route->xbar->chip->mux[0] ||
+		    route->xbar->chip->controllers < 3)
+			return -EINVAL;
+		legacy = &route->xbar->chip->mux[1];
+	}
 	wiring = dcp_fabric_wiring(named[0], named[1], !!legacy,
 				   dcp_typec_route_endpoints(connector_np));
 	if (wiring == DCP_FABRIC_INVALID_WIRING)
@@ -3263,7 +3459,7 @@ static int dcp_typec_route_wiring(struct apple_dcp_typec_route *route,
 		/* Old j414/j416 ESP DTBs name cell 1 but never name cell 2. */
 		route->dpin[0] = legacy;
 		route->dpin[1] = &route->xbar->chip->mux[2];
-		dev_warn_once(dev, "legacy typecN-usb4 DPIN wiring; update the device tree\n");
+		dev_warn_once(dev, "implicit DPIN wiring; update the device tree\n");
 	}
 	return 0;
 }
@@ -3368,6 +3564,9 @@ static int dcp_register_typec_routes_present(void *data)
 
 		desc.fwnode = of_fwnode_handle(route_np);
 		desc.set = dcp_typec_route_set;
+		desc.prepare = dcp_typec_route_prepare;
+		desc.finish = dcp_typec_route_finish;
+		desc.commit = dcp_typec_route_commit;
 		desc.name = mux_name;
 		desc.drvdata = route;
 		route->typec_mux = typec_mux_register(dev, &desc);
@@ -3514,7 +3713,7 @@ static bool dcp_hdmi_keep_order(void *ctx)
 
 static bool dcp_hdmi_dual_stream(void *ctx)
 {
-	return dcp_typec_dual_stream();
+	return dcp_typec_ordered_dual_stream();
 }
 
 static int dcp_hdmi_read_hpd(void *ctx)
@@ -3562,8 +3761,12 @@ static void dcp_hdmi_connect_fixed(void *ctx)
 	struct apple_dcp *dcp = ctx;
 	int ret = dcp_fixed_output_select(dcp);
 
-	/* A new HDMI attach gets its own retries. */
-	if (dcp->external_native) {
+	/*
+	 * A new HDMI attach gets its own retries. The converter's HPD pulses
+	 * also land here: while a display is kept connected through a
+	 * withdrawal, keep the retry that bounds that.
+	 */
+	if (dcp->external_native && !atomic_read(&dcp->external_held)) {
 		atomic_set(&dcp->external_retries, 0);
 		cancel_delayed_work(&dcp->external_retry_wq);
 	}
@@ -3694,10 +3897,12 @@ static bool dcp_typec_hdmi_reclaim(struct apple_dcp *dcp)
 	struct dcp_hdmi_reclaim_context ctx;
 
 	lockdep_assert_held(&dcp_typec_fabric_lock);
-	if (!owner || dcp_typec_dual_stream())
+	if (!owner || dcp_typec_ordered_dual_stream())
 		return false;
 	port = owner->port;
-	if (port->owner != owner || !dcp_typec_port_follows(port))
+	/* A port in SAFE keeps its owner until the mux set phase completes. */
+	if (port->owner != owner || port->safe_pending ||
+	    !dcp_typec_port_follows(port))
 		return false;
 	list_for_each_entry(route, &port->routes, port_link) {
 		if (route == owner || !route->dcp->crtc ||
@@ -3820,7 +4025,7 @@ void dcp_link(struct platform_device *pdev, struct apple_crtc *crtc,
 {
 	struct apple_dcp *dcp = platform_get_drvdata(pdev);
 
-	dcp->crtc = crtc;
+	WRITE_ONCE(dcp->crtc, crtc);
 
 	/*
 	 * Type-C connectors belong to physical ports and are bound by the
@@ -3864,6 +4069,12 @@ void dcp_unlink(struct drm_device *drm)
 		dcp = platform_get_drvdata(apple_crtc->dcp);
 		if (dcp->crtc != apple_crtc)
 			continue;
+		/*
+		 * A DCP that kept its DMA pinned this DRM device for its late
+		 * firmware callbacks; its references stay valid, keep them.
+		 */
+		if (READ_ONCE(dcp->retain_dma))
+			continue;
 		dcp->crtc = NULL;
 		dcp->connector = NULL;
 		dcp->fixed_connector = NULL;
@@ -3872,16 +4083,8 @@ void dcp_unlink(struct drm_device *drm)
 	}
 }
 
-bool dcp_has_typec_routes(struct platform_device *pdev)
-{
-	struct apple_dcp *dcp = platform_get_drvdata(pdev);
-
-	return dcp->nr_typec_routes;
-}
-
 void dcp_fabric_shutdown_dptx(struct apple_dcp *dcp)
 {
-	guard(mutex)(&dcp_tb_handoff_lock);
 	if (dcp->dptxep) {
 		/* Mux/tunnel callbacks must stop using the service before its
 		 * endpoint is released. Firmware callbacks are drained by AFK.

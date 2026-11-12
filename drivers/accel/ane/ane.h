@@ -17,6 +17,15 @@
 
 #include "ane_stats.h"
 
+#define ANE_DART_MAX 3
+#define ANE_DART_SCRATCH_MAX 16
+
+struct ane_dart_scratch {
+	u64 iova;
+	struct page *page;
+	struct drm_mm_node *node;
+};
+
 struct ane_device {
 	struct drm_device drm;
 	struct device *dev;
@@ -29,9 +38,9 @@ struct ane_device {
 
 	/* The ane SET block (m1n1 ANE.ps_map): pmgr power-state words for
 	 * this engine, mapped at probe on every SoC. Read-only, always:
-	 * pmgr reads give recovery its ACTUAL evidence, while direct SET
-	 * writes are firmware-locked and external-abort the SoC (T6001
-	 * netconsole-named 2026-09-16; T8103 same mechanism).
+	 * pmgr reads give recovery the ACTUAL power state, while direct
+	 * SET writes are firmware-locked and external-abort the SoC
+	 * (T6001 and T8103 alike).
 	 */
 	phys_addr_t ps_base;
 	void __iomem *ps;
@@ -62,6 +71,9 @@ struct ane_device {
 	 * nodes (see ane_reclaim_preserved). Registered under engine_lock.
 	 */
 	struct list_head preserved_list;
+	/* Fault-drain DMA backing, retained until completion or a safe reset. */
+	struct ane_dart_scratch scratch[ANE_DART_SCRATCH_MAX];
+	int scratch_pages;
 	bool removed;
 
 	/*
@@ -91,9 +103,9 @@ struct ane_device {
 	/*
 	 * SoC descriptor fact: the set0/base islands hold the tm/tq
 	 * register file in retention through any genpd power cycle
-	 * (T6001 bisect evidence 2026-09-16: TQ_EN still reads 0x3000
-	 * after a 2 s gate), so recovery must drain retained task-manager
-	 * state itself instead of expecting a power-on reset to clear it.
+	 * (on T6001 TQ_EN still reads 0x3000 after a 2 s gate), so
+	 * recovery must drain retained task-manager state itself
+	 * instead of expecting a power-on reset to clear it.
 	 * False on T8103, where the cycle is a full POR of the file.
 	 */
 	bool tm_retention;
@@ -135,14 +147,10 @@ struct ane_request {
 	u32 bar[DRM_ANE_TILE_COUNT];
 };
 
-/*
- * Drop the wedge pin (module refcount) without requiring a successful
- * recovery. Used by ane_drm_postclose so a wedged engine cannot leave
- * the module un-unloadable after a clean session close. Recovery stays
- * safe to call afterwards; if it returns error, the postclose path has
- * already unlocked the module count so the operator can swap the ko.
- */
-void ane_wedge_clear(struct ane_device *ane);
+#if IS_ENABLED(CONFIG_KUNIT)
+int ane_submit_check_sizes(const struct drm_ane_submit *args, size_t cmd_size,
+			   size_t btsp_size);
+#endif
 
 /*
  * Reclaim wedge-preserved BO ranges (unmap, release nodes and pages).
@@ -155,15 +163,6 @@ int ane_boost_init(struct ane_device *ane);
 void ane_boost_exit(struct ane_device *ane);
 void ane_boost_begin(struct ane_device *ane);
 void ane_boost_end(struct ane_device *ane);
-
-#define ANE_DART_MAX 3
-#define ANE_DART_SCRATCH_MAX 16
-
-struct ane_dart_scratch {
-	u64 iova;
-	struct page *page;
-	struct drm_mm_node *node;
-};
 
 int ane_dart_init(struct ane_device *ane);
 void ane_dart_mask(struct ane_device *ane);

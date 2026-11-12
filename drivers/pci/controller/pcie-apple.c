@@ -39,6 +39,7 @@
 #include <linux/rcupdate.h>
 #include <linux/reset.h>
 #include <linux/soc/apple/dart.h>
+#include <linux/soc/apple/pmgr-pwrstate.h>
 #include <linux/soc/apple/tunable.h>
 #include <linux/suspend.h>
 
@@ -68,6 +69,32 @@ static int link_up_timeout = 500;
 module_param(link_up_timeout, int, 0644);
 MODULE_PARM_DESC(link_up_timeout, "PCIe link training timeout in milliseconds");
 
+/* Values outside 0..2 are refused, so they cannot enable anything. */
+static int s2r_suspend_set(const char *val, const struct kernel_param *kp)
+{
+	return param_set_uint_minmax(val, kp, 0, 2);
+}
+
+static const struct kernel_param_ops s2r_suspend_ops = {
+	.set	= s2r_suspend_set,
+	.get	= param_get_uint,
+};
+
+static unsigned int s2r_suspend;
+module_param_cb(s2r_suspend, &s2r_suspend_ops, &s2r_suspend, 0644);
+MODULE_PARM_DESC(s2r_suspend,
+		 "Any t8103 machine: take the port links down for suspend-to-RAM (0: off, default; 1: only ports with no driver bound below them; 2: also ports with drivers bound, for testing)");
+
+static bool s2r_rc_restart;
+module_param(s2r_rc_restart, bool, 0644);
+MODULE_PARM_DESC(s2r_rc_restart,
+		 "Experimental, with s2r_suspend: restart a stopped root complex core on resume (default: off)");
+
+static bool s2r_gp_off;
+module_param(s2r_gp_off, bool, 0644);
+MODULE_PARM_DESC(s2r_gp_off,
+		 "Experimental, with s2r_suspend: also let genpd power the host's always-on domain off before the suspend-to-RAM commit (default: off)");
+
 static bool tunnel_kernel_init = true;
 module_param(tunnel_kernel_init, bool, 0444);
 MODULE_PARM_DESC(tunnel_kernel_init,
@@ -93,7 +120,8 @@ static const char *const apple_pcie_tunnel_cold_init_machines[] = {
  */
 bool apple_pcie_tunnel_needs_cold_init(struct device_node *np)
 {
-	struct device_node *dart = NULL;
+	struct of_phandle_args iommu_spec = {};
+	struct device_node *dart;
 	bool tunables;
 	u32 status;
 
@@ -106,8 +134,9 @@ bool apple_pcie_tunnel_needs_cold_init(struct device_node *np)
 	    status == 1)
 		return false;
 
-	if (of_map_id(np, 0, "iommu-map", "iommu-map-mask", &dart, NULL) || !dart)
+	if (of_map_iommu_id(np, 0, &iommu_spec) || !iommu_spec.np)
 		return false;
+	dart = iommu_spec.np;
 	tunables = of_property_present(dart, "apple,tunable");
 	if (!tunables)
 		pr_warn_once("%pOF: no PCIe-C DART tunables, not cold-initializing\n",
@@ -336,6 +365,10 @@ struct apple_pcie {
 	bool			reset_on_resume;
 	bool			link_kept;
 	bool			resume_failed; /* cleared only by teardown and reprobe */
+	bool			s2r_down;
+	unsigned int		s2r_mode;
+	bool			s2r_rc_restart;
+	bool			s2r_released;
 	struct reset_control	*reset;
 	bool			neo_config_ready;
 	u8			neo_secondary_bus;
@@ -350,6 +383,8 @@ struct apple_pcie {
 	u32			msi_vector_base;
 };
 
+#define MAX_AUX_PERST 3
+
 struct apple_pcie_port {
 	raw_spinlock_t		lock;
 	raw_spinlock_t		irq_lock;
@@ -362,6 +397,10 @@ struct apple_pcie_port {
 	unsigned long		*sid_map;
 	u32			*saved_rid2sid;
 	struct apple_tunable	*tunable;
+	struct gpio_desc	*perst;
+	struct gpio_desc	*aux_perst[MAX_AUX_PERST];
+	struct gpio_desc	*pwren;
+	u32			num_aux_perst;
 	unsigned int		irq;
 	unsigned int		link_irqs[2];
 	u32			saved_intmask;
@@ -371,6 +410,7 @@ struct apple_pcie_port {
 	bool			needs_stop;
 	bool			link_failed;
 	bool			irq_disabled;
+	bool			s2r_down;
 };
 
 static void rmw_set(u32 set, void __iomem *addr)
@@ -487,6 +527,7 @@ static struct irq_chip apple_msi_bottom_chip = {
 	.irq_eoi		= irq_chip_eoi_parent,
 	.irq_set_affinity	= irq_chip_set_affinity_parent,
 	.irq_set_type		= irq_chip_set_type_parent,
+	.irq_set_wake		= irq_chip_set_wake_parent,
 	.irq_compose_msi_msg	= apple_msi_compose_msg,
 };
 
@@ -1463,73 +1504,77 @@ static u32 apple_pcie_rid2sid_write(struct apple_pcie_port *port,
 	return apple_pcie_port_readl(port, offset);
 }
 
-static int apple_pcie_setup_link(struct apple_pcie *pcie,
-				 struct apple_pcie_port *port,
-				 struct device_node *np)
+/*
+ * Look up the port's PERST# lines and keep them for a later power-up.
+ * @flags is GPIOD_OUT_HIGH at probe, which asserts PERST#.
+ */
+static int apple_pcie_port_get_perst(struct apple_pcie *pcie,
+				     struct apple_pcie_port *port,
+				     struct device_node *np,
+				     enum gpiod_flags flags)
 {
-#define MAX_AUX_PERST 3
-	struct gpio_desc *aux_reset[MAX_AUX_PERST] = { NULL };
-	u32 num_aux_resets = 0;
-	struct gpio_desc *reset, *pwren = NULL;
-	u32 stat;
-	int ret;
+	struct gpio_desc *gd;
 
-	/*
-	 * Assert PERST# and configure the pin as output.
-	 * The Aquantia AQC113 10GB nic used desktop macs is sensitive to
-	 * deasserting it without prior clock setup.
-	 * Observed on M1 Max/Ultra Mac Studios under m1n1's hypervisor.
-	 */
-	reset = devm_fwnode_gpiod_get(pcie->dev, of_fwnode_handle(np), "reset",
-				      GPIOD_OUT_HIGH, "PERST#");
-	if (IS_ERR(reset))
-		return PTR_ERR(reset);
+	gd = devm_fwnode_gpiod_get(pcie->dev, of_fwnode_handle(np), "reset",
+				   flags, "PERST#");
+	if (IS_ERR(gd))
+		return PTR_ERR(gd);
+	port->perst = gd;
 	// HACK: use additional "reset-gpios" until pci-pwrctrl gains PERST# support.
 	for (u32 idx = 0; idx < MAX_AUX_PERST; idx++) {
-		aux_reset[idx] = devm_fwnode_gpiod_get_index(pcie->dev,
-							     of_fwnode_handle(np),
-							     "reset", idx + 1,
-							     GPIOD_OUT_HIGH,
-							     "PERST#");
-		if (IS_ERR(aux_reset[idx])) {
-			if (PTR_ERR(aux_reset[idx]) == -ENOENT)
+		gd = devm_fwnode_gpiod_get_index(pcie->dev,
+						 of_fwnode_handle(np),
+						 "reset", idx + 1,
+						 flags, "PERST#");
+		if (IS_ERR(gd)) {
+			if (PTR_ERR(gd) == -ENOENT)
 				break;
 			else
-				return PTR_ERR(aux_reset[idx]);
+				return PTR_ERR(gd);
 		}
-		num_aux_resets++;
+		port->aux_perst[idx] = gd;
+		port->num_aux_perst++;
 	}
-	dev_info(pcie->dev, "Using %u auxiliary PERST#\n", num_aux_resets);
+	dev_info(pcie->dev, "Using %u auxiliary PERST#\n", port->num_aux_perst);
 
-	pwren = devm_fwnode_gpiod_get(pcie->dev, of_fwnode_handle(np), "pwren",
-					    GPIOD_ASIS, "PWREN");
-	if (IS_ERR(pwren)) {
-		if (PTR_ERR(pwren) == -ENOENT)
-			pwren = NULL;
-		else
-			return PTR_ERR(pwren);
-	}
+	return 0;
+}
+
+/*
+ * Power the port up and release PERST#. @set_pwren is false only when the
+ * endpoint power was left on and must not be touched again (the PWREN line
+ * can be an SMC GPIO, which is not usable in the noirq phase).
+ */
+static int apple_pcie_port_power_up(struct apple_pcie *pcie,
+				    struct apple_pcie_port *port,
+				    bool set_pwren)
+{
+	u32 stat;
+	int ret;
 
 	rmw_set(PORT_APPCLK_EN, port->base + PORT_APPCLK);
 
 	/* Assert PERST# before setting up the clock */
-	gpiod_set_value_cansleep(reset, 1);
-	for (u32 idx = 0; idx < num_aux_resets; idx++)
-		gpiod_set_value_cansleep(aux_reset[idx], 1);
+	gpiod_set_value_cansleep(port->perst, 1);
+	for (u32 idx = 0; idx < port->num_aux_perst; idx++)
+		gpiod_set_value_cansleep(port->aux_perst[idx], 1);
 
-	/* Power-cycle devices which cannot inherit their firmware state. */
-	if (pcie->hw->pwren_off_ms) {
-		if (!pwren)
-			return -EINVAL;
-		rmw_clear(PORT_PERST_OFF, port->base + pcie->hw->port_perst);
-		ret = gpiod_set_value_cansleep(pwren, 0);
+	if (set_pwren) {
+		/* Power-cycle devices which cannot inherit their firmware state. */
+		if (pcie->hw->pwren_off_ms) {
+			if (!port->pwren)
+				return -EINVAL;
+			rmw_clear(PORT_PERST_OFF,
+				  port->base + pcie->hw->port_perst);
+			ret = gpiod_set_value_cansleep(port->pwren, 0);
+			if (ret)
+				return ret;
+			msleep(pcie->hw->pwren_off_ms);
+		}
+		ret = gpiod_set_value_cansleep(port->pwren, 1);
 		if (ret)
 			return ret;
-		msleep(pcie->hw->pwren_off_ms);
 	}
-	ret = gpiod_set_value_cansleep(pwren, 1);
-	if (ret)
-		return ret;
 
 	if (!pcie->hw->retain_clocks) {
 		ret = apple_pcie_setup_refclk(pcie, port);
@@ -1541,18 +1586,18 @@ static int apple_pcie_setup_link(struct apple_pcie *pcie,
 	 * The minimal Tperst-clk value is 100us (PCIe CEM r5.0, 2.9.2)
 	 * If powering up, the minimal Tpvperl is 100ms
 	 */
-	if (pwren)
+	if (port->pwren)
 		msleep(pcie->hw->pwren_on_ms ?: 100);
 	else
 		usleep_range(100, 200);
 
 	/* Deassert PERST# */
 	rmw_set(PORT_PERST_OFF, port->base + pcie->hw->port_perst);
-	ret = gpiod_set_value_cansleep(reset, 0);
+	ret = gpiod_set_value_cansleep(port->perst, 0);
 	if (ret)
 		return ret;
-	for (u32 idx = 0; idx < num_aux_resets; idx++)
-		gpiod_set_value_cansleep(aux_reset[idx], 0);
+	for (u32 idx = 0; idx < port->num_aux_perst; idx++)
+		gpiod_set_value_cansleep(port->aux_perst[idx], 0);
 
 	/* Wait for 100ms after PERST# deassertion (PCIe r5.0, 6.6.1) */
 	msleep(100);
@@ -1560,11 +1605,59 @@ static int apple_pcie_setup_link(struct apple_pcie *pcie,
 	ret = readl_relaxed_poll_timeout(port->base + PORT_STATUS, stat,
 					 stat & PORT_STATUS_READY, 100, 250000);
 	if (ret < 0) {
-		dev_err(pcie->dev, "port %pOF ready wait timeout\n", np);
+		dev_err(pcie->dev, "port %pOF ready wait timeout\n", port->np);
 		return ret;
 	}
 
 	return 0;
+}
+
+static int apple_pcie_setup_link(struct apple_pcie *pcie,
+				 struct apple_pcie_port *port,
+				 struct device_node *np)
+{
+	struct gpio_desc *pwren;
+	int ret;
+
+	/*
+	 * Assert PERST# and configure the pin as output.
+	 * The Aquantia AQC113 10GB nic used desktop macs is sensitive to
+	 * deasserting it without prior clock setup.
+	 * Observed on M1 Max/Ultra Mac Studios under m1n1's hypervisor.
+	 */
+	ret = apple_pcie_port_get_perst(pcie, port, np, GPIOD_OUT_HIGH);
+	if (ret)
+		return ret;
+
+	pwren = devm_fwnode_gpiod_get(pcie->dev, of_fwnode_handle(np), "pwren",
+				      GPIOD_ASIS, "PWREN");
+	if (IS_ERR(pwren)) {
+		if (PTR_ERR(pwren) == -ENOENT)
+			pwren = NULL;
+		else
+			return PTR_ERR(pwren);
+	}
+	port->pwren = pwren;
+
+	return apple_pcie_port_power_up(pcie, port, true);
+}
+
+static void apple_pcie_port_enable_clkgate(struct apple_pcie *pcie,
+					   struct apple_pcie_port *port)
+{
+	if (pcie->hw->retain_clocks)
+		return;
+
+	if (pcie->hw->port_refclk)
+		rmw_clear(PORT_REFCLK_CGDIS,
+			  port->base + pcie->hw->port_refclk);
+	else if (port->phy)
+		rmw_set(PHY_LANE_CFG_REFCLKCGEN,
+			port->phy + PHY_LANE_CFG);
+
+	/* PCIe-C APPCLK state is part of the m1n1 handoff. */
+	if (!pcie->hw->tunneled)
+		rmw_clear(PORT_APPCLK_CGDIS, port->base + PORT_APPCLK);
 }
 
 static int apple_pcie_setup_port(struct apple_pcie *pcie,
@@ -1711,18 +1804,7 @@ static int apple_pcie_setup_port(struct apple_pcie *pcie,
 		}
 	}
 
-	if (!pcie->hw->retain_clocks) {
-		if (pcie->hw->port_refclk)
-			rmw_clear(PORT_REFCLK_CGDIS,
-				  port->base + pcie->hw->port_refclk);
-		else if (port->phy)
-			rmw_set(PHY_LANE_CFG_REFCLKCGEN,
-				port->phy + PHY_LANE_CFG);
-
-		/* PCIe-C APPCLK state is part of the m1n1 handoff. */
-		if (!pcie->hw->tunneled)
-			rmw_clear(PORT_APPCLK_CGDIS, port->base + PORT_APPCLK);
-	}
+	apple_pcie_port_enable_clkgate(pcie, port);
 
 	ret = apple_pcie_port_setup_irq(port);
 	if (ret)
@@ -1787,16 +1869,36 @@ static int apple_pcie_setup_port(struct apple_pcie *pcie,
 	if (pcie->hw->tunneled)
 		WRITE_ONCE(port->started, true);
 	if (pcie->hw->root_bus_only)
-		dev_info(pcie->dev,
-			 "port %pOF RUN=%#x link=%#x; downstream config blocked\n",
+		dev_info(pcie->dev, "port %pOF RUN=%#x link=%#x; downstream config %s\n",
 			 np, apple_pcie_port_readl(port, PORT_STATUS),
-			 apple_pcie_port_readl(port, PORT_LINKSTS));
+			 apple_pcie_port_readl(port, PORT_LINKSTS),
+			 pcie->piodma_supplier ? "waits for the bootstrap" : "blocked");
 
 	return 0;
 
 err_teardown:
 	apple_pcie_port_teardown(port);
 	return ret;
+}
+
+/*
+ * Each MSI vector is an AIC interrupt of its own, so a vector can wake the
+ * system exactly when the AIC line behind it can. Forward the wake setting
+ * from the per-device PCI/MSI chip down to the AIC, which otherwise fails
+ * enable_irq_wake() for every MSI and leaves PCIe functions without a way
+ * to end suspend-to-idle.
+ */
+static bool apple_msi_init_dev_msi_info(struct device *dev,
+					struct irq_domain *domain,
+					struct irq_domain *real_parent,
+					struct msi_domain_info *info)
+{
+	if (!msi_lib_init_dev_msi_info(dev, domain, real_parent, info))
+		return false;
+
+	if (!info->chip->irq_set_wake)
+		info->chip->irq_set_wake = irq_chip_set_wake_parent;
+	return true;
 }
 
 static const struct msi_parent_ops apple_msi_parent_ops = {
@@ -1808,7 +1910,7 @@ static const struct msi_parent_ops apple_msi_parent_ops = {
 				   MSI_FLAG_PCI_MSI_MASK_PARENT),
 	.chip_flags		= MSI_CHIP_FLAG_SET_EOI,
 	.bus_select_token	= DOMAIN_BUS_PCI_MSI,
-	.init_dev_msi_info	= msi_lib_init_dev_msi_info,
+	.init_dev_msi_info	= apple_msi_init_dev_msi_info,
 };
 
 /* T6030 has one shared AIC MSI window, partitioned by its ADT bridges. */
@@ -1857,10 +1959,17 @@ static int apple_msi_init(struct apple_pcie *pcie)
 		    of_address_to_resource(to_of_node(fwnode), 0, &ecam))
 			goto invalid_slice;
 		switch (ecam.start) {
-		case 0x730000000ULL: expected_base = 0x20; break;
-		case 0xb30000000ULL: expected_base = 0x40; break;
-		case 0xf30000000ULL: expected_base = 0x60; break;
-		default: goto invalid_slice;
+		case 0x730000000ULL:
+			expected_base = 0x20;
+			break;
+		case 0xb30000000ULL:
+			expected_base = 0x40;
+			break;
+		case 0xf30000000ULL:
+			expected_base = 0x60;
+			break;
+		default:
+			goto invalid_slice;
 		}
 		if (args.args_count != 3 || args.args[0] != 0 ||
 		    args.args[2] != IRQ_TYPE_EDGE_RISING)
@@ -1872,8 +1981,9 @@ static int apple_msi_init(struct apple_pcie *pcie)
 				      "apple,msi-vector-base", NULL) &&
 		    args.args[1] == 1342 && pcie->nvecs == 512) {
 			/*
-			 * Older device trees gave each host the global MSI window.
-			 * Correct it here so those device trees keep working.
+			 * Old experimental boot DTs exposed the global window to
+			 * each host. Correct it here so old recovery kernels can
+			 * continue using the unchanged shared bootloader DT.
 			 */
 			pcie->msi_vector_base = expected_base;
 			pcie->nvecs = 32;
@@ -1977,6 +2087,7 @@ static int apple_pcie_enable_device(struct pci_host_bridge *bridge, struct pci_d
 	struct resource *res;
 	u32 sid, val, readback, rid = pci_dev_id(pdev);
 	struct apple_pcie_port *port;
+	struct of_phandle_args iommu_spec = {};
 	int idx, err;
 
 	/* A generic rescan must not enable cached children of failed admission. */
@@ -2011,11 +2122,12 @@ static int apple_pcie_enable_device(struct pci_host_bridge *bridge, struct pci_d
 	dev_dbg(&pdev->dev, "added to bus %s, index %d\n",
 		pci_name(pdev->bus->self), port->idx);
 
-	err = of_map_id(port->pcie->dev->of_node, rid, "iommu-map",
-			"iommu-map-mask", NULL, &sid);
+	err = of_map_iommu_id(port->pcie->dev->of_node, rid, &iommu_spec);
 	if (err)
 		return err;
 
+	of_node_put(iommu_spec.np);
+	sid = iommu_spec.args[0];
 	mutex_lock(&port->pcie->lock);
 
 	if (port->pcie->hw->sid_indexed_rid2sid) {
@@ -2145,7 +2257,7 @@ static int apple_pcie_config_write(struct pci_bus *bus, unsigned int devfn,
 	int ret;
 
 	ret = pci_generic_config_write(bus, devfn, where, size, val);
-	if (ret || !pcie || !pcie->kernel_init)
+	if (ret || !pcie || !(pcie->kernel_init || pcie->tunnel_cold_init))
 		return ret;
 	/* Root-port prefetchable window. The port block has to be told too. */
 	if (bus->number != cfg->busr.start || devfn)
@@ -2158,11 +2270,62 @@ static int apple_pcie_config_write(struct pci_bus *bus, unsigned int devfn,
 	return 0;
 }
 
+/*
+ * The tunnel wait covers only the root port's link. A switch Downstream Port
+ * with a slot but no hot-plug capability (an eGPU behind an ASM2464PD) trains
+ * its own link later, yet its bus is scanned once: a card that answers after
+ * that scan is never enumerated with the tunnel, whose bus numbers and windows
+ * are then fixed. Give such a link the same time before its bus is scanned,
+ * plus 100 ms (PCIe r7.0 sec 6.6.1 requires it after training above 5 GT/s;
+ * it is waited for at every speed here, which is conservative).
+ * Hot-plug capable ports are left to pciehp.
+ */
+static int apple_pcie_add_bus(struct pci_bus *bus)
+{
+	struct pci_config_window *cfg = bus->sysdata;
+	struct pci_dev *port = bus->self;
+	unsigned long start = jiffies;
+	unsigned long timeout = start +
+				msecs_to_jiffies(APPLE_PCIE_TUNNEL_READY_MS);
+	u16 lnksta, sltsta;
+
+	if (!port || pci_pcie_type(port) != PCI_EXP_TYPE_DOWNSTREAM ||
+	    !(pcie_caps_reg(port) & PCI_EXP_FLAGS_SLOT) ||
+	    port->is_hotplug_bridge || !port->link_active_reporting ||
+	    !apple_pcie_lookup(cfg->parent)->hw->tunneled)
+		return 0;
+
+	if (pcie_capability_read_word(port, PCI_EXP_LNKSTA, &lnksta) ||
+	    (lnksta & PCI_EXP_LNKSTA_DLLLA))
+		return 0;
+
+	if (pcie_capability_read_word(port, PCI_EXP_SLTSTA, &sltsta))
+		return 0;
+	pci_info(port, "slot link down before scan (SltSta %#06x), waiting up to %d ms\n",
+		 sltsta, APPLE_PCIE_TUNNEL_READY_MS);
+	do {
+		msleep(10);
+		if (pcie_capability_read_word(port, PCI_EXP_LNKSTA, &lnksta))
+			return 0;
+		if (lnksta & PCI_EXP_LNKSTA_DLLLA) {
+			pci_info(port, "slot link up after %u ms\n",
+				 jiffies_to_msecs(jiffies - start));
+			msleep(PCIE_RESET_CONFIG_WAIT_MS);
+			return 0;
+		}
+	} while (time_before(jiffies, timeout));
+
+	pci_info(port, "slot link still down after %d ms\n",
+		 APPLE_PCIE_TUNNEL_READY_MS);
+	return 0;
+}
+
 static const struct pci_ecam_ops apple_pcie_cfg_ecam_ops = {
 	.init		= apple_pcie_init,
 	.enable_device	= apple_pcie_enable_device,
 	.disable_device	= apple_pcie_disable_device,
 	.pci_ops	= {
+		.add_bus	= apple_pcie_add_bus,
 		.map_bus	= apple_pcie_map_bus,
 		.read		= pci_generic_config_read,
 		.write		= apple_pcie_config_write,
@@ -2519,12 +2682,56 @@ static int apple_pcie_neo_check_memory(struct pci_dev *root)
 	return 0;
 }
 
+/*
+ * Both functions must come out of the bootstrap cold. Check that before they
+ * are published, because publication lets their drivers bind and take over.
+ */
+static int apple_pcie_neo_check_cold(struct apple_pcie *pcie, struct pci_dev *root)
+{
+	struct pci_dev *endpoint;
+	u16 command;
+	int function, ret = 0;
+
+	/* Check and quiesce both functions; keep the first error. */
+	for (function = 0; function < 2; function++) {
+		endpoint = pci_get_slot(root->subordinate, PCI_DEVFN(0, function));
+		if (!endpoint) {
+			ret = ret ?: -ENODEV;
+			continue;
+		}
+		if (pci_read_config_word(endpoint, PCI_COMMAND, &command)) {
+			ret = ret ?: -EIO;
+		} else {
+			dev_info(pcie->dev, "enumerated %s id=%04x:%04x command=%#x\n",
+				 pci_name(endpoint), endpoint->vendor, endpoint->device, command);
+			if (command & PCI_COMMAND_MASTER) {
+				pci_clear_master(endpoint);
+				ret = ret ?: -EIO;
+			}
+		}
+		pci_dev_put(endpoint);
+	}
+	return ret;
+}
+
+/*
+ * Rescan lock held, downstream config still open. Remove functions that were
+ * scanned but will not be published, so that a later rescan cannot publish
+ * them after config access has been closed again.
+ */
+static void apple_pcie_neo_unscan(struct pci_dev *root)
+{
+	struct pci_dev *dev, *tmp;
+
+	list_for_each_entry_safe_reverse(dev, tmp, &root->subordinate->devices, bus_list)
+		pci_stop_and_remove_bus_device(dev);
+}
+
 static int apple_pcie_neo_enumerate(struct pci_host_bridge *bridge)
 {
 	struct apple_pcie *pcie = pci_host_bridge_priv(bridge);
-	struct pci_dev *root, *endpoint;
-	u16 command;
-	int function, ret;
+	struct pci_dev *root;
+	int ret;
 
 	root = pci_get_slot(bridge->bus, PCI_DEVFN(0, 0));
 	if (!root)
@@ -2555,55 +2762,16 @@ static int apple_pcie_neo_enumerate(struct pci_host_bridge *bridge)
 		dev_err(pcie->dev, "root memory forwarding unavailable after assignment: %d\n", ret);
 		goto close_config;
 	}
-	for (function = 0; function < 2; function++) {
-		endpoint = pci_get_slot(root->subordinate, PCI_DEVFN(0, function));
-		if (!endpoint) {
-			ret = -ENODEV;
-			break;
-		}
-		if (pci_read_config_word(endpoint, PCI_COMMAND, &command)) {
-			ret = -EIO;
-		} else if (endpoint->vendor != PCI_VENDOR_ID_MEDIATEK ||
-			   endpoint->device != (function ? 0x793b : 0x7932)) {
-			ret = -ENODEV;
-		} else {
-			dev_info(pcie->dev, "enumerated %s id=%04x:%04x command=%#x driver=%s\n",
-				 pci_name(endpoint), endpoint->vendor, endpoint->device, command,
-				 endpoint->driver ? endpoint->driver->name : "unbound");
-			if (command & PCI_COMMAND_MASTER) {
-				/* Admission requires cold, unbound endpoints. */
-				pci_clear_master(endpoint);
-				ret = -EIO;
-			}
-			if (endpoint->driver)
-				ret = -EBUSY;
-			if (!ret) {
-				/*
-				 * The radios require the equivalent of ASPM performance
-				 * policy before their drivers start. Keep this restriction
-				 * on their shared link, including L1 substates and Clock
-				 * PM, without changing policy on other PCIe links. The
-				 * PCI core tracks the restriction across policy changes.
-				 */
-				ret = pci_disable_link_state(endpoint,
-							     PCIE_LINK_STATE_ALL);
-				if (ret)
-					pci_err(endpoint,
-						"cannot disable radio link power states: %d\n",
-						ret);
-			}
-		}
-		pci_dev_put(endpoint);
-		if (ret)
-			break;
-	}
-	if (!ret) {
-		apple_piodma_bootstrap_admitted(pcie->piodma_supplier);
-		pci_bus_add_devices(root->subordinate);
-	}
-close_config:
+	ret = apple_pcie_neo_check_cold(pcie, root);
 	if (ret)
+		goto close_config;
+	apple_piodma_bootstrap_admitted(pcie->piodma_supplier);
+	pci_bus_add_devices(root->subordinate);
+close_config:
+	if (ret) {
+		apple_pcie_neo_unscan(root);
 		WRITE_ONCE(pcie->neo_config_ready, false);
+	}
 	pci_unlock_rescan_remove();
 	if (!ret)
 		dev_info(pcie->dev, "NEO_RADIO_READY; functions0/1 admitted with link power states disabled\n");
@@ -2644,9 +2812,9 @@ static int apple_pcie_probe(struct platform_device *pdev)
 		}
 	}
 
-	if (hw->root_bus_only &&
-	    of_device_is_compatible(dev->of_node, "apple,t8140-pcie") &&
-	    apple_piodma_bootstrap_enabled()) {
+	/* Only a host that the board links to a bootstrap engine opens bus 1. */
+	if (hw->root_bus_only && apple_piodma_bootstrap_enabled() &&
+	    of_property_present(dev->of_node, "apple,piodma")) {
 		ret = apple_piodma_bootstrap_get(dev, &piodma_supplier);
 		if (ret)
 			return dev_err_probe(dev, ret, "PIODMA supplier unavailable\n");
@@ -2670,14 +2838,15 @@ static int apple_pcie_probe(struct platform_device *pdev)
 		bridge->native_dpc = false;
 		dev_info_once(dev, "Neo radio host: native AER/DPC recovery disabled for retained-DMA bootstrap\n");
 	}
-	if (hw->root_bus_only)
+	if (hw->root_bus_only && !piodma_supplier)
 		dev_info(dev, "root-port probe only; downstream config is blocked\n");
 	pcie->base = devm_platform_ioremap_resource(pdev, 1);
 	if (IS_ERR(pcie->base))
 		return PTR_ERR(pcie->base);
 	if (pcie->hw->tunneled) {
-		pcie->kernel_init = of_property_read_bool(dev->of_node,
-							  "apple,pciec-kernel-init");
+		pcie->kernel_init =
+			of_device_is_compatible(dev->of_node, "apple,t8103-pciec") &&
+			of_property_read_bool(dev->of_node, "apple,pciec-kernel-init");
 		pcie->tunnel_cold_init =
 			apple_pcie_tunnel_needs_cold_init(dev->of_node);
 		ret = apple_pcie_tunnel_init_resources(pdev, pcie);
@@ -3099,6 +3268,13 @@ int apple_pcie_tunnel_prepare(struct device *dev, struct device_node *tunnel)
 	if (!np)
 		return 0;
 
+	/* A qualified bootloader handoff needs no cold initialization. */
+	if (!of_property_read_u32(np, "apple,pciec-preinit-status", &stat) &&
+	    stat == 1) {
+		ret = 0;
+		goto out_np;
+	}
+
 	match = of_match_node(apple_pcie_of_match, np);
 	if (!match) {
 		ret = -ENODEV;
@@ -3149,6 +3325,11 @@ int apple_pcie_tunnel_prepare(struct device *dev, struct device_node *tunnel)
 
 	pcie->dev = dev;
 	pcie->hw = match->data;
+	/* Keep the previous fallback on unqualified M3-family machines. */
+	if (pcie->hw == &t8122_pciec_hw &&
+	    !of_machine_is_compatible("apple,t6030") &&
+	    of_device_is_compatible(dev->of_node, "apple,t8103-pciec"))
+		pcie->hw = &t8103_pciec_hw;
 	pcie->kernel_init = kernel_init;
 	pcie->early_cfg = config.base;
 	pcie->debug_base = debug.base;
@@ -3359,12 +3540,412 @@ static void apple_pcie_stop_for_sleep(struct device *dev)
 		apple_pcie_tunnel_hierarchy_lost(dev);
 }
 
+/*
+ * Suspend-to-RAM on t8103 (pcie_apple.s2r_suspend): the AON sequencer that
+ * performs the final power-down takes ps_apcie_gp off itself and waits for
+ * it to be gated, which apparently does not happen while a port link is
+ * trained with PERST# deasserted and the reference clock requested. Take
+ * the ports down first; the domain itself is left on, as the vendor OS
+ * leaves it. Not for suspend-to-idle, which keeps the current behaviour.
+ */
+#if IS_ENABLED(CONFIG_APPLE_S2R)
+void apple_s2r_note_pcie(unsigned int down, unsigned int skipped);
+#else
+static inline void apple_s2r_note_pcie(unsigned int down, unsigned int skipped) { }
+#endif
+
+static bool apple_pcie_s2r_wanted(struct apple_pcie *pcie)
+{
+	return READ_ONCE(s2r_suspend) > 0 &&
+	       pm_suspend_target_state == PM_SUSPEND_MEM &&
+	       of_device_is_compatible(pcie->dev->of_node, "apple,t8103-pcie");
+}
+
+/* Inverse of apple_pcie_setup_refclk(); a missing acknowledgment only warns. */
+static void apple_pcie_port_stop_refclk(struct apple_pcie *pcie,
+					struct apple_pcie_port *port)
+{
+	u32 stat;
+
+	if (pcie->hw->port_refclk)
+		rmw_clear(PORT_REFCLK_EN, port->base + pcie->hw->port_refclk);
+	rmw_clear(PHY_LANE_CFG_REFCLKEN, port->phy + PHY_LANE_CFG);
+
+	if (pcie->hw->phy_lane_ctl)
+		rmw_set(PHY_LANE_CTL_CFGACC, port->phy + pcie->hw->phy_lane_ctl);
+
+	rmw_clear(PHY_LANE_CFG_REFCLK1REQ, port->phy + PHY_LANE_CFG);
+	if (readl_relaxed_poll_timeout(port->phy + PHY_LANE_CFG, stat,
+				       !(stat & PHY_LANE_CFG_REFCLK1ACK),
+				       100, 50000))
+		dev_warn(pcie->dev, "port %pOF refclk1 still acknowledged\n",
+			 port->np);
+
+	rmw_clear(PHY_LANE_CFG_REFCLK0REQ, port->phy + PHY_LANE_CFG);
+	if (readl_relaxed_poll_timeout(port->phy + PHY_LANE_CFG, stat,
+				       !(stat & PHY_LANE_CFG_REFCLK0ACK),
+				       100, 50000))
+		dev_warn(pcie->dev, "port %pOF refclk0 still acknowledged\n",
+			 port->np);
+
+	if (pcie->hw->phy_lane_ctl)
+		rmw_clear(PHY_LANE_CTL_CFGACC, port->phy + pcie->hw->phy_lane_ctl);
+}
+
+struct apple_pcie_s2r_check {
+	struct apple_pcie_port	*port;
+	struct pci_dev		*pdev;
+	const char		*why;
+	bool			allow_bound;
+};
+
+static int apple_pcie_s2r_check_dev(struct pci_dev *pdev, void *data)
+{
+	struct apple_pcie_s2r_check *check = data;
+
+	if (pci_is_root_bus(pdev->bus) || apple_pcie_get_port(pdev) != check->port)
+		return 0;
+
+	/*
+	 * A driver resuming after a failed bring-up would access the port's
+	 * aperture. Unless s2r_suspend=2, take down only ports with no driver
+	 * bound below them. The PCI core sets skip_bus_pm for a function its
+	 * driver left in D0.
+	 */
+	if (pdev->dev.driver && !check->allow_bound)
+		check->why = "has a driver bound";
+	else if (pdev->dev.driver && pdev->skip_bus_pm)
+		check->why = "left in D0 by its driver";
+	else if (device_may_wakeup(&pdev->dev))
+		check->why = "armed for wake-up";
+	else
+		return 0;
+
+	check->pdev = pdev;
+	return 1;
+}
+
+/*
+ * Whether the port can be taken down: it has a link, PERST# can be driven,
+ * and no function below it was left running or armed for wake-up. A
+ * skipped port is left exactly as it is.
+ */
+static bool apple_pcie_s2r_port_ok(struct apple_pcie_port *port)
+{
+	struct pci_host_bridge *bridge = dev_get_drvdata(port->pcie->dev);
+	struct apple_pcie_s2r_check check = {
+		.port		= port,
+		.allow_bound	= port->pcie->s2r_mode >= 2,
+	};
+	struct apple_pcie *pcie = port->pcie;
+	int ret;
+
+	if (!(apple_pcie_port_readl(port, PORT_LINKSTS) & PORT_LINKSTS_UP)) {
+		dev_info(pcie->dev, "port %pOF skipped: no link\n", port->np);
+		return false;
+	}
+
+	/* No PERST# was looked up if the boot loader left the link up. */
+	if (!port->perst) {
+		ret = apple_pcie_port_get_perst(pcie, port, port->np, GPIOD_ASIS);
+		if (ret) {
+			/* A partial lookup must not look usable next time. */
+			port->perst = NULL;
+			port->num_aux_perst = 0;
+			dev_warn(pcie->dev, "port %pOF skipped: PERST# lookup failed: %d\n",
+				 port->np, ret);
+			return false;
+		}
+	}
+
+	pci_walk_bus(bridge->bus, apple_pcie_s2r_check_dev, &check);
+	if (check.pdev) {
+		dev_warn(pcie->dev, "port %pOF skipped: %s %s\n", port->np,
+			 pci_name(check.pdev), check.why);
+		return false;
+	}
+
+	return true;
+}
+
+/*
+ * Bring a conventional port down after its functions have been suspended.
+ * This undoes the link, PERST# and clock parts of apple_pcie_setup_link(),
+ * not the clock-gating or MSI setup. The driver knows no PME_Turn_Off or
+ * L2/L3 Ready handshake, so the link is stopped by clearing LTSSM start and
+ * asserting PERST#. PWREN is left on: on t8103 it is an SMC GPIO, which
+ * cannot be driven in the noirq phase.
+ */
+static void apple_pcie_s2r_port_down(struct apple_pcie_port *port)
+{
+	struct apple_pcie *pcie = port->pcie;
+	bool idle;
+	u32 stat;
+	int i, ret;
+
+	for_each_set_bit(i, port->sid_map, port->sid_map_sz)
+		port->saved_rid2sid[i] =
+			apple_pcie_port_readl(port, port_rid2sid_offset(port, i));
+
+	apple_pcie_port_disable_irq(port);
+	port->saved_intmask = apple_pcie_port_readl(port, PORT_INTMSK);
+	apple_pcie_port_writel(port, ~0, PORT_INTMSK);
+	apple_pcie_port_writel(port, ~0, PORT_INTSTAT);
+	apple_pcie_port_writel(port, ~0, PORT_LINKCMDSTS);
+
+	apple_pcie_port_rmw_clear(port, PORT_LTSSMCTL_START, PORT_LTSSMCTL);
+	ret = read_poll_timeout_atomic(apple_pcie_tunnel_transactions_idle, idle,
+				       idle, 10, 20000, false, port);
+	if (ret)
+		dev_warn(pcie->dev, "port %pOF transactions did not drain\n",
+			 port->np);
+
+	/* Assert PERST#; direction_output also covers a line found as-is. */
+	gpiod_direction_output(port->perst, 1);
+	for (i = 0; i < port->num_aux_perst; i++)
+		gpiod_direction_output(port->aux_perst[i], 1);
+	rmw_clear(PORT_PERST_OFF, port->base + pcie->hw->port_perst);
+
+	if (!pcie->hw->retain_clocks)
+		apple_pcie_port_stop_refclk(pcie, port);
+
+	rmw_clear(PORT_APPCLK_EN, port->base + PORT_APPCLK);
+	if (readl_relaxed_poll_timeout(port->base + PORT_STATUS, stat,
+				       !(stat & PORT_STATUS_READY), 100, 100000))
+		dev_warn(pcie->dev, "port %pOF still ready (status %#x)\n",
+			 port->np, stat);
+}
+
+/* Like apple_pcie_mark_power_lost(), for the ports that were taken down. */
+static int apple_pcie_s2r_mark_lost(struct pci_dev *pdev, void *data)
+{
+	struct apple_pcie *pcie = data;
+	struct apple_pcie_port *port;
+
+	if (pci_is_root_bus(pdev->bus)) {
+		list_for_each_entry(port, &pcie->ports, entry)
+			if (port->s2r_down && port->idx == PCI_SLOT(pdev->devfn))
+				return apple_pcie_mark_power_lost(pdev, NULL);
+		return 0;
+	}
+
+	port = apple_pcie_get_port(pdev);
+	if (port && port->s2r_down)
+		apple_pcie_mark_power_lost(pdev, NULL);
+	return 0;
+}
+
+static int apple_pcie_s2r_suspend(struct apple_pcie *pcie)
+{
+	struct pci_host_bridge *bridge = dev_get_drvdata(pcie->dev);
+	struct apple_pcie_port *port;
+	unsigned int down = 0, skipped = 0;
+	bool all_down = true;
+	int ret;
+
+	if (!apple_pcie_s2r_wanted(pcie))
+		return 0;
+
+	/*
+	 * Never fail here: a failed noirq suspend is not resumed, and the
+	 * ports are only re-initialized by apple_pcie_s2r_resume().
+	 */
+	pcie->s2r_mode = READ_ONCE(s2r_suspend);
+	pcie->s2r_rc_restart = READ_ONCE(s2r_rc_restart);
+	list_for_each_entry(port, &pcie->ports, entry) {
+		port->s2r_down = apple_pcie_s2r_port_ok(port);
+		if (!port->s2r_down) {
+			all_down = false;
+			skipped++;
+			continue;
+		}
+		apple_pcie_s2r_port_down(port);
+		pcie->s2r_down = true;
+		down++;
+	}
+	apple_s2r_note_pcie(down, skipped);
+	if (!pcie->s2r_down)
+		return 0;
+
+	/* Restore config space and wait for the links as after D3cold. */
+	pci_walk_bus(bridge->bus, apple_pcie_s2r_mark_lost, pcie);
+
+	/*
+	 * The vendor OS leaves ps_apcie_gp on for the AON sequencer. Only on
+	 * request, let genpd power it (and its parents) off in this noirq
+	 * phase instead.
+	 */
+	if (READ_ONCE(s2r_gp_off) && !all_down) {
+		dev_warn(pcie->dev, "power domain stays on: a port is still up\n");
+	} else if (READ_ONCE(s2r_gp_off)) {
+		ret = apple_pmgr_ps_sleep_release(pcie->dev, true);
+		pcie->s2r_released = !ret;
+		if (ret)
+			dev_warn(pcie->dev, "power domain stays on: %d\n", ret);
+	}
+
+	dev_info(pcie->dev, "ports down for suspend-to-RAM\n");
+	return 0;
+}
+
+/* Bounded: noirq resume cannot wait on the link-up interrupt. */
+static int apple_pcie_s2r_port_up(struct apple_pcie_port *port)
+{
+	struct apple_pcie *pcie = port->pcie;
+	unsigned long timeout_us;
+	u32 stat;
+	int i, ret;
+
+	/* Same sequence as probe, without touching PWREN. */
+	ret = apple_pcie_port_power_up(pcie, port, false);
+	if (ret)
+		return ret;
+	apple_pcie_port_enable_clkgate(pcie, port);
+	/* MSI address, vector map and enable, as apple_pcie_port_setup_irq(). */
+	apple_pcie_tunnel_restore_irq_hw(port);
+	for (i = 0; i < port->sid_map_sz; i++)
+		apple_pcie_rid2sid_write(port, i, test_bit(i, port->sid_map) ?
+					 port->saved_rid2sid[i] : 0);
+
+	timeout_us = clamp(link_up_timeout, 1, 2000) * USEC_PER_MSEC;
+	apple_pcie_port_writel(port, PORT_LTSSMCTL_START, PORT_LTSSMCTL);
+	ret = readl_relaxed_poll_timeout(port->base + PORT_LINKSTS, stat,
+					 stat & PORT_LINKSTS_UP, 1000,
+					 timeout_us);
+	if (ret)
+		return ret;
+
+	apple_pcie_port_writel(port, ~0, PORT_INTSTAT);
+	apple_pcie_port_writel(port, port->saved_intmask, PORT_INTMSK);
+	apple_pcie_port_enable_irq(port);
+	return 0;
+}
+
+/*
+ * After a failed bring-up, leave the port in one known state: interrupts
+ * masked and gated, LTSSM stopped, PERST# asserted, APPCLK on. The refclk
+ * stays as far as the bring-up got. This mirrors the PCIe-C failure path,
+ * which leaves a port clocked with its link down so that stray accesses
+ * complete with an error; whether a conventional t8103 port does that has
+ * not been checked on hardware.
+ */
+static void apple_pcie_s2r_port_park(struct apple_pcie_port *port)
+{
+	struct apple_pcie *pcie = port->pcie;
+
+	apple_pcie_port_writel(port, ~0, PORT_INTMSK);
+	apple_pcie_port_rmw_clear(port, PORT_LTSSMCTL_START, PORT_LTSSMCTL);
+	gpiod_set_value_cansleep(port->perst, 1);
+	for (u32 idx = 0; idx < port->num_aux_perst; idx++)
+		gpiod_set_value_cansleep(port->aux_perst[idx], 1);
+	rmw_clear(PORT_PERST_OFF, port->base + pcie->hw->port_perst);
+	rmw_set(PORT_APPCLK_EN, port->base + PORT_APPCLK);
+}
+
+static int apple_pcie_s2r_disconnect(struct pci_dev *pdev, void *data)
+{
+	if (!pci_is_root_bus(pdev->bus) && apple_pcie_get_port(pdev) == data)
+		pci_dev_set_disconnected(pdev, NULL);
+	return 0;
+}
+
+/*
+ * The boot loader starts the root complex core on t8103; this driver only
+ * defines its run and status bits. If the core did not keep running across
+ * suspend-to-RAM, s2r_rc_restart sets the two run bits and waits for their
+ * status bits. That order is inferred from the register names, and nothing
+ * restores the tunables the boot loader applied.
+ */
+static void apple_pcie_s2r_core_up(struct apple_pcie *pcie)
+{
+	u32 stat;
+
+	stat = readl_relaxed(pcie->base + CORE_RC_STAT);
+	if (stat & CORE_RC_STAT_READY)
+		return;
+
+	dev_warn(pcie->dev, "root complex core stopped (status %#x)\n", stat);
+	if (!pcie->s2r_rc_restart)
+		return;
+
+	rmw_set(CORE_RC_PHYIF_CTL_RUN, pcie->base + CORE_RC_PHYIF_CTL);
+	if (readl_relaxed_poll_timeout(pcie->base + CORE_RC_PHYIF_STAT, stat,
+				       stat & CORE_RC_PHYIF_STAT_REFCLK,
+				       100, 50000))
+		dev_warn(pcie->dev, "root complex PHY interface: no refclk (%#x)\n",
+			 stat);
+
+	rmw_set(CORE_RC_CTL_RUN, pcie->base + CORE_RC_CTL);
+	if (readl_relaxed_poll_timeout(pcie->base + CORE_RC_STAT, stat,
+				       stat & CORE_RC_STAT_READY, 100, 50000))
+		dev_warn(pcie->dev, "root complex core not ready (%#x)\n", stat);
+	else
+		dev_info(pcie->dev, "root complex core restarted\n");
+}
+
+static int apple_pcie_s2r_resume(struct apple_pcie *pcie)
+{
+	struct pci_host_bridge *bridge = dev_get_drvdata(pcie->dev);
+	struct apple_pcie_port *port;
+	const char *off;
+	int ret, err = 0;
+
+	pcie->s2r_down = false;
+	if (pcie->s2r_released) {
+		pcie->s2r_released = false;
+		ret = apple_pmgr_ps_sleep_release(pcie->dev, false);
+		if (ret)
+			dev_warn(pcie->dev, "power domain not always-on again: %d\n",
+				 ret);
+	}
+
+	/*
+	 * Read-only check of the PMGR words before the first controller
+	 * access. A domain that is off here (a power-on that failed, a failed
+	 * power-off that left genpd and the hardware disagreeing, or a word
+	 * the platform resume did not restore) would fault on access. Touch
+	 * nothing and cut the whole hierarchy, root ports included, off from
+	 * the PCI core and the drivers.
+	 */
+	ret = apple_pmgr_ps_check_on(pcie->dev, &off);
+	if (ret) {
+		dev_err(pcie->dev, "power domain %s not on after suspend (%d): ports left down, devices disconnected\n",
+			off ?: "(unknown)", ret);
+		list_for_each_entry(port, &pcie->ports, entry)
+			port->s2r_down = false;
+		pci_walk_bus(bridge->bus, pci_dev_set_disconnected, NULL);
+		return ret;
+	}
+
+	apple_pcie_s2r_core_up(pcie);
+
+	list_for_each_entry(port, &pcie->ports, entry) {
+		if (!port->s2r_down)
+			continue;
+		port->s2r_down = false;
+		ret = apple_pcie_s2r_port_up(port);
+		if (!ret)
+			continue;
+		/*
+		 * Keep the PCI core and the function drivers from reaching
+		 * through a port whose link did not come back.
+		 */
+		dev_err(pcie->dev, "port %pOF resume failed: %d (link %#x)\n",
+			port->np, ret, apple_pcie_port_readl(port, PORT_LINKSTS));
+		apple_pcie_s2r_port_park(port);
+		pci_walk_bus(bridge->bus, apple_pcie_s2r_disconnect, port);
+		err = ret;
+	}
+
+	return err;
+}
+
 static int apple_pcie_suspend_noirq(struct device *dev)
 {
 	struct apple_pcie *pcie = apple_pcie_lookup(dev);
 
 	if (!pcie->hw->tunneled)
-		return 0;
+		return apple_pcie_s2r_suspend(pcie);
 	pcie->reset_on_resume = false;
 	pcie->link_kept = apple_pcie_keep_link(pcie);
 	if (!pcie->link_kept)
@@ -3419,7 +4000,7 @@ static int apple_pcie_resume_noirq(struct device *dev)
 	int ret;
 
 	if (!pcie->hw->tunneled)
-		return 0;
+		return pcie->s2r_down ? apple_pcie_s2r_resume(pcie) : 0;
 	if (pcie->resume_failed)
 		return -EIO;
 	/*

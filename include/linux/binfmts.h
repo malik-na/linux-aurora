@@ -25,6 +25,9 @@ struct linux_binprm {
 	struct page *page[MAX_ARG_PAGES];
 #endif
 	struct mm_struct *mm;
+	struct mm_struct *old_mm;	/* replaced address space, freed by setup_new_exec() */
+	/* user_ns published to task->exec_state at execve, narrowed by would_dump(). */
+	struct user_namespace *user_ns;
 	unsigned long p; /* current top of mem */
 	unsigned int
 		/* Should an execfd be passed to userspace? */
@@ -67,6 +70,13 @@ struct linux_binprm {
 	unsigned long exec;
 
 	struct rlimit rlim_stack; /* Saved RLIMIT_STACK used during exec. */
+#ifdef CONFIG_MM_SUBPAGE
+	/*
+	 * User page shift the image gets without the caller's page-size
+	 * preference, used when the exec gains privilege. Zero: native.
+	 */
+	unsigned int secure_page_shift;
+#endif
 
 	char buf[BINPRM_BUF_SIZE];
 } __randomize_layout;
@@ -93,6 +103,8 @@ struct linux_binfmt {
 #ifdef CONFIG_COREDUMP
 	int (*core_dump)(struct coredump_params *cprm);
 	unsigned long min_coredump;	/* minimal dump size */
+	/* Optional per-mm replacement for formats with a variable page ABI. */
+	unsigned long (*min_coredump_size)(void);
 #endif
 } __randomize_layout;
 
@@ -120,6 +132,11 @@ static inline void insert_binfmt(struct linux_binfmt *fmt)
 }
 
 extern void unregister_binfmt(struct linux_binfmt *);
+
+#ifdef CONFIG_MM_SUBPAGE
+int bprm_set_page_shift(struct linux_binprm *bprm, unsigned int page_shift);
+int bprm_secure_page_size(struct linux_binprm *bprm);
+#endif
 
 extern int __must_check remove_arg_zero(struct linux_binprm *);
 extern int begin_new_exec(struct linux_binprm * bprm);

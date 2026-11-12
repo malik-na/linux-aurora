@@ -391,7 +391,7 @@ int iommu_mock_device_add(struct device *dev, struct iommu_device *iommu)
 
 	rc = device_add(dev);
 	if (rc)
-		iommu_fwspec_free(dev);
+		dev_iommu_free(dev);
 	return rc;
 }
 EXPORT_SYMBOL_GPL(iommu_mock_device_add);
@@ -612,9 +612,8 @@ static void iommu_deinit_device(struct device *dev)
 	dev->iommu_group = NULL;
 	module_put(ops->owner);
 	dev_iommu_free(dev);
-#ifdef CONFIG_IOMMU_DMA
-	dev->dma_iommu = false;
-#endif
+	if (IS_ENABLED(CONFIG_IOMMU_DMA))
+		dev_clear_dma_iommu(dev);
 }
 
 static struct iommu_domain *pasid_array_entry_to_domain(void *entry)
@@ -3350,10 +3349,12 @@ out_unlock:
  *
  * The device driver about to bind @dev wants to do DMA through the kernel
  * DMA API. Return 0 if it is allowed, otherwise an error.
+ * Drivers with driver_managed_dma may manage this usage themselves. The
+ * device lock must serialize probe and removal while holding the usage.
  */
 int iommu_device_use_default_domain(struct device *dev)
 {
-	/* Caller is the driver core during the pre-probe path */
+	/* Called with the device lock held during probe. */
 	struct iommu_group *group = dev->iommu_group;
 	int ret = 0;
 
@@ -3380,6 +3381,7 @@ unlock_out:
 	mutex_unlock(&group->mutex);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(iommu_device_use_default_domain);
 
 /**
  * iommu_device_unuse_default_domain() - Device driver stops handling device
@@ -3391,7 +3393,7 @@ unlock_out:
  */
 void iommu_device_unuse_default_domain(struct device *dev)
 {
-	/* Caller is the driver core during the post-probe path */
+	/* Called with the device lock held during removal. */
 	struct iommu_group *group = dev->iommu_group;
 
 	if (!group)
@@ -3403,6 +3405,7 @@ void iommu_device_unuse_default_domain(struct device *dev)
 
 	mutex_unlock(&group->mutex);
 }
+EXPORT_SYMBOL_GPL(iommu_device_unuse_default_domain);
 
 static int __iommu_group_alloc_blocking_domain(struct iommu_group *group)
 {

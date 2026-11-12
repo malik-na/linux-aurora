@@ -9,7 +9,7 @@ import resource
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
-PATH = 'drivers/gpu/drm/asahi-neo/g17/queue/render/memory.rs'
+PATH = 'drivers/gpu/drm/asahi/g17/queue/render/memory.rs'
 PREFIX = r'''
 #![allow(dead_code)]
 use std::ops::{Deref,Range};
@@ -77,12 +77,12 @@ def main():
     p.add_argument('--mutation', action='store_true')
     args = p.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    source = (subprocess.check_output(['git','show','990a45b609dd:'+PATH], cwd=ROOT,text=True)
+    source = (subprocess.check_output(['git','show','990a45b609dd:'+PATH.replace('/asahi/', '/asahi-neo/')], cwd=ROOT,text=True)
               if args.old else (ROOT/PATH).read_text())
     structure = item(source, 'pub(super) struct Generation').replace('pub(super)', '')
     constructor = item(source[source.index('impl Generation'):], '    fn new(')
     addresses = item(source, '    pub(super) fn addresses').replace('pub(super)', '')
-    storage=(ROOT/'drivers/gpu/drm/asahi-neo/g17/fw/render/storage.rs').read_text()
+    storage=(ROOT/'drivers/gpu/drm/asahi/g17/fw/render/storage.rs').read_text()
     constants=[]
     for name in ['STATE_SIZE','DEFLAKE','TA_STATUS','AUXILIARY','AUXILIARY_SIZE']:
         line=next(x for x in storage.splitlines() if 'const '+name+':' in x)

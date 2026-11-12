@@ -68,6 +68,7 @@
 		local-mac-address = [00 10 18 00 00 10];
 		apple,antenna-sku = "XX";
 		brcm,board-type = "apple,snake";
+		brcm,ccode-map-trivial;
 	};
 
 	bluetooth0: bluetooth@0,1 {
@@ -283,6 +284,7 @@
 	};
 };
 
+#include "hwmon-laptop.dtsi"
 /*
  * Mesa fingerprint sensor on spi2 (J415 ADT /arm-io/spi2/mesa): power on AP
  * GPIO 178, active high. The data-ready line (GPIO 177) is left out, so the
@@ -311,5 +313,3 @@
 &pmp_report_isp_sys {
 	status = "okay";
 };
-
-#include "hwmon-laptop.dtsi"

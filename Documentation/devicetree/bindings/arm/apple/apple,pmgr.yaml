@@ -43,6 +43,7 @@ properties:
               - apple,t8122-pmgr
               - apple,t8132-pmgr
               - apple,t8140-pmgr
+              - apple,t8142-pmgr
           - const: apple,t8103-pmgr
           - const: syscon
           - const: simple-mfd
@@ -112,6 +113,12 @@ examples:
                 #reset-cells = <0>;
                 label = "uart0";
                 power-domains = <&ps_uart_p>;
+            };
+
+            reset-controller@13034 {
+                compatible = "apple,t6000-cio-reset";
+                reg = <0x13034 0x4>;
+                #reset-cells = <1>;
             };
         };
 

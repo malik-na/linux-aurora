@@ -26,10 +26,10 @@ MODULE_PARM_DESC(size_limit_mb, "Max size of a dmabuf, in megabytes. Default is 
 
 struct udmabuf {
 	pgoff_t pagecount;
-	struct folio **folios;
+	struct page **pages;
 
 	/**
-	 * Unlike folios, pinned_folios is only used for unpin.
+	 * Unlike pages, pinned_folios is only used for unpin.
 	 * So, nr_pinned is not the same to pagecount, the pinned_folios
 	 * only set each folio which already pinned when udmabuf_create.
 	 * Note that, since a folio may be pinned multiple times, each folio
@@ -42,48 +42,46 @@ struct udmabuf {
 	struct sg_table *sg;
 	enum dma_data_direction sg_dir;
 	struct miscdevice *device;
-	pgoff_t *offsets;
 };
+
+static vm_fault_t udmabuf_insert_pfn(struct vm_area_struct *vma, unsigned long addr)
+{
+	struct udmabuf *ubuf = vma->vm_private_data;
+	struct vm_page_offset pos = vma_page_offset_at(vma, addr);
+	unsigned long pfn;
+
+	if (pos.index >= ubuf->pagecount)
+		return VM_FAULT_SIGBUS;
+
+	pfn = page_to_pfn(ubuf->pages[pos.index]);
+	return vmf_insert_pfn_prot_mkwrite_offset(vma, addr, pfn, pos.offset,
+						vma->vm_page_prot, false);
+}
 
 static vm_fault_t udmabuf_vm_fault(struct vm_fault *vmf)
 {
 	struct vm_area_struct *vma = vmf->vma;
-	struct udmabuf *ubuf = vma->vm_private_data;
-	pgoff_t pgoff = vmf->pgoff;
-	unsigned long addr, pfn;
+	unsigned long addr;
 	vm_fault_t ret;
 
-	if (pgoff >= ubuf->pagecount)
-		return VM_FAULT_SIGBUS;
-
-	pfn = folio_pfn(ubuf->folios[pgoff]);
-	pfn += ubuf->offsets[pgoff] >> PAGE_SHIFT;
-
-	ret = vmf_insert_pfn(vma, vmf->address, pfn);
+	ret = udmabuf_insert_pfn(vma, vmf->address);
 	if (ret & VM_FAULT_ERROR)
 		return ret;
 
 	/* pre fault */
-	pgoff = vma->vm_pgoff;
 	addr = vma->vm_start;
 
-	for (; addr < vma->vm_end; pgoff++, addr += PAGE_SIZE) {
+	for (; addr < vma->vm_end; addr += mm_page_size(vma->vm_mm)) {
 		if (addr == vmf->address)
 			continue;
 
-		if (WARN_ON(pgoff >= ubuf->pagecount))
-			break;
-
-		pfn = folio_pfn(ubuf->folios[pgoff]);
-		pfn += ubuf->offsets[pgoff] >> PAGE_SHIFT;
-
 		/**
-		 * If the below vmf_insert_pfn() fails, we do not return an
+		 * If the below insertion fails, we do not return an
 		 * error here during this pre-fault step. However, an error
 		 * will be returned if the failure occurs when the addr is
 		 * truly accessed.
 		 */
-		if (vmf_insert_pfn(vma, addr, pfn) & VM_FAULT_ERROR)
+		if (udmabuf_insert_pfn(vma, addr) & VM_FAULT_ERROR)
 			break;
 	}
 
@@ -110,22 +108,11 @@ static int mmap_udmabuf(struct dma_buf *buf, struct vm_area_struct *vma)
 static int vmap_udmabuf(struct dma_buf *buf, struct iosys_map *map)
 {
 	struct udmabuf *ubuf = buf->priv;
-	struct page **pages;
 	void *vaddr;
-	pgoff_t pg;
 
 	dma_resv_assert_held(buf->resv);
 
-	pages = kvmalloc_objs(*pages, ubuf->pagecount);
-	if (!pages)
-		return -ENOMEM;
-
-	for (pg = 0; pg < ubuf->pagecount; pg++)
-		pages[pg] = folio_page(ubuf->folios[pg],
-				       ubuf->offsets[pg] >> PAGE_SHIFT);
-
-	vaddr = vm_map_ram(pages, ubuf->pagecount, -1);
-	kvfree(pages);
+	vaddr = vm_map_ram(ubuf->pages, ubuf->pagecount, -1);
 	if (!vaddr)
 		return -EINVAL;
 
@@ -147,21 +134,17 @@ static struct sg_table *get_sg_table(struct device *dev, struct dma_buf *buf,
 {
 	struct udmabuf *ubuf = buf->priv;
 	struct sg_table *sg;
-	struct scatterlist *sgl;
-	unsigned int i = 0;
 	int ret;
 
 	sg = kzalloc_obj(*sg);
 	if (!sg)
 		return ERR_PTR(-ENOMEM);
 
-	ret = sg_alloc_table(sg, ubuf->pagecount, GFP_KERNEL);
+	ret = sg_alloc_table_from_pages(sg, ubuf->pages, ubuf->pagecount, 0,
+					ubuf->pagecount << PAGE_SHIFT,
+					GFP_KERNEL);
 	if (ret < 0)
 		goto err_alloc;
-
-	for_each_sg(sg->sgl, sgl, ubuf->pagecount, i)
-		sg_set_folio(sgl, ubuf->folios[i], PAGE_SIZE,
-			     ubuf->offsets[i]);
 
 	ret = dma_map_sgtable(dev, sg, direction, DMA_ATTR_SKIP_CPU_SYNC);
 	if (ret < 0)
@@ -208,12 +191,8 @@ static void unpin_all_folios(struct udmabuf *ubuf)
 
 static __always_inline int init_udmabuf(struct udmabuf *ubuf, pgoff_t pgcnt)
 {
-	ubuf->folios = kvmalloc_objs(*ubuf->folios, pgcnt);
-	if (!ubuf->folios)
-		return -ENOMEM;
-
-	ubuf->offsets = kvzalloc_objs(*ubuf->offsets, pgcnt);
-	if (!ubuf->offsets)
+	ubuf->pages = kvmalloc_objs(*ubuf->pages, pgcnt);
+	if (!ubuf->pages)
 		return -ENOMEM;
 
 	ubuf->pinned_folios = kvmalloc_objs(*ubuf->pinned_folios, pgcnt);
@@ -226,8 +205,7 @@ static __always_inline int init_udmabuf(struct udmabuf *ubuf, pgoff_t pgcnt)
 static __always_inline void deinit_udmabuf(struct udmabuf *ubuf)
 {
 	unpin_all_folios(ubuf);
-	kvfree(ubuf->offsets);
-	kvfree(ubuf->folios);
+	kvfree(ubuf->pages);
 }
 
 static void release_udmabuf(struct dma_buf *buf)
@@ -348,8 +326,8 @@ static long udmabuf_pin_folios(struct udmabuf *ubuf, struct file *memfd,
 		ubuf->pinned_folios[nr_pinned++] = folios[cur_folio];
 
 		for (; subpgoff < fsize; subpgoff += PAGE_SIZE) {
-			ubuf->folios[upgcnt] = folios[cur_folio];
-			ubuf->offsets[upgcnt] = subpgoff;
+			ubuf->pages[upgcnt] = folio_page(folios[cur_folio],
+						subpgoff >> PAGE_SHIFT);
 			++upgcnt;
 
 			if (++cur_pgcnt >= pgcnt)

@@ -13,10 +13,15 @@
 #include "t8122-usbpd-spmi.dtsi"
 #include "t8122-jxxx.dtsi"
 #include <dt-bindings/leds/common.h>
+#include <dt-bindings/thermal/thermal.h>
 
 / {
 	compatible = "apple,j613", "apple,t8122", "apple,arm-platform";
 	model = "Apple MacBook Air (13-inch, M3, 2024)";
+
+	aliases {
+		sep = &sep;
+	};
 
 	led-controller {
 		compatible = "pwm-leds";
@@ -27,6 +32,321 @@
 			color = <LED_COLOR_ID_WHITE>;
 			max-brightness = <255>;
 			default-state = "keep";
+		};
+	};
+
+	/*
+	 * The J613 is fanless: the CPUs are the only cooling devices. As on
+	 * the J700, every die sensor gets a zone that throttles both clusters,
+	 * since they share one die and one heat spreader, and the power
+	 * allocator splits the budget by the energy models, with the E cluster
+	 * weighted three to one. The E maps stop at cooling state 3 (2004 MHz):
+	 * the E cluster adds at most about 2 W, and the governor would
+	 * otherwise send an idle E cluster to its lowest state.
+	 *
+	 * The trips are the J700's: switch-on 58 C (idle is 43-52 C), control
+	 * 95 C, critical 110 C. sustainable-power comes from load tests with the
+	 * gains derived from it: with the four P cores busy, the J700's 1.5 W
+	 * held the hottest sensor at 72 C and the P cores at 2.1 GHz; 6 W held
+	 * 90-95 C at 2.6-3.0 GHz (one 96.5 C peak); 7.5 W swung between 2.2 and
+	 * 3.6 GHz with peaks of 98 C. With 6 W, all eight cores busy settled at
+	 * 92 C with the P cores at 2.2-2.4 GHz and the E cores at full clock;
+	 * the P cores with the GPU busy at 618 MHz peaked at 97 C (the GPU is
+	 * not a cooling device here).
+	 */
+	thermal-zones {
+		cpu-e0-thermal {
+			polling-delay-passive = <500>;
+			polling-delay = <500>;
+			thermal-sensors = <&smc_hwmon 0>;	/* Te05 */
+			sustainable-power = <6000>;
+
+			trips {
+				cpu_e0_alert: trip-alert {
+					temperature = <58000>;
+					hysteresis = <2000>;
+					type = "passive";
+				};
+
+				cpu_e0_control: trip-control {
+					temperature = <95000>;
+					hysteresis = <2000>;
+					type = "passive";
+				};
+
+				trip-critical {
+					temperature = <110000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+
+			cooling-maps {
+				map0 {
+					trip = <&cpu_e0_control>;
+					cooling-device =
+						<&cpu_p0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+					contribution = <1024>;
+				};
+
+				map1 {
+					trip = <&cpu_e0_control>;
+					cooling-device =
+						<&cpu_e0 THERMAL_NO_LIMIT 3>,
+						<&cpu_e1 THERMAL_NO_LIMIT 3>,
+						<&cpu_e2 THERMAL_NO_LIMIT 3>,
+						<&cpu_e3 THERMAL_NO_LIMIT 3>;
+					contribution = <3072>;
+				};
+			};
+		};
+
+		cpu-e1-thermal {
+			polling-delay-passive = <500>;
+			polling-delay = <500>;
+			thermal-sensors = <&smc_hwmon 1>;	/* Te0P */
+			sustainable-power = <6000>;
+
+			trips {
+				cpu_e1_alert: trip-alert {
+					temperature = <58000>;
+					hysteresis = <2000>;
+					type = "passive";
+				};
+
+				cpu_e1_control: trip-control {
+					temperature = <95000>;
+					hysteresis = <2000>;
+					type = "passive";
+				};
+
+				trip-critical {
+					temperature = <110000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+
+			cooling-maps {
+				map0 {
+					trip = <&cpu_e1_control>;
+					cooling-device =
+						<&cpu_p0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+					contribution = <1024>;
+				};
+
+				map1 {
+					trip = <&cpu_e1_control>;
+					cooling-device =
+						<&cpu_e0 THERMAL_NO_LIMIT 3>,
+						<&cpu_e1 THERMAL_NO_LIMIT 3>,
+						<&cpu_e2 THERMAL_NO_LIMIT 3>,
+						<&cpu_e3 THERMAL_NO_LIMIT 3>;
+					contribution = <3072>;
+				};
+			};
+		};
+
+		cpu-p0-thermal {
+			polling-delay-passive = <500>;
+			polling-delay = <500>;
+			thermal-sensors = <&smc_hwmon 2>;	/* Tp05 */
+			sustainable-power = <6000>;
+
+			trips {
+				cpu_p0_alert: trip-alert {
+					temperature = <58000>;
+					hysteresis = <2000>;
+					type = "passive";
+				};
+
+				cpu_p0_control: trip-control {
+					temperature = <95000>;
+					hysteresis = <2000>;
+					type = "passive";
+				};
+
+				trip-critical {
+					temperature = <110000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+
+			cooling-maps {
+				map0 {
+					trip = <&cpu_p0_control>;
+					cooling-device =
+						<&cpu_p0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+					contribution = <1024>;
+				};
+
+				map1 {
+					trip = <&cpu_p0_control>;
+					cooling-device =
+						<&cpu_e0 THERMAL_NO_LIMIT 3>,
+						<&cpu_e1 THERMAL_NO_LIMIT 3>,
+						<&cpu_e2 THERMAL_NO_LIMIT 3>,
+						<&cpu_e3 THERMAL_NO_LIMIT 3>;
+					contribution = <3072>;
+				};
+			};
+		};
+
+		cpu-p1-thermal {
+			polling-delay-passive = <500>;
+			polling-delay = <500>;
+			thermal-sensors = <&smc_hwmon 3>;	/* Tp0L */
+			sustainable-power = <6000>;
+
+			trips {
+				cpu_p1_alert: trip-alert {
+					temperature = <58000>;
+					hysteresis = <2000>;
+					type = "passive";
+				};
+
+				cpu_p1_control: trip-control {
+					temperature = <95000>;
+					hysteresis = <2000>;
+					type = "passive";
+				};
+
+				trip-critical {
+					temperature = <110000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+
+			cooling-maps {
+				map0 {
+					trip = <&cpu_p1_control>;
+					cooling-device =
+						<&cpu_p0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+					contribution = <1024>;
+				};
+
+				map1 {
+					trip = <&cpu_p1_control>;
+					cooling-device =
+						<&cpu_e0 THERMAL_NO_LIMIT 3>,
+						<&cpu_e1 THERMAL_NO_LIMIT 3>,
+						<&cpu_e2 THERMAL_NO_LIMIT 3>,
+						<&cpu_e3 THERMAL_NO_LIMIT 3>;
+					contribution = <3072>;
+				};
+			};
+		};
+
+		cpu-p2-thermal {
+			polling-delay-passive = <500>;
+			polling-delay = <500>;
+			thermal-sensors = <&smc_hwmon 4>;	/* Tp0b */
+			sustainable-power = <6000>;
+
+			trips {
+				cpu_p2_alert: trip-alert {
+					temperature = <58000>;
+					hysteresis = <2000>;
+					type = "passive";
+				};
+
+				cpu_p2_control: trip-control {
+					temperature = <95000>;
+					hysteresis = <2000>;
+					type = "passive";
+				};
+
+				trip-critical {
+					temperature = <110000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+
+			cooling-maps {
+				map0 {
+					trip = <&cpu_p2_control>;
+					cooling-device =
+						<&cpu_p0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+					contribution = <1024>;
+				};
+
+				map1 {
+					trip = <&cpu_p2_control>;
+					cooling-device =
+						<&cpu_e0 THERMAL_NO_LIMIT 3>,
+						<&cpu_e1 THERMAL_NO_LIMIT 3>,
+						<&cpu_e2 THERMAL_NO_LIMIT 3>,
+						<&cpu_e3 THERMAL_NO_LIMIT 3>;
+					contribution = <3072>;
+				};
+			};
+		};
+
+		cpu-p3-thermal {
+			polling-delay-passive = <500>;
+			polling-delay = <500>;
+			thermal-sensors = <&smc_hwmon 5>;	/* Tp0r */
+			sustainable-power = <6000>;
+
+			trips {
+				cpu_p3_alert: trip-alert {
+					temperature = <58000>;
+					hysteresis = <2000>;
+					type = "passive";
+				};
+
+				cpu_p3_control: trip-control {
+					temperature = <95000>;
+					hysteresis = <2000>;
+					type = "passive";
+				};
+
+				trip-critical {
+					temperature = <110000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+
+			cooling-maps {
+				map0 {
+					trip = <&cpu_p3_control>;
+					cooling-device =
+						<&cpu_p0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+						<&cpu_p3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+					contribution = <1024>;
+				};
+
+				map1 {
+					trip = <&cpu_p3_control>;
+					cooling-device =
+						<&cpu_e0 THERMAL_NO_LIMIT 3>,
+						<&cpu_e1 THERMAL_NO_LIMIT 3>,
+						<&cpu_e2 THERMAL_NO_LIMIT 3>,
+						<&cpu_e3 THERMAL_NO_LIMIT 3>;
+					contribution = <3072>;
+				};
+			};
 		};
 	};
 };
@@ -227,4 +547,118 @@
 	apple,temporal-filter = <1>;
 };
 
+/*
+ * Mesa fingerprint sensor on spi2 (J613 ADT /arm-io/spi2/mesa): power on
+ * NUB GPIO 29, active high. The data-ready line (AP GPIO 199) is left out,
+ * so the driver polls until its trigger is confirmed. Native chip select only.
+ */
+&spi2 {
+	status = "okay";
+};
+
+&mesa {
+	status = "okay";
+	enable-gpios = <&pinctrl_nub 29 GPIO_ACTIVE_HIGH>;
+	spi-cs-setup-delay-ns = <20>;
+	spi-cs-hold-delay-ns = <20>;
+	/* Per-device factory data from this Mac's own iBoot system container. */
+	firmware-name = "apple/mesacal-j613.bin";
+};
+
 #include "hwmon-laptop.dtsi"
+
+/*
+ * External display on both USB-C ports: left-back (typec0, ATC0) and
+ * left-front (typec1, ATC1). In the J613 ADT dcpext is display-crossbar
+ * ufp1, port 0, which is crossbar state 2 (dispext1,0) in the T602x model,
+ * on either ATC's crossbar. The DPTX target is the ADT's DFP index of the
+ * ATC (atc0 = 0, atc1 = 1), as in the M1/M2 dcpext routes. dcpext has one
+ * DPTX link, so one external display at a time: the display fabric gives
+ * the pipeline to the first port that asks, and the other port keeps USB.
+ *
+ * dcpext, its routes, its DARTs, its mailbox and both crossbars stay
+ * disabled here, like the internal DCP. The boot loader finds dcpext
+ * through the "dcpext" alias, reserves its firmware and marks it
+ * apple,t8122-dcpext-firmware-ready; the kernel's display gate then enables
+ * all of them after the internal display was handed over, and keeps the
+ * common power state of both ATCs on (apple,always-on), as for DP alt mode
+ * on the M1/M2 laptops. The routes stay disabled until then, as on T6030:
+ * an available route with no registered mode switch would make the Type-C
+ * port wait for one forever. A kernel or boot loader without dcpext
+ * support therefore sees nothing new.
+ *
+ * The display subsystem's iommus are left alone: the display gate accepts
+ * exactly one entry there (disp0_dart stream 0) before it enables the
+ * internal display, and adds <&dispext0_dart 0> itself when it enables
+ * dcpext, as it does for the T6030 external processors.
+ */
+/ {
+	aliases {
+		dcpext = &dcpext;
+	};
+};
+
+&dcpext {
+	apple,connector-type = "USB-C";
+	phys = <&atcphy0 PHY_TYPE_DP>, <&atcphy1 PHY_TYPE_DP>;
+	phy-names = "typec0", "typec1";
+	mux-controls = <&atcphy0_xbar 0>, <&atcphy1_xbar 0>;
+	mux-control-names = "typec0", "typec1";
+	apple,typec-mux-indices = <2 2>;
+	apple,typec-dptx-phys = <0 1>;
+	/* RTKit quirks of AsahiLinux/linux#607 (syslog/ioreport acks, kdebug). */
+	apple,sync-syslog-ack;
+
+	typec-routes {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		route@0 {
+			reg = <0>;
+			mode-switch;
+			status = "disabled";
+
+			port {
+				dcpext_typec0: endpoint {
+					remote-endpoint = <&typec0_dcpext>;
+				};
+			};
+		};
+
+		route@1 {
+			reg = <1>;
+			mode-switch;
+			status = "disabled";
+
+			port {
+				dcpext_typec1: endpoint {
+					remote-endpoint = <&typec1_dcpext>;
+				};
+			};
+		};
+	};
+};
+
+&typec0 {
+	ports {
+		port@3 {
+			reg = <3>;
+
+			typec0_dcpext: endpoint {
+				remote-endpoint = <&dcpext_typec0>;
+			};
+		};
+	};
+};
+
+&typec1 {
+	ports {
+		port@3 {
+			reg = <3>;
+
+			typec1_dcpext: endpoint {
+				remote-endpoint = <&dcpext_typec1>;
+			};
+		};
+	};
+};

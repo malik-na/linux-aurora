@@ -66,9 +66,10 @@
  * We require that __hyp_bss_start and __bss_start are aligned, and enforce it
  * with an assertion. But the BSS_SECTION macro places an empty .sbss section
  * between them, which can in some cases cause the linker to misalign them. To
- * work around the issue, force a page alignment for __bss_start.
+ * work around the issue, align __bss_start to the BSS section's alignment,
+ * which can exceed PAGE_SIZE for the mixed-granule zero page.
  */
-#define SBSS_ALIGN			PAGE_SIZE
+#define SBSS_ALIGN			MAX(PAGE_SIZE, ALIGNOF(.bss))
 #else /* CONFIG_KVM */
 #define HYPERVISOR_EXTABLE
 #define HYPERVISOR_RODATA_SECTIONS
@@ -349,8 +350,14 @@ SECTIONS
 	_edata = .;
 
 	/* start of zero-init region */
-	BSS_SECTION(SBSS_ALIGN, 0, 0)
+	BSS_SECTION(SBSS_ALIGN, 0, PAGE_SIZE)
 	__pi___bss_start = __bss_start;
+
+	/* page table BSS starts here - preceding data/BSS is omitted from the linear map */
+	.pgtbl : ALIGN(PAGE_SIZE) {
+		*(.bss..pgtbl)
+	}
+	ASSERT(ADDR(.pgtbl) == __bss_stop, ".pgtbl must follow BSS")
 
 	. = ALIGN(PAGE_SIZE);
 	__pi_init_pg_dir = .;
@@ -368,6 +375,7 @@ SECTIONS
 
 	STABS_DEBUG
 	DWARF_DEBUG
+	PROPELLER_DATA
 	MODINFO
 	ELF_DETAILS
 

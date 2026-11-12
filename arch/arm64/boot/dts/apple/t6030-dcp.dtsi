@@ -31,6 +31,13 @@
 		clock-frequency = <712000000>;
 		clock-output-names = "clk_disp0";
 	};
+
+	/* Component master without MMIO, outside the simple-bus. */
+	display: display-subsystem {
+		compatible = "apple,t6030-display-subsystem";
+		iommus = <&disp0_dart 0>;
+		status = "disabled";
+	};
 };
 
 &soc {
@@ -88,6 +95,7 @@
 		clocks = <&clk_disp0>;
 		#address-cells = <2>;
 		#size-cells = <2>;
+		ranges;
 		status = "disabled";
 
 		disp0_piodma: piodma {
@@ -95,11 +103,6 @@
 		};
 	};
 
-	display: display-subsystem {
-		compatible = "apple,t6030-display-subsystem";
-		iommus = <&disp0_dart 0>;
-		status = "disabled";
-	};
 
 	dcpext_dart: iommu@2d130c000 {
 		compatible = "apple,t6030-dart", "apple,t8110-dart";
@@ -141,14 +144,21 @@
 		       <&atcphy2 PHY_TYPE_DP>;
 		phy-names = "typec0", "typec1", "typec2";
 		mux-controls = <&atcphy0_xbar 0>, <&atcphy1_xbar 0>,
-			       <&atcphy2_xbar 0>;
-		mux-control-names = "typec0", "typec1", "typec2";
+			       <&atcphy2_xbar 0>,
+			       <&atcphy0_xbar 1>, <&atcphy0_xbar 2>,
+			       <&atcphy1_xbar 1>, <&atcphy1_xbar 2>,
+			       <&atcphy2_xbar 1>, <&atcphy2_xbar 2>;
+		mux-control-names = "typec0", "typec1", "typec2",
+				    "typec0-dpin0", "typec0-dpin1",
+				    "typec1-dpin0", "typec1-dpin1",
+				    "typec2-dpin0", "typec2-dpin1";
 		apple,connector-type = "USB-C";
 		apple,dcp-index = <1>;
 		apple,typec-dptx-phys = <0 1 2>;
 		apple,typec-mux-indices = <0 0 0>;
 		#address-cells = <2>;
 		#size-cells = <2>;
+		ranges;
 		status = "disabled";
 
 		/*
@@ -239,14 +249,21 @@
 		       <&atcphy2 PHY_TYPE_DP>;
 		phy-names = "typec0", "typec1", "typec2";
 		mux-controls = <&atcphy0_xbar 0>, <&atcphy1_xbar 0>,
-			       <&atcphy2_xbar 0>;
-		mux-control-names = "typec0", "typec1", "typec2";
+			       <&atcphy2_xbar 0>,
+			       <&atcphy0_xbar 1>, <&atcphy0_xbar 2>,
+			       <&atcphy1_xbar 1>, <&atcphy1_xbar 2>,
+			       <&atcphy2_xbar 1>, <&atcphy2_xbar 2>;
+		mux-control-names = "typec0", "typec1", "typec2",
+				    "typec0-dpin0", "typec0-dpin1",
+				    "typec1-dpin0", "typec1-dpin1",
+				    "typec2-dpin0", "typec2-dpin1";
 		apple,connector-type = "USB-C";
 		apple,dcp-index = <2>;
 		apple,typec-dptx-phys = <0 1 2>;
 		apple,typec-mux-indices = <2 2 2>;
 		#address-cells = <2>;
 		#size-cells = <2>;
+		ranges;
 		status = "disabled";
 
 		/* Enabled with this processor by the display gate, as for dcpext. */

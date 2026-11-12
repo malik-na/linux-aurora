@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * J700 MT7932 Bluetooth PCIe transport.
- * Authors: DJ (DjDeveloperr), Ace (Acelogic), and Ryan Murray.
+ * Bluetooth transport for the MediaTek MT7932 radio in the Apple MacBook Neo
+ * (J700), whose Bluetooth controller is the second function of the radio's
+ * PCIe device. Transport research by DJ (DjDeveloperr), Ace (Acelogic) and
+ * Ryan Murray.
  *
  * Firmware and board inputs are supplied locally. System sleep preserves the
  * transport arena and uses the firmware quiesce/restore handshake. Unload
@@ -20,10 +22,13 @@
 #include <linux/of.h>
 #include <linux/overflow.h>
 #include <linux/pci.h>
+#include <linux/soc/apple/pci-apple-piodma.h>
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
+#include <linux/pm_wakeup.h>
 #include <linux/skbuff.h>
 #include <linux/slab.h>
+#include <linux/suspend.h>
 #include <linux/unaligned.h>
 #include <linux/workqueue.h>
 #include <net/bluetooth/bluetooth.h>
@@ -57,6 +62,9 @@
 #define BT7932_CONTROL_POOL_SIZE (BT7932_DEPTH * BT7932_CONTROL_SIZE)
 #define BT7932_COMPLETION_SIZE (BT7932_DEPTH * 0x18)
 #define BT7932_TX_QUEUE_MAX 128
+/* Vendor command telling the controller that the host goes to sleep. */
+#define BT7932_OP_HOST_SLEEP 0xfc6f
+#define BT7932_HOST_SLEEP_PLEN 7
 
 #define BT7932_FW_B0 "mediatek/MT7932B0_OS_TypeB_0.1.44.0_241001003711.bin"
 #define BT7932_FW_B1 "mediatek/MT7932B1_OS_TypeB_2.0.177.0_260706180356.bin"
@@ -64,10 +72,6 @@
 #define BT7932_PTX "mediatek/MT7932_PTB_IzubaA_0.1.0.0_20251021141303.ptx"
 #define BT7932_CAL "mediatek/j700-mt7932-btcal.bin"
 #define BT7932_ADDR "mediatek/j700-mt7932-bdaddr.bin"
-
-static bool enable = true;
-module_param(enable, bool, 0600);
-MODULE_PARM_DESC(enable, "Probe the transport (default: on); no effect on an already bound device");
 
 struct bt7932_geometry {
 	u16 stride;
@@ -103,6 +107,14 @@ enum bt7932_pm_state {
 	BT7932_RESTORING,
 };
 
+enum bt7932_recovery {
+	BT7932_RECOVERY_NONE,
+	/* A Hardware Error event was injected and not yet handled. */
+	BT7932_RECOVERY_REQUESTED,
+	/* The core is closing and reopening the device. */
+	BT7932_RECOVERY_REOPENING,
+};
+
 struct bt7932 {
 	struct pci_dev *pdev;
 	void __iomem *bar;
@@ -132,8 +144,17 @@ struct bt7932 {
 	bool enabled, regions, vectors, irq_requested, retained;
 	bool ipc_ready, opened, awake, waking, fault, registered;
 	bool stopping, runtime_forbidden;
+	/*
+	 * Suspend-to-idle with the transport left running for wakeup, see
+	 * bt7932_suspend(). Written under lock except irq_held.
+	 */
+	bool wake_tracking;	/* wake reports become PM wakeup events */
+	bool wake_armed;	/* the MSI is armed for wakeup */
+	bool tx_blocked;	/* nothing is sent until resume */
+	bool irq_held;		/* IRQ off until the PCI state is restored */
+	bool pci_saved;		/* saved PCI state not yet restored */
+	enum bt7932_recovery recovery;
 	enum bt7932_pm_state pm_state;
-	u64 tx_packets, rx_packets, diagnostics;
 };
 
 static void bt7932_ring_doorbell(struct bt7932 *bt, unsigned int bit)
@@ -170,10 +191,16 @@ static void bt7932_fault_locked(struct bt7932 *bt, const char *reason)
 	dev_err(&bt->pdev->dev, "terminal transport fault: %s; owned DMA retained, external reset required\n",
 		reason);
 	for (channel = 0; channel < BT7932_CHANNELS; channel++)
-		dev_err(&bt->pdev->dev, "ring%u host=%u firmware=%u previous=%u\n", channel,
+		dev_dbg(&bt->pdev->dev, "ring%u host=%u firmware=%u previous=%u\n", channel,
 			bt7932_counter(bt, bt->host_transfer, channel),
 			bt7932_counter(bt, bt->fw_transfer, channel), bt->rings[channel].previous);
 	pci_clear_master(bt->pdev);
+	/*
+	 * Whatever raised the fault, a saved state that the PCI core has yet
+	 * to restore must not bring bus mastering back: save it again.
+	 */
+	if (bt->pci_saved)
+		pci_save_state(bt->pdev);
 	if (bt->irq_requested)
 		disable_irq_nosync(bt->irq);
 	wake_up_all(&bt->wake_wait);
@@ -213,6 +240,64 @@ static bool bt7932_hci_length(u8 packet, const u8 *data, size_t len)
 		return false;
 	}
 	return len == expected;
+}
+
+enum bt7932_wake {
+	BT7932_WAKE_NONE,
+	/* A remote device asks for the host. */
+	BT7932_WAKE_REMOTE,
+	/* An LE advertising report: remote, unless discovery is running. */
+	BT7932_WAKE_ADVERTISING,
+	/* The controller lost its state; HCI recovery is coming. */
+	BT7932_WAKE_ERROR,
+};
+
+/*
+ * Classifies a received event for a system sleep with wakeup armed. The
+ * remote events are those that the HCI core records as a remote wake reason
+ * while suspended (see hci_store_wake_reason()): a BR/EDR connection request
+ * or completion, or an LE advertising report. A Hardware Error must end the
+ * sleep too, so that recovery runs on an awake system. Command Complete and
+ * Status, vendor events and the replies to the suspend setup never count.
+ * The caller has checked the length against the event header.
+ */
+static enum bt7932_wake bt7932_wake_event(const u8 *data, size_t len)
+{
+	switch (data[0]) {
+	case HCI_EV_CONN_COMPLETE:
+	case HCI_EV_CONN_REQUEST:
+	case HCI_EV_SYNC_CONN_COMPLETE:
+		return BT7932_WAKE_REMOTE;
+	case HCI_EV_HARDWARE_ERROR:
+		return BT7932_WAKE_ERROR;
+	case HCI_EV_LE_META:
+		if (len < HCI_EVENT_HDR_SIZE + 1)
+			return BT7932_WAKE_NONE;
+		switch (data[HCI_EVENT_HDR_SIZE]) {
+		case HCI_EV_LE_ADVERTISING_REPORT:
+		case HCI_EV_LE_DIRECT_ADV_REPORT:
+		case HCI_EV_LE_EXT_ADV_REPORT:
+			return BT7932_WAKE_ADVERTISING;
+		}
+		return BT7932_WAKE_NONE;
+	default:
+		return BT7932_WAKE_NONE;
+	}
+}
+
+/* Caller owns lock and has found wake tracking on. */
+static bool bt7932_wake_report(struct bt7932 *bt, const u8 *data, size_t len)
+{
+	switch (bt7932_wake_event(data, len)) {
+	case BT7932_WAKE_REMOTE:
+	case BT7932_WAKE_ERROR:
+		return true;
+	case BT7932_WAKE_ADVERTISING:
+		/* Discovery is paused once HCI suspends; until then it is not a wake. */
+		return READ_ONCE(bt->hdev->discovery.state) == DISCOVERY_STOPPED;
+	default:
+		return false;
+	}
 }
 
 static int bt7932_validate_ptx(const u8 *data, size_t size)
@@ -402,8 +487,8 @@ static int bt7932_arena(struct bt7932 *bt)
 	context[0x51] = 13;
 	context[0x53] = 2;
 	dma_wmb();
-	dev_info(&bt->pdev->dev, "owned SID2 arena=%pad bytes=%zu image=%pad bytes=%zu, both low32\n",
-		 &bt->arena_dma, bt->arena_size, &bt->image_dma, bt->image_size);
+	dev_dbg(&bt->pdev->dev, "owned SID2 arena=%pad bytes=%zu image=%pad bytes=%zu, both low32\n",
+		&bt->arena_dma, bt->arena_size, &bt->image_dma, bt->image_size);
 	return 0;
 }
 
@@ -478,7 +563,7 @@ static int bt7932_wake_and_lock(struct bt7932 *bt, bool require_open)
 	for (;;) {
 		mutex_lock(&bt->lock);
 		if (bt->fault || bt->stopping || bt->pm_state != BT7932_RUNNING ||
-		    (require_open && !bt->opened)) {
+		    bt->tx_blocked || (require_open && !bt->opened)) {
 			mutex_unlock(&bt->lock);
 			return -EHOSTDOWN;
 		}
@@ -534,52 +619,64 @@ static int bt7932_tx_progress(struct bt7932 *bt, unsigned int channel)
 	return 0;
 }
 
+/*
+ * Caller owns lock with the firmware awake. Returns -ENOSPC while the ring is
+ * full, or -EPROTO after faulting the transport.
+ */
+static int bt7932_publish_locked(struct bt7932 *bt, unsigned int channel,
+				 const u8 *data, size_t len)
+{
+	struct bt7932_ring *ring = &bt->rings[channel];
+	u8 *descriptor;
+
+	if (bt7932_tx_progress(bt, channel)) {
+		bt7932_fault_locked(bt, "TX consumer exceeded outstanding descriptors");
+		return -EPROTO;
+	}
+	if (((ring->host + 1) & BT7932_MASK) == ring->previous)
+		return -ENOSPC;
+	descriptor = bt->arena + ring->offset + ring->host * geometry[channel].stride;
+	memset(descriptor, 0, geometry[channel].stride);
+	descriptor[0] = 2;
+	descriptor[1] = len;
+	descriptor[2] = len >> 8;
+	descriptor[3] = len >> 16;
+	put_unaligned_le16(ring->host, descriptor + 12);
+	descriptor[15] = 2;
+	memcpy(descriptor + 16, data, len);
+	ring->host = (ring->host + 1) & BT7932_MASK;
+	bt7932_publish_counter(bt, bt->host_transfer, channel, ring->host);
+	bt7932_ring_doorbell(bt, geometry[channel].doorbell);
+	bt->hdev->stat.byte_tx += len;
+	return 0;
+}
+
 static void bt7932_tx_work(struct work_struct *work)
 {
 	struct bt7932 *bt = container_of(work, struct bt7932, tx_work);
 	struct sk_buff *skb;
+	int ret;
 
 	while ((skb = skb_dequeue(&bt->tx_queue))) {
 		int channel = bt7932_tx_channel(hci_skb_pkt_type(skb));
-		struct bt7932_ring *ring;
-		u16 consumer;
-		u8 *descriptor;
 
 		if (bt7932_wake_and_lock(bt, true)) {
 			kfree_skb(skb);
 			skb_queue_purge(&bt->tx_queue);
 			return;
 		}
-		ring = &bt->rings[channel];
-		if (bt7932_tx_progress(bt, channel)) {
-			bt7932_fault_locked(bt, "TX consumer exceeded outstanding descriptors");
-			mutex_unlock(&bt->lock);
-			kfree_skb(skb);
-			skb_queue_purge(&bt->tx_queue);
-			return;
-		}
-		consumer = ring->previous;
-		if (((ring->host + 1) & BT7932_MASK) == consumer) {
+		ret = bt7932_publish_locked(bt, channel, skb->data, skb->len);
+		if (ret == -ENOSPC) {
 			skb_queue_head(&bt->tx_queue, skb);
 			mutex_unlock(&bt->lock);
 			return;
 		}
-		descriptor = bt->arena + ring->offset + ring->host * geometry[channel].stride;
-		memset(descriptor, 0, geometry[channel].stride);
-		descriptor[0] = 2;
-		descriptor[1] = skb->len;
-		descriptor[2] = skb->len >> 8;
-		descriptor[3] = skb->len >> 16;
-		put_unaligned_le16(ring->host, descriptor + 12);
-		descriptor[15] = 2;
-		memcpy(descriptor + 16, skb->data, skb->len);
-		ring->host = (ring->host + 1) & BT7932_MASK;
-		bt7932_publish_counter(bt, bt->host_transfer, channel, ring->host);
-		bt7932_ring_doorbell(bt, geometry[channel].doorbell);
-		bt->tx_packets++;
-		bt->hdev->stat.byte_tx += skb->len;
 		mutex_unlock(&bt->lock);
 		kfree_skb(skb);
+		if (ret) {
+			skb_queue_purge(&bt->tx_queue);
+			return;
+		}
 	}
 }
 
@@ -621,10 +718,16 @@ static int bt7932_rx_locked(struct bt7932 *bt, unsigned int channel)
 			hci_skb_pkt_type(skb) = geo->packet;
 			skb_put_data(skb, descriptor + 16, length);
 			bt->hdev->stat.byte_rx += length;
-			bt->rx_packets++;
+			/*
+			 * From the start of bt7932_suspend() until resume, a
+			 * wake report ends the system sleep that is under way:
+			 * before the interrupt is suspended, nothing else would
+			 * remember that it arrived.
+			 */
+			if (geo->packet == HCI_EVENT_PKT && bt->wake_tracking &&
+			    bt7932_wake_report(bt, descriptor + 16, length))
+				pm_wakeup_dev_event(&bt->pdev->dev, 0, true);
 			hci_recv_frame(bt->hdev, skb);
-		} else if (!geo->packet) {
-			bt->diagnostics++;
 		}
 		slot = (slot + 1) & BT7932_MASK;
 	}
@@ -717,7 +820,7 @@ static int bt7932_download(struct bt7932 *bt)
 	}
 	writel(0x188d1807, bt->bar + BT7932_CONNECTION_SELECTOR);
 	writel(1, bt->bar + BT7932_SEMAPHORE_RELEASE);
-	dev_info(&bt->pdev->dev, "BT_IMAGE_ACCEPTED response1 boot0->2; image remains retained\n");
+	dev_dbg(&bt->pdev->dev, "BT_IMAGE_ACCEPTED response1 boot0->2; image remains retained\n");
 	return 0;
 }
 
@@ -731,7 +834,7 @@ static int bt7932_ipc_state(struct bt7932 *bt, u8 *state)
 		value = readl(bt->bar + BT7932_STATE);
 		if (value == U32_MAX)
 			return -EIO;
-		/* The reviewed early-state rule replaces memory with the BAR byte. */
+		/* Until the state in memory passes 1, the BAR register holds it. */
 		*state = value & 0xff;
 	}
 	return 0;
@@ -814,11 +917,11 @@ static void bt7932_channels(struct bt7932 *bt)
 		bt7932_publish_counter(bt, bt->host_transfer, channel, BT7932_DEPTH - 1);
 		bt7932_ring_doorbell(bt, geometry[channel].doorbell);
 	}
-	/* The reviewed cold IPC transition starts ACTIVE; no initial sleep ACK. */
+	/* The IPC starts active after a cold start; no sleep ACK is due. */
 	bt->last_sleep = 0;
 	WRITE_ONCE(bt->awake, true);
 	WRITE_ONCE(bt->ipc_ready, true);
-	dev_info(&bt->pdev->dev, "BT_IPC_READY ten retained advertisements;127 RX offers per channel\n");
+	dev_dbg(&bt->pdev->dev, "BT_IPC_READY ten retained advertisements;127 RX offers per channel\n");
 }
 
 static int bt7932_open(struct hci_dev *hdev)
@@ -826,12 +929,23 @@ static int bt7932_open(struct hci_dev *hdev)
 	struct bt7932 *bt = hci_get_drvdata(hdev);
 	int ret = 0;
 
+	/*
+	 * The HCI core's recovery work is not frozen for system sleep. While
+	 * the transport sleeps with wakeup armed nothing may be sent, so a
+	 * recovery that reopens the device waits here for resume rather than
+	 * failing its setup and faulting the transport. bt7932_resume()
+	 * unblocks it before it resumes HCI, which waits for this open.
+	 */
+	wait_event(bt->wake_wait, !READ_ONCE(bt->tx_blocked));
 	mutex_lock(&bt->lock);
 	if (bt->fault || !bt->ipc_ready || bt->stopping ||
 	    bt->pm_state != BT7932_RUNNING)
 		ret = -EHOSTDOWN;
 	else
 		WRITE_ONCE(bt->opened, true);
+	/* Closing the device drops an injected event that was still queued. */
+	if (bt->recovery == BT7932_RECOVERY_REQUESTED)
+		bt->recovery = BT7932_RECOVERY_NONE;
 	mutex_unlock(&bt->lock);
 	return ret;
 }
@@ -862,7 +976,8 @@ static int bt7932_send(struct hci_dev *hdev, struct sk_buff *skb)
 	int ret;
 
 	if (READ_ONCE(bt->fault) || !READ_ONCE(bt->opened) ||
-	    READ_ONCE(bt->stopping) || READ_ONCE(bt->pm_state) != BT7932_RUNNING)
+	    READ_ONCE(bt->stopping) || READ_ONCE(bt->tx_blocked) ||
+	    READ_ONCE(bt->pm_state) != BT7932_RUNNING)
 		return -EHOSTDOWN;
 	if (channel < 0 || skb->len > geometry[channel].payload)
 		return -EMSGSIZE;
@@ -938,29 +1053,85 @@ static int bt7932_setup(struct hci_dev *hdev)
 				   HCI_INIT_TIMEOUT);
 	if (ret)
 		goto fault;
-	dev_info(&bt->pdev->dev, "BT_HCI_SETUP_OK Reset/calibration/PTX/address completed in order\n");
+	dev_dbg(&bt->pdev->dev, "BT_HCI_SETUP_OK Reset/calibration/PTX/address completed in order\n");
+	mutex_lock(&bt->lock);
+	if (bt->recovery == BT7932_RECOVERY_REOPENING)
+		dev_info(&bt->pdev->dev, "controller recovered\n");
+	bt->recovery = BT7932_RECOVERY_NONE;
+	mutex_unlock(&bt->lock);
 	return 0;
 fault:
 	dev_err(&bt->pdev->dev, "BT_HCI_SETUP_FAILED stage=%s opcode=%04x status=%d\n",
 		stage, opcode, ret);
+	/*
+	 * The transport is intact, so a requested recovery or a later power-on
+	 * may try again. A controller that fails the setup of its recovery,
+	 * though, does not come back without a reset of the PCI function.
+	 */
 	mutex_lock(&bt->lock);
-	bt7932_fault_locked(bt, "HCI setup command failed; no retry");
+	if (bt->recovery == BT7932_RECOVERY_REOPENING)
+		bt7932_fault_locked(bt, "controller recovery failed");
 	mutex_unlock(&bt->lock);
 	return ret;
 }
 
+/*
+ * Called when a command times out, and through the "reset" sysfs attribute.
+ * While the transport rings are consistent, recover the controller the
+ * standard way: inject a Hardware Error event, so that the core closes the
+ * device, resetting the controller, and opens it again, repeating setup.
+ * Allow one attempt until a setup succeeds, so that a controller that no
+ * longer answers ends in a fault instead of a reset loop.
+ */
 static void bt7932_reset(struct hci_dev *hdev)
+{
+	struct bt7932 *bt = hci_get_drvdata(hdev);
+	bool recover;
+
+	mutex_lock(&bt->lock);
+	recover = !bt->fault && !bt->stopping &&
+		  bt->recovery == BT7932_RECOVERY_NONE &&
+		  bt->pm_state == BT7932_RUNNING;
+	if (recover)
+		bt->recovery = BT7932_RECOVERY_REQUESTED;
+	mutex_unlock(&bt->lock);
+	if (!recover)
+		return;
+	dev_warn(&bt->pdev->dev, "resetting the controller\n");
+	if (hci_reset_dev(hdev)) {
+		mutex_lock(&bt->lock);
+		if (bt->recovery == BT7932_RECOVERY_REQUESTED)
+			bt->recovery = BT7932_RECOVERY_NONE;
+		mutex_unlock(&bt->lock);
+	}
+}
+
+/*
+ * The core closes and reopens the device after this, for a Hardware Error
+ * event from the controller as for one injected above. That reopening is
+ * the recovery attempt.
+ */
+static void bt7932_hw_error(struct hci_dev *hdev, u8 code)
 {
 	struct bt7932 *bt = hci_get_drvdata(hdev);
 
 	mutex_lock(&bt->lock);
-	bt7932_fault_locked(bt, "HCI requested recovery; cold reset required");
+	bt->recovery = BT7932_RECOVERY_REOPENING;
 	mutex_unlock(&bt->lock);
+	bt_dev_err(hdev, "hardware error 0x%2.2x", code);
 }
 
-static void bt7932_hw_error(struct hci_dev *hdev, u8 code)
+/*
+ * Follows the wakeup setting of the PCI function, see bt7932_probe().
+ * Only while it is on does hci_suspend_sync() leave page scan and LE passive
+ * scan set up for the devices flagged for remote wakeup, and only then does
+ * bt7932_suspend() keep the transport running with its interrupt armed.
+ */
+static bool bt7932_wakeup(struct hci_dev *hdev)
 {
-	bt7932_reset(hdev);
+	struct bt7932 *bt = hci_get_drvdata(hdev);
+
+	return device_may_wakeup(&bt->pdev->dev);
 }
 
 static int bt7932_iommu(struct bt7932 *bt)
@@ -969,6 +1140,7 @@ static int bt7932_iommu(struct bt7932 *bt)
 	struct iommu_domain *domain = iommu_get_domain_for_dev(dev);
 	struct iommu_fwspec *spec = dev_iommu_fwspec_get(dev);
 	struct pci_bus *root = bt->pdev->bus;
+	struct of_phandle_args map = {};
 	struct device_node *target = NULL;
 	u32 rid = pci_dev_id(bt->pdev), sid = U32_MAX;
 	int ret;
@@ -990,8 +1162,10 @@ static int bt7932_iommu(struct bt7932 *bt)
 		return -ENODEV;
 	}
 	/* Apple DART stores IDs in private stream_maps, not fwspec->ids. */
-	ret = of_map_id(root->dev.of_node, rid, "iommu-map", "iommu-map-mask",
-			&target, &sid);
+	ret = of_map_iommu_id(root->dev.of_node, rid, &map);
+	target = map.np;
+	if (!ret && map.args_count)
+		sid = map.args[0];
 	if (ret || !target || sid != 2 ||
 	    of_fwnode_handle(target) != spec->iommu_fwnode ||
 	    !of_device_is_compatible(target, "apple,t8140-dart")) {
@@ -1003,7 +1177,7 @@ static int bt7932_iommu(struct bt7932 *bt)
 		if (ret)
 			dev_err(dev, "BT_IOMMU_REJECT 32-bit DMA mask status=%d\n", ret);
 		else
-			dev_info(dev, "BT_IOMMU_ADMITTED RID101->SID2 matched translated DART\n");
+			dev_dbg(dev, "BT_IOMMU_ADMITTED RID101->SID2 matched translated DART\n");
 	}
 	of_node_put(target);
 	return ret;
@@ -1037,8 +1211,8 @@ static void bt7932_cleanup(struct bt7932 *bt, bool release_dma)
 }
 
 /*
- * Bluetooth starts after the Wi-Fi function has initialized its firmware.
- * Wait until mt7932-fullmac is bound to function 0, then link the
+ * Admission was only qualified with the Wi-Fi function already running its
+ * firmware. Wait until mt7932-fullmac is bound to function 0, then link the
  * two functions so that the driver core unbinds this one first.
  */
 static int bt7932_wait_for_wifi(struct pci_dev *pdev)
@@ -1069,17 +1243,17 @@ static int bt7932_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	u16 command;
 	int ret;
 
-	/* enable=0 leaves the function unbound for diagnosis. */
-	if (!READ_ONCE(enable))
-		return -ENODEV;
 	if (!of_machine_is_compatible("apple,j700") ||
 	    !of_machine_is_compatible("apple,t8140") ||
 	    pci_domain_nr(pdev->bus) || pdev->bus->number != 1 || pdev->devfn != PCI_DEVFN(0, 1))
 		return -ENODEV;
+	ret = apple_piodma_radio_check(pdev);
+	if (ret)
+		return ret;
 	ret = bt7932_wait_for_wifi(pdev);
 	if (ret)
 		return ret;
-	/* The radio transport requires ASPM and clock PM off on this link. */
+	/* Admission was qualified with ASPM and clock PM off on this link. */
 	ret = pci_disable_link_state(pdev, PCIE_LINK_STATE_ALL);
 	if (ret)
 		dev_warn(&pdev->dev, "link power management left as found: %d\n", ret);
@@ -1120,7 +1294,7 @@ static int bt7932_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		ret = -ENOMEM;
 		goto fail;
 	}
-	dev_info(&pdev->dev, "BT_BAR0 resource=%pR\n", &pdev->resource[0]);
+	dev_dbg(&pdev->dev, "BT_BAR0 resource=%pR\n", &pdev->resource[0]);
 	ret = pci_read_config_dword(pdev, BT7932_BOOT_CONFIG, &boot);
 	if (ret || boot == U32_MAX || (boot & 0xf) || ((boot >> 4) & 7) > 1) {
 		dev_err(&pdev->dev, "BT_IDENTITY_REJECT config_status=%d boot=%#x\n", ret, boot);
@@ -1137,7 +1311,7 @@ static int bt7932_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		ret = -ENODEV;
 		goto fail;
 	}
-	dev_info(&pdev->dev, "BT_COLD_ADMISSION ROM=%u bootstate0 chip7932 SID2\n", bt->rom);
+	dev_dbg(&pdev->dev, "BT_COLD_ADMISSION ROM=%u bootstate0 chip7932 SID2\n", bt->rom);
 	ret = bt7932_read_inputs(bt);
 	if (ret)
 		goto fail;
@@ -1164,6 +1338,7 @@ static int bt7932_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	bt->hdev->setup = bt7932_setup;
 	bt->hdev->reset = bt7932_reset;
 	bt->hdev->hw_error = bt7932_hw_error;
+	bt->hdev->wakeup = bt7932_wakeup;
 	hci_set_quirk(bt->hdev, HCI_QUIRK_RESET_ON_CLOSE);
 	hci_set_quirk(bt->hdev, HCI_QUIRK_NON_PERSISTENT_SETUP);
 	/* System sleep suspends HCI from bt7932_suspend(), after the freeze. */
@@ -1198,7 +1373,13 @@ static int bt7932_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (ret < 0)
 		goto retained_fault;
 	bt->registered = true;
-	dev_info(&pdev->dev, "BT_HCI_REGISTERED; setup/discovery/connection remain separate gates\n");
+	/*
+	 * Let paired devices wake the system by default, as btmtksdio does
+	 * for MediaTek SDIO controllers: BlueZ still decides per device
+	 * (WakeAllowed), and power/wakeup turns it off for the controller.
+	 */
+	device_set_wakeup_enable(&pdev->dev, true);
+	dev_dbg(&pdev->dev, "BT_HCI_REGISTERED; setup/discovery/connection remain separate gates\n");
 	return 0;
 retained_fault:
 	mutex_lock(&bt->lock);
@@ -1305,20 +1486,202 @@ static bool bt7932_hci_pm(struct bt7932 *bt)
 	return !hci_dev_test_flag(bt->hdev, HCI_USER_CHANNEL);
 }
 
+/*
+ * Suspend-to-idle can keep the transport running so that the controller can
+ * wake the system: with wakeup enabled on the PCI function, the controller
+ * up and HCI suspended by this driver.
+ */
+static bool bt7932_may_wake(struct bt7932 *bt)
+{
+	return device_may_wakeup(&bt->pdev->dev) && pm_suspend_no_platform() &&
+	       bt7932_hci_pm(bt) && test_bit(HCI_UP, &bt->hdev->flags);
+}
+
+static void bt7932_track_wake(struct bt7932 *bt, bool on)
+{
+	mutex_lock(&bt->lock);
+	bt->wake_tracking = on;
+	mutex_unlock(&bt->lock);
+}
+
+/*
+ * Before system sleep, the host tells the controller that it is going to
+ * sleep with a vendor command whose parameters are all ones; nothing is sent
+ * when the host is back. It is answered by a vendor event, if at all, so
+ * place it on the command ring directly rather than through the HCI command
+ * flow, and wait until the controller has taken it.
+ *
+ * Returns -EAGAIN if nothing was published (the controller could not be
+ * reached without a fault, or the ring was full), -EBUSY if the command was
+ * published but not taken in time, so that it may still take effect, or
+ * -EIO if the transport faulted.
+ */
+static int bt7932_host_sleep(struct bt7932 *bt)
+{
+	u8 cmd[HCI_COMMAND_HDR_SIZE + BT7932_HOST_SLEEP_PLEN];
+	unsigned long deadline;
+	u16 target;
+	int ret;
+
+	put_unaligned_le16(BT7932_OP_HOST_SLEEP, cmd);
+	cmd[2] = BT7932_HOST_SLEEP_PLEN;
+	memset(cmd + HCI_COMMAND_HDR_SIZE, 0xff, BT7932_HOST_SLEEP_PLEN);
+
+	ret = bt7932_wake_and_lock(bt, true);
+	if (ret)
+		return READ_ONCE(bt->fault) ? -EIO : -EAGAIN;
+	ret = bt7932_publish_locked(bt, 1, cmd, sizeof(cmd));
+	target = bt->rings[1].host;
+	mutex_unlock(&bt->lock);
+	if (ret == -ENOSPC)
+		return -EAGAIN;
+	if (ret)
+		return -EIO;
+
+	deadline = jiffies + msecs_to_jiffies(500);
+	for (;;) {
+		mutex_lock(&bt->lock);
+		ret = bt->fault ? -EIO : 0;
+		if (!ret && bt7932_counter(bt, bt->fw_transfer, 1) == target) {
+			mutex_unlock(&bt->lock);
+			return 0;
+		}
+		mutex_unlock(&bt->lock);
+		if (ret)
+			return ret;
+		if (time_after(jiffies, deadline))
+			return -EBUSY;
+		usleep_range(1000, 2000);
+	}
+}
+
+/*
+ * Leave the firmware running with its MSI armed. It keeps the scans that
+ * hci_suspend_dev() set up and reports a match like any other event. Returns
+ * 0 when armed, -EAGAIN when the transport should be quiesced instead,
+ * -EBUSY when the controller state is uncertain, or -EIO when it failed.
+ */
+static int bt7932_arm_wakeup(struct bt7932 *bt)
+{
+	struct device *dev = &bt->pdev->dev;
+	int ret;
+
+	ret = enable_irq_wake(bt->irq);
+	if (ret) {
+		dev_warn(dev, "cannot arm the interrupt for wakeup: %d\n", ret);
+		return -EAGAIN;
+	}
+
+	ret = bt7932_host_sleep(bt);
+	if (ret) {
+		disable_irq_wake(bt->irq);
+		dev_warn(dev, "host sleep command failed: %d\n", ret);
+		return ret;
+	}
+
+	mutex_lock(&bt->lock);
+	ret = bt->fault ? -EIO : 0;
+	if (!ret) {
+		bt->wake_armed = true;
+		/* A failed wake handshake would fault the transport. */
+		bt->tx_blocked = true;
+	}
+	mutex_unlock(&bt->lock);
+	if (ret) {
+		disable_irq_wake(bt->irq);
+		return ret;
+	}
+	/* Drop what HCI queued after its suspend, as the quiesce does. */
+	cancel_work_sync(&bt->tx_work);
+	skb_queue_purge(&bt->tx_queue);
+	return 0;
+}
+
+/*
+ * Ends the armed state on resume, or after a suspend that was aborted. The
+ * interrupt is still disabled if bt7932_resume_noirq() held it.
+ */
+static void bt7932_disarm_wakeup(struct bt7932 *bt)
+{
+	disable_irq_wake(bt->irq);
+	mutex_lock(&bt->lock);
+	bt->wake_armed = false;
+	bt->tx_blocked = false;
+	bt->wake_tracking = false;
+	bt->pci_saved = false;
+	mutex_unlock(&bt->lock);
+	wake_up_all(&bt->wake_wait);
+	if (bt->irq_held) {
+		bt->irq_held = false;
+		enable_irq(bt->irq);
+	}
+}
+
+/*
+ * With wakeup enabled, the transport stays up through suspend-to-idle
+ * instead of being quiesced:
+ *
+ * - Wake tracking starts before anything else, so that a wake report or a
+ *   Hardware Error is never consumed unnoticed (bt7932_rx_locked()).
+ * - bt7932_arm_wakeup() arms the MSI and blocks TX. HCI recovery, which
+ *   would need TX, waits in bt7932_open() until resume.
+ * - bt7932_suspend_noirq() saves the PCI state, which keeps the PCI core
+ *   from moving the function out of D0, once the handler can no longer
+ *   run, and fails the suspend if the transport faulted in the meantime.
+ * - bt7932_resume_noirq() holds the interrupt off until the PCI core has
+ *   restored that state and called bt7932_resume().
+ * - A terminal fault, from whatever source, saves the state again with
+ *   bus mastering clear while it is outstanding, so restoring it never
+ *   brings bus mastering back for a failed transport.
+ *
+ * The PCIe link and host bridge stay up in suspend-to-idle anyway, as the
+ * Wi-Fi function on the same link is never stopped, and ASPM stays off on
+ * this link as the transport was admitted.
+ */
 static int bt7932_suspend(struct device *dev)
 {
 	struct bt7932 *bt = pci_get_drvdata(to_pci_dev(dev));
+	bool wake;
 	int ret;
 
 	if (READ_ONCE(bt->fault))
 		return -EIO;
 	if (!bt->registered)
 		return 0;
+	wake = bt7932_may_wake(bt);
+	if (wake)
+		bt7932_track_wake(bt, true);
 	if (bt7932_hci_pm(bt)) {
 		bt7932_wait_hci_idle(bt);
 		ret = hci_suspend_dev(bt->hdev);
-		if (ret)
+		if (ret) {
+			bt7932_track_wake(bt, false);
 			return ret;
+		}
+	}
+	if (wake) {
+		ret = bt7932_arm_wakeup(bt);
+		if (!ret) {
+			dev_dbg(dev, "system sleep with wakeup armed\n");
+			return 0;
+		}
+		bt7932_track_wake(bt, false);
+		if (ret == -EBUSY) {
+			/*
+			 * The host sleep command may still take effect, so the
+			 * quiesce cannot be relied on. Fail this suspend and
+			 * reset the controller through HCI recovery.
+			 */
+			dev_err(dev, "host sleep command not taken; resetting the controller\n");
+			hci_resume_dev(bt->hdev);
+			bt7932_reset(bt->hdev);
+			return ret;
+		}
+		if (ret != -EAGAIN) {
+			dev_err(dev, "transport failed while arming wakeup\n");
+			hci_resume_dev(bt->hdev);
+			return ret;
+		}
 	}
 	ret = bt7932_quiesce(bt);
 	if (!ret) {
@@ -1334,11 +1697,49 @@ static int bt7932_suspend(struct device *dev)
 	return ret;
 }
 
+static int bt7932_suspend_noirq(struct device *dev)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	struct bt7932 *bt = pci_get_drvdata(pdev);
+	int ret = 0;
+
+	if (!bt->wake_armed)
+		return 0;
+	mutex_lock(&bt->lock);
+	if (bt->fault) {
+		ret = -EIO;
+	} else {
+		pci_save_state(pdev);
+		bt->pci_saved = true;
+	}
+	mutex_unlock(&bt->lock);
+	if (ret)
+		dev_err(dev, "transport failed while suspending with wakeup armed\n");
+	return ret;
+}
+
+static int bt7932_resume_noirq(struct device *dev)
+{
+	struct bt7932 *bt = pci_get_drvdata(to_pci_dev(dev));
+
+	if (bt->wake_armed) {
+		disable_irq(bt->irq);
+		bt->irq_held = true;
+	}
+	return 0;
+}
+
 static int bt7932_resume(struct device *dev)
 {
 	struct bt7932 *bt = pci_get_drvdata(to_pci_dev(dev));
 	int ret;
 
+	if (bt->wake_armed) {
+		bt7932_disarm_wakeup(bt);
+		if (READ_ONCE(bt->fault))
+			return -EIO;
+		return bt7932_hci_pm(bt) ? hci_resume_dev(bt->hdev) : 0;
+	}
 	if (READ_ONCE(bt->fault))
 		return -EIO;
 	if (!bt->registered)
@@ -1362,6 +1763,8 @@ static int bt7932_freeze(struct device *dev)
 
 static const struct dev_pm_ops bt7932_pm_ops = {
 	.suspend = bt7932_suspend,
+	.suspend_noirq = bt7932_suspend_noirq,
+	.resume_noirq = bt7932_resume_noirq,
 	.resume = bt7932_resume,
 	.freeze = bt7932_freeze,
 	.thaw = bt7932_resume,
@@ -1421,7 +1824,7 @@ static struct pci_driver bt7932_driver = {
 };
 module_pci_driver(bt7932_driver);
 
-MODULE_DESCRIPTION("Experimental standalone J700 MT7932 Bluetooth PCIe transport");
+MODULE_DESCRIPTION("MediaTek MT7932 Bluetooth PCIe transport for the Apple MacBook Neo");
 MODULE_LICENSE("GPL");
 MODULE_FIRMWARE(BT7932_FW_B0);
 MODULE_FIRMWARE(BT7932_FW_B1);
@@ -1429,3 +1832,8 @@ MODULE_FIRMWARE(BT7932_FW_B1_FALLBACK);
 MODULE_FIRMWARE(BT7932_PTX);
 MODULE_FIRMWARE(BT7932_CAL);
 MODULE_FIRMWARE(BT7932_ADDR);
+
+#if IS_ENABLED(CONFIG_BT_MTK7932_PCIE_KUNIT_TEST)
+#include "mt7932_bt_pcie_test.c"
+#include "mt7932_bt_pcie_wake_test.c"
+#endif

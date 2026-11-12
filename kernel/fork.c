@@ -23,6 +23,7 @@
 #include <linux/sched/task_stack.h>
 #include <linux/sched/cputime.h>
 #include <linux/sched/ext.h>
+#include <linux/sched/exec_state.h>
 #include <linux/seq_file.h>
 #include <linux/rtmutex.h>
 #include <linux/init.h>
@@ -32,6 +33,7 @@
 #include <linux/completion.h>
 #include <linux/personality.h>
 #include <linux/mempolicy.h>
+#include <linux/mm_subpage.h>
 #include <linux/sem.h>
 #include <linux/file.h>
 #include <linux/fdtable.h>
@@ -112,7 +114,7 @@
 #include <linux/pgalloc.h>
 #include <linux/uaccess.h>
 
-#include <asm/mmu_context.h>
+#include <linux/mmu_context.h>
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
 
@@ -204,7 +206,7 @@ static DEFINE_PER_CPU(struct vm_struct *, cached_stacks[NR_CACHED_STACKS]);
  * accounting is performed by the code assigning/releasing stacks to tasks.
  * We need a zeroed memory without __GFP_ACCOUNT.
  */
-#define GFP_VMAP_STACK (GFP_KERNEL | __GFP_ZERO)
+#define GFP_VMAP_STACK (GFP_KERNEL | __GFP_ZERO | __GFP_SKIP_KASAN)
 
 struct vm_stack {
 	struct rcu_head rcu;
@@ -342,7 +344,8 @@ static int alloc_thread_stack_node(struct task_struct *tsk, int node)
 		}
 
 		/* Reset stack metadata. */
-		kasan_unpoison_range(vm_area->addr, THREAD_SIZE);
+		if (!kasan_hw_tags_enabled())
+			kasan_unpoison_range(vm_area->addr, THREAD_SIZE);
 
 		stack = kasan_reset_tag(vm_area->addr);
 
@@ -555,6 +558,7 @@ void free_task(struct task_struct *tsk)
 	if (tsk->flags & PF_KTHREAD)
 		free_kthread_struct(tsk);
 	bpf_task_storage_free(tsk);
+	put_task_exec_state(rcu_access_pointer(tsk->exec_state));
 	free_task_struct(tsk);
 }
 EXPORT_SYMBOL(free_task);
@@ -638,6 +642,12 @@ static void check_mm(struct mm_struct *mm)
 				 task_pid_nr(current));
 		}
 	}
+
+#ifdef CONFIG_MM_SUBPAGE
+	if (mm->committed_user_pages)
+		pr_alert("BUG: non-zero user commitment on freeing mm: %lu\n",
+			 mm->committed_user_pages);
+#endif
 
 	if (mm_pgtables_bytes(mm))
 		pr_alert("BUG: non-zero pgtables_bytes on freeing mm: %ld\n",
@@ -726,12 +736,12 @@ void __mmdrop(struct mm_struct *mm)
 	cleanup_lazy_tlbs(mm);
 
 	WARN_ON_ONCE(mm == current->active_mm);
+	mm_destroy_sched(mm);
 	mm_free_pgd(mm);
 	mm_free_id(mm);
 	destroy_context(mm);
 	mmu_notifier_subscriptions_destroy(mm);
 	check_mm(mm);
-	put_user_ns(mm->user_ns);
 	mm_pasid_drop(mm);
 	mm_destroy_cid(mm);
 	percpu_counter_destroy_many(mm->rss_stat, NR_MM_COUNTERS);
@@ -946,6 +956,8 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 	tsk->seccomp.filter = NULL;
 #endif
 
+	RCU_INIT_POINTER(tsk->exec_state, NULL);
+
 	setup_thread_stack(tsk, orig);
 	clear_user_return_notifier(tsk);
 	clear_tsk_need_resched(tsk);
@@ -1064,7 +1076,6 @@ static void mm_init_uprobes_state(struct mm_struct *mm)
 {
 #ifdef CONFIG_UPROBES
 	mm->uprobes_state.xol_area = NULL;
-	arch_uprobe_init_state(mm);
 #endif
 }
 
@@ -1077,8 +1088,7 @@ static void mmap_init_lock(struct mm_struct *mm)
 #endif
 }
 
-static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
-	struct user_namespace *user_ns)
+static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p)
 {
 	mt_init_flags(&mm->mm_mt, MM_MT_FLAGS);
 	mt_set_external_lock(&mm->mm_mt, &mm->mmap_lock);
@@ -1089,6 +1099,10 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	INIT_LIST_HEAD(&mm->mmlist);
 	mm_pgtables_bytes_init(mm);
 	mm->map_count = 0;
+#ifdef CONFIG_MM_SUBPAGE
+	mm->committed_user_pages = 0;
+	mm->cow_subpage_pool = NULL;
+#endif
 	mm->locked_vm = 0;
 	atomic64_set(&mm->pinned_vm, 0);
 	memset(&mm->rss_stat, 0, sizeof(mm->rss_stat));
@@ -1106,6 +1120,7 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 #endif
 	mm_init_uprobes_state(mm);
 	hugetlb_count_init(mm);
+	futex_mm_init(mm);
 
 	mm_flags_clear_all(mm);
 	if (current->mm) {
@@ -1118,11 +1133,8 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 		mm->def_flags = 0;
 	}
 
-	if (futex_mm_init(mm))
-		goto fail_mm_init;
-
 	if (mm_alloc_pgd(mm))
-		goto fail_nopgd;
+		goto fail_mm_init;
 
 	if (mm_alloc_id(mm))
 		goto fail_noid;
@@ -1133,15 +1145,19 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	if (mm_alloc_cid(mm, p))
 		goto fail_cid;
 
+	if (mm_alloc_sched(mm))
+		goto fail_sched;
+
 	if (percpu_counter_init_many(mm->rss_stat, 0, GFP_KERNEL_ACCOUNT,
 				     NR_MM_COUNTERS))
 		goto fail_pcpu;
 
-	mm->user_ns = get_user_ns(user_ns);
 	lru_gen_init_mm(mm);
 	return mm;
 
 fail_pcpu:
+	mm_destroy_sched(mm);
+fail_sched:
 	mm_destroy_cid(mm);
 fail_cid:
 	destroy_context(mm);
@@ -1149,8 +1165,6 @@ fail_nocontext:
 	mm_free_id(mm);
 fail_noid:
 	mm_free_pgd(mm);
-fail_nopgd:
-	futex_hash_free(mm);
 fail_mm_init:
 	free_mm(mm);
 	return NULL;
@@ -1159,7 +1173,7 @@ fail_mm_init:
 /*
  * Allocate and initialize an mm_struct.
  */
-struct mm_struct *mm_alloc(void)
+static struct mm_struct *__mm_alloc(bool for_exec, unsigned int page_shift)
 {
 	struct mm_struct *mm;
 
@@ -1168,9 +1182,31 @@ struct mm_struct *mm_alloc(void)
 		return NULL;
 
 	memset(mm, 0, sizeof(*mm));
-	return mm_init(mm, current, current_user_ns());
+	if (for_exec)
+		arch_mm_init_exec(mm, page_shift);
+	return mm_init(mm, current);
+}
+
+struct mm_struct *mm_alloc(void)
+{
+	return __mm_alloc(false, 0);
 }
 EXPORT_SYMBOL_IF_KUNIT(mm_alloc);
+
+struct mm_struct *mm_alloc_exec(void)
+{
+#ifdef CONFIG_ARCH_HAS_USER_PAGE_SIZE
+	return __mm_alloc(true, current->exec_page_shift);
+#else
+	return __mm_alloc(true, 0);
+#endif
+}
+
+/* The caller has validated the requested exec granule. */
+struct mm_struct *mm_alloc_exec_page_shift(unsigned int page_shift)
+{
+	return __mm_alloc(true, page_shift);
+}
 
 static inline void __mmput(struct mm_struct *mm)
 {
@@ -1181,6 +1217,7 @@ static inline void __mmput(struct mm_struct *mm)
 	ksm_exit(mm);
 	khugepaged_exit(mm); /* must run before exit_mmap */
 	exit_mmap(mm);
+	mm_subpage_cow_pool_exit(mm);
 	mm_put_huge_zero_folio(mm);
 	set_mm_exe_file(mm, NULL);
 	if (!list_empty(&mm->mmlist)) {
@@ -1532,7 +1569,7 @@ static struct mm_struct *dup_mm(struct task_struct *tsk,
 
 	memcpy(mm, oldmm, sizeof(*mm));
 
-	if (!mm_init(mm, tsk, mm->user_ns))
+	if (!mm_init(mm, tsk))
 		goto fail_nomem;
 
 	uprobe_start_dup_mmap();
@@ -1595,7 +1632,24 @@ static int copy_mm(u64 clone_flags, struct task_struct *tsk)
 
 	tsk->mm = mm;
 	tsk->active_mm = mm;
+	sched_cache_fork(tsk);
 	return 0;
+}
+
+static int copy_exec_state(u64 clone_flags, struct task_struct *tsk)
+{
+	struct task_exec_state *exec_state;
+
+	/* CLONE_VM siblings refcount-share the parent's exec_state. */
+	if (clone_flags & CLONE_VM) {
+		exec_state = rcu_dereference_protected(current->exec_state, true);
+		refcount_inc(&exec_state->count);
+		rcu_assign_pointer(tsk->exec_state, exec_state);
+		return 0;
+	}
+
+	/* Everyone else inherits a fresh copy. */
+	return task_exec_state_copy(tsk);
 }
 
 static int copy_fs(u64 clone_flags, struct task_struct *tsk)
@@ -1958,9 +2012,9 @@ static bool need_futex_hash_allocate_default(u64 clone_flags)
 {
 	/*
 	 * Allocate a default futex hash for any sibling that will
-	 * share the parent's mm, except vfork.
+	 * share the parent's mm.
 	 */
-	return (clone_flags & (CLONE_VM | CLONE_VFORK)) == CLONE_VM;
+	return clone_flags & CLONE_VM;
 }
 
 /*
@@ -2095,6 +2149,14 @@ __latent_entropy struct task_struct *copy_process(
 	p = dup_task_struct(current, node);
 	if (!p)
 		goto fork_out;
+	/*
+	 * Must run before the first fallible op, so error paths never
+	 * free the parent's ret_stack.
+	 */
+	ftrace_graph_init_task(p);
+	retval = copy_exec_state(clone_flags, p);
+	if (retval)
+		goto bad_fork_free;
 	p->flags &= ~PF_KTHREAD;
 	if (args->kthread)
 		p->flags |= PF_KTHREAD;
@@ -2117,8 +2179,6 @@ __latent_entropy struct task_struct *copy_process(
 	 * TID is cleared in mm_release() when the task exits
 	 */
 	p->clear_child_tid = (clone_flags & CLONE_CHILD_CLEARTID) ? args->child_tid : NULL;
-
-	ftrace_graph_init_task(p);
 
 	rt_mutex_init_task(p);
 	raw_spin_lock_init(&p->blocked_lock);
@@ -2223,6 +2283,7 @@ __latent_entropy struct task_struct *copy_process(
 	lockdep_init_task(p);
 
 	p->blocked_on = NULL; /* not blocked yet */
+	p->blocked_donor = NULL; /* nobody is boosting p yet */
 
 #ifdef CONFIG_BCACHE
 	p->sequential_io	= 0;
@@ -2557,6 +2618,7 @@ bad_fork_cleanup_io:
 bad_fork_cleanup_namespaces:
 	exit_nsproxy_namespaces(p);
 bad_fork_cleanup_mm:
+	sched_cache_fork_cleanup(p);
 	if (p->mm) {
 		mm_clear_owner(p->mm, p);
 		mmput(p->mm);
@@ -3099,6 +3161,7 @@ void __init proc_caches_init(void)
 			sizeof(struct signal_struct), 0,
 			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_ACCOUNT,
 			NULL);
+	exec_state_init();
 	files_cachep = kmem_cache_create("files_cache",
 			sizeof(struct files_struct), 0,
 			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_ACCOUNT,
@@ -3297,8 +3360,9 @@ int ksys_unshare(unsigned long unshare_flags)
 	perf_event_namespaces(current);
 
 bad_unshare_cleanup_nsproxy:
+	/* never installed, so no active references to drop */
 	if (new_nsproxy)
-		put_nsproxy(new_nsproxy);
+		nsproxy_free(new_nsproxy);
 bad_unshare_cleanup_cred:
 	if (new_cred)
 		put_cred(new_cred);

@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 #include "mt7932.h"
 
 static int mt_peer_reserve(struct mt7932 *m);
@@ -25,13 +25,25 @@ static bool mt_channel_event(struct mt7932 *m, const u8 *body, size_t length)
 		NL80211_CHAN_WIDTH_40 : NL80211_CHAN_WIDTH_20;
 	def.center_freq1 = body[17] <= 13 ? 2407 + 5 * center : 5000 + 5 * center;
 	if (!def.chan || !cfg80211_chandef_valid(&def) ||
-	    !cfg80211_chandef_usable(m->wiphy, &def, IEEE80211_CHAN_DISABLED | IEEE80211_CHAN_RADAR))
+	    !cfg80211_chandef_usable(m->wiphy, &def, IEEE80211_CHAN_DISABLED))
 		return false;
 	if (m->connect_center && (m->connect_center != center || m->connect_chandef.width != def.width))
 		return false;
 	m->connect_center = center;
 	m->connect_chandef = def;
 	return true;
+}
+
+/* iwd keeps its reassociation mark for the life of a connection made by one,
+ * and meanwhile drops any disconnect that isn't from the AP. Nothing else would
+ * tell it the connection has gone, so report these as from the AP. iwd ignores
+ * the report of a disconnect it asked for either way. Remove roam_landed once
+ * iwd clears the mark on a successful connect.
+ */
+void mt_report_disconnected(struct mt7932 *m, u16 reason, bool local, gfp_t gfp)
+{
+	cfg80211_disconnected(m->netdev, reason, NULL, 0,
+			      local && !READ_ONCE(m->roam_landed), gfp);
 }
 
 void mt_rf_fail_locked(struct mt7932 *m, int error)
@@ -71,11 +83,16 @@ void mt_rf_fail_locked(struct mt7932 *m, int error)
 		complete_all(&m->assoc_done);
 		complete_all(&m->discovery_done);
 	} else if (m->connected) {
-		/* Hardware ownership is uncertain: report failure, retain the peer. */
+		/* Hardware ownership is uncertain: report failure, retain the peer.
+		 * A connect worker still publishing the connection reports this
+		 * after it, so that cfg80211 sees the two in order.
+		 */
 		m->connected = false;
 		m->disconnecting = true;
-		cfg80211_disconnected(m->netdev, WLAN_REASON_UNSPECIFIED,
-				      NULL, 0, true, GFP_ATOMIC);
+		if (m->connect_publishing)
+			m->connect_lost = true;
+		else
+			mt_report_disconnected(m, WLAN_REASON_UNSPECIFIED, true, GFP_ATOMIC);
 	}
 	if (m->scan_request) {
 		m->scan_aborted = true;
@@ -83,7 +100,7 @@ void mt_rf_fail_locked(struct mt7932 *m, int error)
 	}
 }
 
-/* One owned station, firmware WPA2-PSK handshake; no host key fabrication. */
+/* One owned station and firmware handshake; no host key fabrication. */
 static int mt_peer_reserve(struct mt7932 *m)
 {
 	u8 *ids = (u8 *)&m->peer_ids;
@@ -113,11 +130,11 @@ void mt_link_event(struct mt7932 *m, const struct mt7932_event *event)
 	selector = get_unaligned_le32(event->packet + 40);
 	body = event->packet + 48;
 	length = event->length - 48;
-	dev_info(&m->pdev->dev, "LINK_EVENT: selector=%02x length=%zu\n", selector, length);
+	dev_dbg(&m->pdev->dev, "LINK_EVENT: selector=%02x length=%zu\n", selector, length);
 	if (selector == 0x44) {
 		if (length < 5 || (!m->connecting && !m->connected && !m->disconnecting))
 			return;
-		dev_info(&m->pdev->dev, "DISCONNECT_EVENT: metadata=%u deferred=%u reason-index=%u\n",
+		dev_dbg(&m->pdev->dev, "DISCONNECT_EVENT: metadata=%u deferred=%u reason-index=%u\n",
 			body[0], body[3], body[4]);
 		if (m->disconnect_seen)
 			return;
@@ -170,27 +187,35 @@ void mt_link_event(struct mt7932 *m, const struct mt7932_event *event)
 			complete(&m->assoc_start);
 			complete(&m->assoc_done);
 		} else {
+			const struct element *ht;
 			const struct element *he = cfg80211_find_ext_elem(
 				WLAN_EID_EXT_HE_CAPABILITY, m->assoc_request_ies, ret);
 
 			m->assoc_request_ie_len = ret;
 			m->assoc_request_seen = true;
+			ht = cfg80211_find_elem(WLAN_EID_HT_CAPABILITY,
+						m->assoc_request_ies, ret);
+			if (ht)
+				dev_dbg(&m->pdev->dev,
+					"ASSOC_HT_CAPABILITIES: epoch=%u cap=%04x ampdu=%02x mcs=%02x/%02x\n",
+					m->connection_generation, get_unaligned_le16(ht->data),
+					ht->data[2], ht->data[3], ht->data[4]);
 			/* Generated station request, not the AP's capability or a
 			 * rate-control setting. Bounds were checked by the exporter.
 			 */
 			if (he)
-				dev_info(&m->pdev->dev,
-					 "ASSOC_HE_CAPABILITIES: epoch=%u rx-map=%04x tx-map=%04x\n",
-					 m->connection_generation,
-					 get_unaligned_le16(he->data + 18),
-					 get_unaligned_le16(he->data + 20));
+				dev_dbg(&m->pdev->dev,
+					"ASSOC_HE_CAPABILITIES: epoch=%u rx-map=%04x tx-map=%04x\n",
+					m->connection_generation,
+					get_unaligned_le16(he->data + 18),
+					get_unaligned_le16(he->data + 20));
 		}
 		break;
 	}
 	case 0x4d:
 		if (length >= 20)
-			dev_info(&m->pdev->dev, "ASSOC_START: band=%u width=%u channel=%u extension=%u\n",
-				 get_unaligned_le32(body + 12), body[16], body[17], body[19]);
+			dev_dbg(&m->pdev->dev, "ASSOC_START: band=%u width=%u channel=%u extension=%u\n",
+				get_unaligned_le32(body + 12), body[16], body[17], body[19]);
 		if (!mt_channel_event(m, body, length)) {
 			m->connect_error = -EPROTO;
 			complete(&m->assoc_done);
@@ -199,12 +224,19 @@ void mt_link_event(struct mt7932 *m, const struct mt7932_event *event)
 		break;
 	case 0x40:
 		if (length >= 52)
-			dev_info(&m->pdev->dev, "ASSOC_REPORT: status=%u band=%u channel=%u bss=%u bmc=%u station=%u peer=%u cipher=%08x\n",
-				 get_unaligned_le16(body), body[11], body[12], body[16], body[17], body[20], body[21],
-				 get_unaligned_le32(body + 48));
+			dev_dbg(&m->pdev->dev,
+				"ASSOC_REPORT: status=%u band=%u channel=%u bss=%u bmc=%u station=%u peer=%u cipher=%08x\n",
+				get_unaligned_le16(body), body[11], body[12], body[16], body[17],
+				body[20], body[21], get_unaligned_le32(body + 48));
 		/* OPEN reports retain cipher as numeric metadata only; it neither
 		 * installs a key nor changes the immutable requested security mode.
 		 */
+		if (length >= 52 && get_unaligned_le16(body)) {
+			m->connect_error = -ECONNREFUSED;
+			complete(&m->assoc_start);
+			complete(&m->assoc_done);
+			break;
+		}
 		if (!mt7932_assoc_resources(body, length, &m->peer_ids, m->connect_channel, m->connect_open)) {
 			m->connect_error = -EPROTO;
 			complete(&m->assoc_start);
@@ -215,12 +247,13 @@ void mt_link_event(struct mt7932 *m, const struct mt7932_event *event)
 		m->peer_valid = true;
 		/* HOST decoder confirms the RSN suite namespace, not request enum10. */
 		m->event_cipher = get_unaligned_le32(body + 48);
-		dev_info(&m->pdev->dev, "ASSOCIATED: peer=%u station=%u cipher-raw=%u\n",
-			 m->peer_wtbl, body[20], m->event_cipher);
+		dev_dbg(&m->pdev->dev, "ASSOCIATED: peer=%u station=%u cipher-raw=%u\n",
+			m->peer_wtbl, body[20], m->event_cipher);
 		break;
 	case 0x42:
 		if (length >= 2)
-			dev_info(&m->pdev->dev, "CONNECT_REPORT: status=%u peer-owned=%u\n", get_unaligned_le16(body), m->peer_valid);
+			dev_dbg(&m->pdev->dev, "CONNECT_REPORT: status=%u peer-owned=%u\n",
+				get_unaligned_le16(body), m->peer_valid);
 		if (length < 2 || get_unaligned_le16(body) || !m->peer_valid)
 			m->connect_error = -ECONNREFUSED;
 		complete(&m->assoc_done);
@@ -263,6 +296,9 @@ static void mt_peer_release(struct mt7932 *m)
 	memset(&m->peer_ids, 0, sizeof(m->peer_ids));
 	memset(m->duplicates, 0, sizeof(m->duplicates));
 	memzero_explicit(m->connect_pmk, sizeof(m->connect_pmk));
+	memzero_explicit(m->connect_sae_pwd, sizeof(m->connect_sae_pwd));
+	m->connect_sae_pwd_length = 0;
+	m->connect_pmk_valid = false;
 	m->peer_valid = false;
 	m->peer_wtbl = 0;
 	m->event_cipher = 0;
@@ -281,10 +317,18 @@ static int mt_retire_connection(struct mt7932 *m)
 
 	if (READ_ONCE(m->stopping))
 		return -ESHUTDOWN;
-	netif_carrier_off(m->netdev);
+	/* A move keeps the carrier, or NetworkManager would restart DHCP and the
+	 * address could change under open connections. Its failure drops it.
+	 */
+	if (!READ_ONCE(m->roam_moving))
+		netif_carrier_off(m->netdev);
 	netif_tx_disable(m->netdev);
-	/* ndo_start_xmit rechecks the closed admission gate under data_lock. */
+	/* ndo_start_xmit rechecks the closed admission gate under data_lock.
+	 * The queue may have stopped in the middle of a burst; hand the device
+	 * what it already holds so that the drain below can complete.
+	 */
 	spin_lock_irqsave(&m->data_lock, flags);
+	mt_data_kick_locked(m);
 	spin_unlock_irqrestore(&m->data_lock, flags);
 	flush_work(&m->cal_work);
 	mutex_lock(&m->command_mutex);
@@ -350,8 +394,9 @@ static int mt_retire_connection(struct mt7932 *m)
 		m->link_failed = true; /* uncertain ownership: recovery required */
 	spin_unlock_irqrestore(&m->response_lock, flags);
 	mutex_unlock(&m->command_mutex);
-	dev_info(&m->pdev->dev, "CONNECTION_RETIRED: status=%d%s\n", ret,
-		 ret ? "; recovery required, DMA ownership retained" : "; old TX drained, six IDs released");
+	dev_dbg(&m->pdev->dev, "CONNECTION_RETIRED: status=%d%s\n", ret,
+		ret ? "; recovery required, DMA ownership retained" :
+		      "; old TX drained, six IDs released");
 	return ret;
 }
 
@@ -377,57 +422,121 @@ struct cfg80211_bss *mt_connect_find_bss(struct mt7932 *m)
 	return bss;
 }
 
-void mt_connect_work(struct work_struct *work)
+/* command_mutex held. Select an admitted scan candidate and own six IDs. */
+static int mt_connect_prepare(struct mt7932 *m, bool *peer_owned)
 {
-	struct mt7932 *m = container_of(work, struct mt7932, connect_work);
-	struct cfg80211_connect_resp_params response = {};
-	u8 *body, mac[8] = {}, queue[32];
 	unsigned long flags;
-	bool submitted = false, peer_owned = false;
 	int ret;
 
-	mutex_lock(&m->command_mutex);
-	body = kzalloc(856, GFP_KERNEL);
-	ret = body ? 0 : -ENOMEM;
-	if (ret)
-		goto report;
-	if (!mt_rf_allowed(m) || READ_ONCE(m->connect_error)) {
-		ret = -ECANCELED;
-		goto free;
-	}
+	if (!mt_rf_allowed(m) || READ_ONCE(m->connect_error))
+		return -ECANCELED;
 	if (!m->connect_bss) {
-		dev_info(&m->pdev->dev, "CONNECT_DISCOVERY: refreshing missing scan candidate\n");
+		dev_dbg(&m->pdev->dev, "CONNECT_DISCOVERY: refreshing missing scan candidate\n");
 		ret = mt_connect_discover(m);
 		if (ret)
-			goto free;
+			return ret;
 	}
-	if (m->connect_bss->channel->flags & (IEEE80211_CHAN_DISABLED | IEEE80211_CHAN_NO_IR |
-					    IEEE80211_CHAN_NO_20MHZ)) {
-		ret = -EINVAL;
-		goto free;
+	/* A station joins an AP it has heard on a radar or no-IR channel: the AP
+	 * owns radar detection. Leaving on its switch announcement is in RX.
+	 */
+	if (m->connect_bss->channel->flags & (IEEE80211_CHAN_DISABLED | IEEE80211_CHAN_NO_20MHZ)) {
+		return -EINVAL;
 	}
 	spin_lock_irqsave(&m->response_lock, flags);
 	ret = m->connect_error ?: mt_peer_reserve(m);
 	if (!ret) {
-		peer_owned = true;
+		*peer_owned = true;
 		m->connect_channel = m->connect_bss->channel->hw_value;
 		memcpy(m->connect_bssid, m->connect_bss->bssid, ETH_ALEN);
 	}
 	spin_unlock_irqrestore(&m->response_lock, flags);
+	return ret;
+}
+
+/* command_mutex held on entry and return. Use the ordinary teardown fences
+ * for both a cold OWE session and a failed authentication attempt.
+ */
+static int mt_owe_retire_attempt(struct mt7932 *m, bool *submitted,
+				 bool *peer_owned, bool *retirement_attempted)
+{
+	unsigned long flags;
+	int ret;
+
+	spin_lock_irqsave(&m->response_lock, flags);
+	m->disconnecting = true;
+	spin_unlock_irqrestore(&m->response_lock, flags);
+	*submitted = true;
+	mutex_unlock(&m->command_mutex);
+	*retirement_attempted = true;
+	ret = mt_retire_connection(m);
+	mutex_lock(&m->command_mutex);
 	if (ret)
-		goto free;
-	/* Initial station policy: framework M=0 branch and no optional flags.
-	 * This yields flag2 independently of credentials; no scan-result count
-	 * belongs in this field. The recovered framework uses listen interval20.
-	 * Other platform flag policies remain unsupported, not guessed mappings.
+		return ret;
+
+	*submitted = false;
+	*peer_owned = false;
+	*retirement_attempted = false;
+	spin_lock_irqsave(&m->response_lock, flags);
+	if (m->connect_cancelled) {
+		ret = -ECANCELED;
+	} else if (m->link_failed || !mt_rf_allowed(m)) {
+		ret = -EIO;
+	} else {
+		m->owe_cold_prepared = true;
+		m->connect_error = 0;
+		m->disconnecting = false;
+		m->disconnect_seen = false;
+		m->disconnect_event_received = false;
+		reinit_completion(&m->assoc_start);
+		reinit_completion(&m->assoc_done);
+		reinit_completion(&m->disconnect_done);
+		m->assoc_request_ie_len = 0;
+		m->assoc_request_seen = false;
+		m->connect_center = 0;
+		memset(&m->connect_chandef, 0, sizeof(m->connect_chandef));
+		m->connection_generation++;
+	}
+	spin_unlock_irqrestore(&m->response_lock, flags);
+	return ret;
+}
+
+/* command_mutex held on entry and return. D7 calibration remains serviceable
+ * while waiting for association events. A retry has one ten-second deadline.
+ */
+static int mt_connect_attempt(struct mt7932 *m, bool *submitted,
+			      bool *peer_owned, bool *auth_submitted, bool retry)
+{
+	u8 *body, mac[8] = {}, queue[32];
+	unsigned long deadline, timeout;
+	int ret;
+
+	ret = mt_connect_prepare(m, peer_owned);
+	if (ret)
+		return ret;
+	body = kzalloc(856, GFP_KERNEL);
+	ret = body ? 0 : -ENOMEM;
+	if (ret)
+		goto out;
+	/* Keep policy value 2 and listen interval 20 for all security arms.
+	 * SAE is qualified with the same policy after correcting key_cipher.
 	 */
+	if (m->connect_sae_pwd_length && !m->connect_pmk_valid) {
+		ret = mt7932_sae_pmk(m->connect_pmk, m->connect_sae_pwd,
+				     m->connect_sae_pwd_length, m->connect_ssid,
+				     m->connect_ssid_length);
+		if (ret)
+			goto free;
+	}
 	ret = mt7932_connect_body(body, 856, m->connect_ssid, m->connect_ssid_length,
-		m->connect_open ? NULL : m->connect_pmk, m->connect_bssid,
-		m->connect_channel, 20, 2, &m->peer_ids, m->connect_open);
+		m->connect_open || m->connect_owe ? NULL : m->connect_pmk, m->connect_bssid,
+		m->connect_channel, 20, 2, &m->peer_ids, m->connect_open,
+		m->connect_sae_pwd_length ? m->connect_sae_pwd : NULL,
+		m->connect_sae_pwd_length, m->connect_owe);
 	if (ret < 0)
 		goto free;
+	/* Reprogram the same on-air station identity for either attempt. */
 	memcpy(mac + 2, m->mac, ETH_ALEN);
-	submitted = true;
+	*submitted = true;
 	ret = mt_request(m, 0xb8, true, true, false, mac, sizeof(mac));
 	ret = ret ?: READ_ONCE(m->connect_error);
 	if (!ret)
@@ -440,36 +549,104 @@ void mt_connect_work(struct work_struct *work)
 free:
 	kfree_sensitive(body);
 	memzero_explicit(m->connect_pmk, sizeof(m->connect_pmk));
+	memzero_explicit(m->connect_sae_pwd, sizeof(m->connect_sae_pwd));
+	m->connect_sae_pwd_length = 0;
+	m->connect_pmk_valid = false;
 	if (ret)
-		goto report;
-	dev_info(&m->pdev->dev, "CONNECT_SUBMITTED: BSSID=%pM channel=%u\n", m->connect_bssid, m->connect_channel);
+		goto out;
+	dev_dbg(&m->pdev->dev, "CONNECT_SUBMITTED: BSSID=%pM channel=%u\n",
+		m->connect_bssid, m->connect_channel);
+	*auth_submitted = true;
+	deadline = jiffies + msecs_to_jiffies(10000);
 	/* Genuine D7 requests must remain serviceable during asynchronous waits. */
 	mutex_unlock(&m->command_mutex);
-	ret = wait_for_completion_timeout(&m->assoc_start, msecs_to_jiffies(5000)) ? 0 : -ETIMEDOUT;
+	timeout = msecs_to_jiffies(retry ? 10000 : 5000);
+	ret = wait_for_completion_timeout(&m->assoc_start, timeout) ? 0 : -ETIMEDOUT;
 	mutex_lock(&m->command_mutex);
 	if (ret) {
 		ret = -ETIMEDOUT;
-		goto report;
+		goto out;
 	}
 	ret = READ_ONCE(m->connect_error);
 	if (ret)
-		goto report;
+		goto out;
 	ret = mt_association_calibration(m);
 	ret = ret ?: READ_ONCE(m->connect_error);
 	if (ret)
-		goto report;
-	dev_info(&m->pdev->dev, "ASSOCIATION_CALIBRATED: primary=%u center=%u\n",
-		 m->connect_channel, m->connect_center);
+		goto out;
+	dev_dbg(&m->pdev->dev, "ASSOCIATION_CALIBRATED: primary=%u center=%u\n",
+		m->connect_channel, m->connect_center);
+	if (retry && time_after_eq(jiffies, deadline)) {
+		ret = -ETIMEDOUT;
+		goto out;
+	}
 	mt7932_peer_queue(queue, m->peer_ids.station[0], true);
 	ret = mt_request(m, 0x6b, true, true, false, queue, sizeof(queue));
 	if (ret)
-		goto report;
+		goto out;
+	if (retry && time_after_eq(jiffies, deadline)) {
+		ret = -ETIMEDOUT;
+		goto out;
+	}
 	mutex_unlock(&m->command_mutex);
-	if (!wait_for_completion_timeout(&m->assoc_done, msecs_to_jiffies(10000)))
+	timeout = retry ? max_t(long, 1, deadline - jiffies) : msecs_to_jiffies(10000);
+	if (!wait_for_completion_timeout(&m->assoc_done, timeout))
 		ret = -ETIMEDOUT;
 	else
 		ret = READ_ONCE(m->connect_error);
 	mutex_lock(&m->command_mutex);
+out:
+	return ret ?: READ_ONCE(m->connect_error);
+}
+
+void mt_connect_work(struct work_struct *work)
+{
+	struct mt7932 *m = container_of(work, struct mt7932, connect_work);
+	struct cfg80211_connect_resp_params response = {};
+	unsigned long flags;
+	bool submitted = false, peer_owned = false, cancelled, retry = false;
+	bool retirement_attempted = false, auth_submitted = false, roam;
+	u16 reason;
+	int ret;
+
+	mutex_lock(&m->command_mutex);
+	/* A fresh firmware session needs the same typed cleanup as a retired
+	 * OWE connection. Reserve temporary live IDs rather than inventing a
+	 * peer identity, and perform this once before the first OWE request.
+	 */
+	if (m->connect_owe && !m->owe_cold_prepared) {
+		ret = mt_connect_prepare(m, &peer_owned);
+		if (ret)
+			goto report;
+		ret = mt_owe_retire_attempt(m, &submitted, &peer_owned,
+					    &retirement_attempted);
+		if (ret)
+			goto report;
+	}
+	ret = mt_connect_attempt(m, &submitted, &peer_owned, &auth_submitted, false);
+	/* The first OWE authentication can stall after a firmware load. Retry
+	 * once, only after the normal typed disconnect, queue retirement and
+	 * DMA/reader fences have released the old peer. Cancellation and an
+	 * uncertain firmware owner must never be turned into another attempt.
+	 */
+	spin_lock_irqsave(&m->response_lock, flags);
+	if (m->connect_owe && auth_submitted &&
+	    (ret == -ETIMEDOUT || ret == -ECONNREFUSED || ret == -ECONNRESET) &&
+	    !m->connect_cancelled &&
+	    !m->link_failed && mt_rf_allowed(m)) {
+		m->disconnecting = true;
+		retry = true;
+	}
+	spin_unlock_irqrestore(&m->response_lock, flags);
+	if (retry) {
+		dev_dbg(&m->pdev->dev, "OWE_RETRY: first attempt failed: %d\n", ret);
+		mt_transport_snapshot(m);
+		ret = mt_owe_retire_attempt(m, &submitted, &peer_owned,
+					    &retirement_attempted);
+		if (!ret)
+			ret = mt_connect_attempt(m, &submitted, &peer_owned,
+						 &auth_submitted, true);
+	}
 report:
 	ret = ret ?: READ_ONCE(m->connect_error);
 	if (!ret && !mt_rf_allowed(m))
@@ -480,14 +657,17 @@ report:
 	if (ret && !READ_ONCE(m->stopping))
 		mt_transport_snapshot(m);
 	memzero_explicit(m->connect_pmk, sizeof(m->connect_pmk));
+	memzero_explicit(m->connect_sae_pwd, sizeof(m->connect_sae_pwd));
+	m->connect_sae_pwd_length = 0;
+	m->connect_pmk_valid = false;
 	if (ret) {
 		spin_lock_irqsave(&m->response_lock, flags);
 		m->disconnecting = true;
 		spin_unlock_irqrestore(&m->response_lock, flags);
 		mutex_unlock(&m->command_mutex);
-		if (submitted && !READ_ONCE(m->stopping)) {
+		if (submitted && !retirement_attempted && !READ_ONCE(m->stopping)) {
 			mt_retire_connection(m);
-		} else if (peer_owned && !submitted) {
+		} else if (peer_owned && !submitted && !retirement_attempted) {
 			mutex_lock(&m->command_mutex);
 			spin_lock_irqsave(&m->response_lock, flags);
 			mt_peer_release(m);
@@ -498,7 +678,10 @@ report:
 	}
 	/* Serialize the final outcome with cancellation. In particular, a late
 	 * firmware success must not publish carrier/authorization after .deauth.
-	 * cfg80211 queues these notifications; GFP_ATOMIC keeps this IRQ-safe.
+	 * The connect result may take bottom-half locks, so it is made after
+	 * response_lock is dropped. command_mutex keeps the disconnect worker,
+	 * which retires the connection before reporting its end, behind them;
+	 * an RF failure in the meantime leaves its report to this worker.
 	 */
 	spin_lock_irqsave(&m->response_lock, flags);
 	if (!ret && (m->connect_error || !mt_rf_allowed(m))) {
@@ -533,34 +716,64 @@ report:
 		m->station_connected = jiffies;
 		m->station_signal_valid = false;
 		m->station_rx_rate_valid = false;
-		m->station_tx_rate_valid = false;
 		spin_unlock(&m->data_lock);
+		mt_cqm_reset(m);
 	}
 	m->connected = !ret;
 	m->disconnecting = false;
-	if (m->connect_cancelled) {
-		if (response.links[0].bss)
-			cfg80211_put_bss(m->wiphy, response.links[0].bss);
-		cfg80211_disconnected(m->netdev, m->disconnect_reason, NULL, 0, true, GFP_ATOMIC);
-	} else {
-		cfg80211_connect_done(m->netdev, &response, GFP_ATOMIC);
-	}
+	roam = m->roam_moving;
+	WRITE_ONCE(m->roam_moving, false);
+	WRITE_ONCE(m->roam_landed, roam && !ret);
+	if (roam && ret)
+		netif_carrier_off(m->netdev);
+	cancelled = m->connect_cancelled;
+	reason = m->disconnect_reason;
+	m->connect_publishing = true;
 	if (!ret) {
 		schedule_work(&m->power_work);
 		if (READ_ONCE(m->data_ready)) {
 			netif_carrier_on(m->netdev);
 			netif_wake_queue(m->netdev);
 		}
-		if (m->connect_open) {
-			dev_info(&m->pdev->dev, "OPEN_CONNECTED: owned peer, firmware completion; Ethernet=%u\n", m->data_ready);
-		} else {
-			cfg80211_port_authorized(m->netdev, m->connect_bssid, NULL, 0, GFP_ATOMIC);
-			dev_info(&m->pdev->dev, "WPA2_AUTHORIZED: firmware handshake complete; Ethernet=%u\n", m->data_ready);
-		}
-	} else {
-		dev_err(&m->pdev->dev, "CONNECT_FAILED: %d; recovery-required=%u\n", ret, m->link_failed);
 	}
 	spin_unlock_irqrestore(&m->response_lock, flags);
+
+	/* iwd waits for the result of a move, and takes a local disconnect as
+	 * its own, so a cancelled move still has to report one.
+	 */
+	if (cancelled && !roam) {
+		if (response.links[0].bss)
+			cfg80211_put_bss(m->wiphy, response.links[0].bss);
+		mt_report_disconnected(m, reason, true, GFP_KERNEL);
+	} else {
+		cfg80211_connect_done(m->netdev, &response, GFP_KERNEL);
+		/* A failed connect result doesn't end the connection it replaced. */
+		if (ret && roam)
+			mt_report_disconnected(m, reason, true, GFP_KERNEL);
+	}
+	if (!ret && !m->connect_open)
+		cfg80211_port_authorized(m->netdev, m->connect_bssid, NULL, 0, GFP_KERNEL);
+
+	spin_lock_irqsave(&m->response_lock, flags);
+	m->connect_publishing = false;
+	if (m->connect_lost) {
+		m->connect_lost = false;
+		mt_report_disconnected(m, WLAN_REASON_UNSPECIFIED, true, GFP_ATOMIC);
+	}
+	spin_unlock_irqrestore(&m->response_lock, flags);
+	if (!ret && m->connect_open)
+		dev_dbg(&m->pdev->dev,
+			"OPEN_CONNECTED: owned peer, firmware completion; Ethernet=%u\n",
+			READ_ONCE(m->data_ready));
+	else if (!ret)
+		dev_dbg(&m->pdev->dev,
+			"FIRMWARE_AUTHORIZED: handshake complete; Ethernet=%u\n",
+			READ_ONCE(m->data_ready));
+	else if (cancelled)
+		dev_dbg(&m->pdev->dev, "CONNECT_CANCELLED: %d\n", ret);
+	else
+		dev_err(&m->pdev->dev, "CONNECT_FAILED: %d; recovery-required=%u\n",
+			ret, READ_ONCE(m->link_failed));
 	mutex_unlock(&m->command_mutex);
 }
 
@@ -590,31 +803,58 @@ int mt_connect(struct wiphy *wiphy, struct net_device *netdev,
 {
 	struct mt7932 *m = mt_from_wiphy(wiphy);
 	unsigned long flags;
-	bool open = mt_open_request(params);
-	int ret = 0;
+	bool open = mt_open_request(params), roam;
+	int auth, ret = 0;
 
 	if (netdev == m->netdev)
 		mt_retry_missing_policy(m);
-	if (!mt_rf_allowed(m) || !m->bss_active || netdev != m->netdev)
+	if (!mt_rf_allowed(m) || !m->bss_active || netdev != m->netdev) {
+		if (netdev == m->netdev && params->prev_bssid)
+			mt_disconnect(wiphy, netdev, WLAN_REASON_DEAUTH_LEAVING);
 		return -EAGAIN;
-	dev_info_ratelimited(&m->pdev->dev, "CONNECT_REQUEST: WPA=%u pairwise-count=%d group=%08x AKM-count=%d PMK-present=%u MFP=%u IE-bytes=%zu\n",
-		 params->crypto.wpa_versions, params->crypto.n_ciphers_pairwise, params->crypto.cipher_group,
-		 params->crypto.n_akm_suites, !!params->crypto.psk, params->mfp, params->ie_len);
-	if (!params->ssid_len || params->ssid_len > 32)
-		return -EINVAL;
-	if (!open && (params->crypto.wpa_versions != NL80211_WPA_VERSION_2 ||
-	    params->crypto.n_ciphers_pairwise != 1 || params->crypto.ciphers_pairwise[0] != WLAN_CIPHER_SUITE_CCMP ||
-	    params->crypto.cipher_group != WLAN_CIPHER_SUITE_CCMP ||
-	    !params->crypto.n_akm_suites || params->crypto.akm_suites[0] != WLAN_AKM_SUITE_PSK ||
-	    !params->crypto.psk || params->mfp == NL80211_MFP_REQUIRED ||
-	    !params->ssid_len || params->ssid_len > 32))
-		return -EOPNOTSUPP;
-	if (params->bssid && !is_valid_ether_addr(params->bssid))
-		return -EINVAL;
+	}
+	dev_dbg(&m->pdev->dev,
+		"CONNECT_REQUEST: WPA=%u pairwise-count=%d group=%08x AKM-count=%d PMK-present=%u MFP=%u IE-bytes=%zu\n",
+		params->crypto.wpa_versions, params->crypto.n_ciphers_pairwise,
+		params->crypto.cipher_group, params->crypto.n_akm_suites,
+		!!params->crypto.psk, params->mfp, params->ie_len);
+	auth = open ? 0 : mt7932_connect_auth(params);
+	if (!params->ssid_len || params->ssid_len > 32 ||
+	    (params->bssid && !is_valid_ether_addr(params->bssid)))
+		ret = -EINVAL;
+	else if (auth < 0)
+		ret = auth;
+	/* The driver can't reassociate. Honour iwd's roam by leaving the current
+	 * AP and joining the requested one: the worker reports the end of this
+	 * move through the connect result, so cfg80211 and iwd see one roam. A
+	 * roam we can't start still ends the connection, or cfg80211 and iwd
+	 * would disagree about it.
+	 */
+	spin_lock_irqsave(&m->response_lock, flags);
+	roam = params->prev_bssid && m->connected;
+	if (roam && !ret)
+		WRITE_ONCE(m->roam_moving, true);
+	/* The link went first and cfg80211 hasn't processed its end: joining now
+	 * would be overtaken by that report, and iwd would miss the connection.
+	 */
+	if (params->prev_bssid && !m->connected && !ret)
+		ret = -EBUSY;
+	spin_unlock_irqrestore(&m->response_lock, flags);
+	if (roam) {
+		dev_info(&m->pdev->dev, "ROAM_MOVE: %d; from %pM to %pM\n", ret,
+			 params->prev_bssid, params->bssid ?: params->bssid_hint);
+		mt_disconnect(wiphy, netdev, WLAN_REASON_DEAUTH_LEAVING);
+	}
+	if (ret)
+		return ret;
 	mutex_lock(&m->command_mutex);
 	spin_lock_irqsave(&m->response_lock, flags);
 	if (!mt_rf_allowed(m) || m->link_failed || m->connecting || m->connected || m->disconnecting || m->scan_request || m->retired_scan_seq) {
 		ret = m->link_failed ? -EIO : -EBUSY;
+		dev_info_ratelimited(&m->pdev->dev,
+				     "CONNECT_REFUSED: %d; rf=%u connecting=%u connected=%u disconnecting=%u scan=%u retired=%u\n",
+				     ret, mt_rf_allowed(m), m->connecting, m->connected, m->disconnecting,
+				     !!m->scan_request, !!m->retired_scan_seq);
 		goto unlock;
 	}
 	reinit_completion(&m->assoc_start);
@@ -634,21 +874,37 @@ int mt_connect(struct wiphy *wiphy, struct net_device *netdev,
 	memcpy(m->connect_ssid, params->ssid, params->ssid_len);
 	m->connect_ssid_length = params->ssid_len;
 	m->connect_open = open;
+	m->connect_owe = auth == WLAN_AKM_SUITE_OWE;
 	memzero_explicit(m->connect_pmk, sizeof(m->connect_pmk));
-	if (!open)
+	memzero_explicit(m->connect_sae_pwd, sizeof(m->connect_sae_pwd));
+	m->connect_sae_pwd_length = 0;
+	m->connect_pmk_valid = false;
+	if (auth == WLAN_AKM_SUITE_SAE) {
+		m->connect_sae_pwd_length = params->crypto.sae_pwd_len;
+		memcpy(m->connect_sae_pwd, params->crypto.sae_pwd,
+		       m->connect_sae_pwd_length);
+	}
+	/* Transition requests may already carry a PMK; pure SAE needs derivation. */
+	if (!open && params->crypto.psk) {
 		memcpy(m->connect_pmk, params->crypto.psk, 32);
+		m->connect_pmk_valid = true;
+	}
 	m->connect_error = 0;
 	m->assoc_request_ie_len = 0;
 	m->assoc_request_seen = false;
 	m->connect_center = 0;
 	memset(&m->connect_chandef, 0, sizeof(m->connect_chandef));
 	m->connection_generation++;
-	m->station_rate_query_failed = false;
-	m->station_rate_query_time = jiffies - HZ;
 	m->connect_cancelled = false;
 	m->peer_valid = false;
 	m->connecting = true;
 unlock:
+	if (ret && roam) {
+		WRITE_ONCE(m->roam_moving, false);
+		WRITE_ONCE(m->roam_landed, false);
+		netif_carrier_off(m->netdev);
+		mt_report_disconnected(m, WLAN_REASON_DEAUTH_LEAVING, true, GFP_ATOMIC);
+	}
 	spin_unlock_irqrestore(&m->response_lock, flags);
 	if (!ret) {
 		m->connect_bss = mt_connect_find_bss(m);
@@ -676,9 +932,12 @@ void mt_disconnect_work(struct work_struct *work)
 	 */
 	spin_lock_irqsave(&m->response_lock, flags);
 	m->disconnecting = false;
-	cfg80211_disconnected(m->netdev, reason, NULL, 0, local, GFP_ATOMIC);
+	/* A roam reports its end through the connect that follows. */
+	if (!m->roam_moving)
+		mt_report_disconnected(m, reason, local, GFP_ATOMIC);
+	mt_reg_apply_deferred_locked(m);
 	spin_unlock_irqrestore(&m->response_lock, flags);
-	dev_info(&m->pdev->dev, "DISCONNECTED: teardown=%d local=%u\n", ret, local);
+	dev_dbg(&m->pdev->dev, "DISCONNECTED: teardown=%d local=%u\n", ret, local);
 }
 
 int mt_disconnect(struct wiphy *wiphy, struct net_device *netdev, u16 reason)
@@ -709,7 +968,8 @@ int mt_disconnect(struct wiphy *wiphy, struct net_device *netdev, u16 reason)
 		m->disconnect_event_received = false;
 		m->disconnect_local = true;
 		m->disconnect_reason = reason;
-		netif_carrier_off(m->netdev);
+		if (!m->roam_moving)
+			netif_carrier_off(m->netdev);
 		netif_stop_queue(m->netdev);
 		reinit_completion(&m->disconnect_done);
 		schedule_work(&m->disconnect_work);

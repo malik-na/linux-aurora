@@ -31,9 +31,9 @@ static_assert(NR_BM_PMD_TABLES == 1);
 
 #define BM_PTE_TABLE_IDX(addr)	__BM_TABLE_IDX(addr, PMD_SHIFT)
 
-static pte_t bm_pte[NR_BM_PTE_TABLES][PTRS_PER_PTE] __page_aligned_bss;
-static pmd_t bm_pmd[PTRS_PER_PMD] __page_aligned_bss __maybe_unused;
-static pud_t bm_pud[PTRS_PER_PUD] __page_aligned_bss __maybe_unused;
+static pte_t bm_pte[NR_BM_PTE_TABLES][PTRS_PER_PTE] __bss_pgtbl;
+static pmd_t bm_pmd[PTRS_PER_PMD] __bss_pgtbl __maybe_unused;
+static pud_t bm_pud[PTRS_PER_PUD] __bss_pgtbl __maybe_unused;
 
 static inline pte_t *fixmap_pte(unsigned long addr)
 {
@@ -77,7 +77,7 @@ static void __init early_fixmap_init_pud(p4d_t *p4dp, unsigned long addr,
 	p4d_t p4d = READ_ONCE(*p4dp);
 	pud_t *pudp;
 
-	if (CONFIG_PGTABLE_LEVELS > 3 && !p4d_none(p4d) &&
+	if (pgtable_l4_enabled() && !p4d_none(p4d) &&
 	    p4d_page_paddr(p4d) != __pa_symbol(bm_pud)) {
 		/*
 		 * We only end up here if the kernel mapping and the fixmap

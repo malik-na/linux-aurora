@@ -36,13 +36,13 @@ arm_smmu_update_s1_domain_cd_entry(struct arm_smmu_domain *smmu_domain)
 	spin_unlock_irqrestore(&smmu_domain->devices_lock, flags);
 }
 
-static u64 page_size_to_cd(void)
+static u64 page_size_to_cd(unsigned long page_size)
 {
 	static_assert(PAGE_SIZE == SZ_4K || PAGE_SIZE == SZ_16K ||
 		      PAGE_SIZE == SZ_64K);
-	if (PAGE_SIZE == SZ_64K)
+	if (page_size == SZ_64K)
 		return ARM_LPAE_TCR_TG0_64K;
-	if (PAGE_SIZE == SZ_16K)
+	if (page_size == SZ_16K)
 		return ARM_LPAE_TCR_TG0_16K;
 	return ARM_LPAE_TCR_TG0_4K;
 }
@@ -83,7 +83,7 @@ void arm_smmu_make_sva_cd(struct arm_smmu_cd *target,
 		target->data[0] |= cpu_to_le64(
 			FIELD_PREP(CTXDESC_CD_0_TCR_T0SZ,
 				   64ULL - vabits_actual) |
-			FIELD_PREP(CTXDESC_CD_0_TCR_TG0, page_size_to_cd()) |
+			FIELD_PREP(CTXDESC_CD_0_TCR_TG0, page_size_to_cd(mm_page_size(mm))) |
 			FIELD_PREP(CTXDESC_CD_0_TCR_IRGN0,
 				   ARM_LPAE_TCR_RGN_WBWA) |
 			FIELD_PREP(CTXDESC_CD_0_TCR_ORGN0,
@@ -104,6 +104,17 @@ void arm_smmu_make_sva_cd(struct arm_smmu_cd *target,
 			target->data[0] &=
 				cpu_to_le64(~(CTXDESC_CD_0_S | CTXDESC_CD_0_R));
 	}
+	/*
+	 * Enable Hardware Access and Dirty updates (DBM) if supported. This is
+	 * safe to enable by default, as PTE_WRITE and PTE_DBM share the same bit,
+	 * while the EPD0 config can't get as far as fetching any PTEs anyway.
+	 */
+	if (master->smmu->features & ARM_SMMU_FEAT_HA)
+		target->data[0] |= cpu_to_le64(CTXDESC_CD_0_TCR_HA);
+	if (master->smmu->features & ARM_SMMU_FEAT_HD)
+		target->data[0] |= cpu_to_le64(CTXDESC_CD_0_TCR_HD);
+	if (master->smmu->features & ARM_SMMU_FEAT_HAFT && system_supports_haft())
+		target->data[1] |= cpu_to_le64(CTXDESC_CD_1_HAFT);
 
 	/*
 	 * MAIR value is pretty much constant and global, so we can just get it
@@ -138,7 +149,7 @@ static void arm_smmu_mm_arch_invalidate_secondary_tlbs(struct mmu_notifier *mn,
 	 */
 	size = end - start;
 
-	arm_smmu_domain_inv_range(smmu_domain, start, size, PAGE_SIZE, false);
+	arm_smmu_domain_inv_range(smmu_domain, start, size, mm_page_size(mm), false);
 }
 
 static void arm_smmu_mm_release(struct mmu_notifier *mn, struct mm_struct *mm)
@@ -201,6 +212,9 @@ bool arm_smmu_sva_supported(struct arm_smmu_device *smmu)
 	if (system_supports_bbml2_noabort())
 		feat_mask |= ARM_SMMU_FEAT_BBML2;
 
+	if (system_supports_haft())
+		feat_mask |= ARM_SMMU_FEAT_HAFT;
+
 	if ((smmu->features & feat_mask) != feat_mask)
 		return false;
 
@@ -255,6 +269,8 @@ static int arm_smmu_sva_set_dev_pasid(struct iommu_domain *domain,
 	int ret;
 
 	if (!(master->smmu->features & ARM_SMMU_FEAT_SVA))
+		return -EOPNOTSUPP;
+	if (!(master->smmu->pgsize_bitmap & mm_page_size(domain->mm)))
 		return -EOPNOTSUPP;
 
 	/* Prevent arm_smmu_mm_release from being called while we are attaching */
@@ -312,6 +328,8 @@ struct iommu_domain *arm_smmu_sva_domain_alloc(struct device *dev,
 
 	if (!(master->smmu->features & ARM_SMMU_FEAT_SVA))
 		return ERR_PTR(-EOPNOTSUPP);
+	if (!(smmu->pgsize_bitmap & mm_page_size(mm)))
+		return ERR_PTR(-EOPNOTSUPP);
 
 	smmu_domain = arm_smmu_domain_alloc();
 	if (IS_ERR(smmu_domain))
@@ -323,7 +341,7 @@ struct iommu_domain *arm_smmu_sva_domain_alloc(struct device *dev,
 	 * Choose page_size as the leaf page size for invalidation when
 	 * ARM_SMMU_FEAT_RANGE_INV is present
 	 */
-	smmu_domain->domain.pgsize_bitmap = PAGE_SIZE;
+	smmu_domain->domain.pgsize_bitmap = mm_page_size(mm);
 	smmu_domain->stage = ARM_SMMU_DOMAIN_SVA;
 	smmu_domain->smmu = smmu;
 

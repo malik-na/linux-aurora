@@ -15,13 +15,10 @@ const IOMMUS_PROP: &CStr = c"iommus";
 const STATUS_PROP: &CStr = c"status";
 const STATUS_OKAY: &CStr = c"okay";
 
-// SEP DMA is offset BIT(40) above the DART input; one 64-bit value = two cells.
+// The SEP DART's DMA window; each 64-bit value is two cells. The values
+// come from the platform profile when the device tree does not give them.
 const DMA_OFFSET_PROP: &CStr = c"apple,dma-offset";
-// [0x100, 0] = BIT(40); [0x1, 0] would be BIT(32) and miss the page tables.
-const DMA_OFFSET_CELLS: [u32; 2] = [0x100, 0x0];
-
 const DMA_RANGE_PROP: &CStr = c"apple,dma-range";
-const DMA_RANGE_CELLS: [u32; 4] = [0, 0, 1, 0];
 
 const REGISTERED_PROP: &CStr = c"apple,sep-shmem-registered-iova";
 const CHOSEN_PATH: &CStr = c"/chosen";
@@ -188,7 +185,7 @@ pub(crate) fn preboot_uuid() -> Option<[u8; 16]> {
     Some(uuid.b)
 }
 
-pub(crate) fn enable_sep_and_dart() -> Result<()> {
+pub(crate) fn enable_sep_and_dart(window: &crate::profile::DartWindow) -> Result<()> {
     let sep = sep_node().ok_or_else(|| {
         pr_err!(
             "apple_sep: no device-tree node with compatible '{}'\n",
@@ -218,7 +215,7 @@ pub(crate) fn enable_sep_and_dart() -> Result<()> {
 
     if dart_available && (need_offset || need_range) {
         pr_err!(
-            "apple_sep: SEP DART already enabled but missing apple,dma-offset/apple,dma-range; the BIT(40) offset applies only at DART probe. Reboot and load this module first.\n"
+            "apple_sep: SEP DART already enabled but missing apple,dma-offset/apple,dma-range; the DMA window applies only at DART probe. Reboot and load this module first.\n"
         );
         return Err(EBUSY);
     }
@@ -228,11 +225,11 @@ pub(crate) fn enable_sep_and_dart() -> Result<()> {
             let mut queued = false;
             // Properties before status: the DART probes inside of_changeset_apply().
             if need_offset {
-                queue_u32_array(cs, &dart, DMA_OFFSET_PROP, &DMA_OFFSET_CELLS)?;
+                queue_u32_array(cs, &dart, DMA_OFFSET_PROP, &window.offset)?;
                 queued = true;
             }
             if need_range {
-                queue_u32_array(cs, &dart, DMA_RANGE_PROP, &DMA_RANGE_CELLS)?;
+                queue_u32_array(cs, &dart, DMA_RANGE_PROP, &window.range)?;
                 queued = true;
             }
             if !dart_available {
@@ -242,7 +239,8 @@ pub(crate) fn enable_sep_and_dart() -> Result<()> {
             Ok(queued)
         })?;
         pr_info!(
-            "apple_sep: SEP DART changeset applied (offset BIT(40), range 0..4GiB, status okay)\n"
+            "apple_sep: SEP DART changeset applied ({}, status okay)\n",
+            window.name
         );
     } else {
         pr_info!("apple_sep: SEP DART already enabled and configured\n");
@@ -400,7 +398,14 @@ unsafe fn add_u32(
     }
 }
 
-pub(crate) fn enable_spi_sensor(base: u64, cs: u32) -> Result<()> {
+// The public J700 DTS enables SPI2. A disabled controller at handoff is a
+// firmware hardware-presence decision; older platforms still need activation.
+fn sensor_controller_refused(controller: &DtNode) -> bool {
+    crate::profile::machine_has(b"apple,j700") && !controller.is_available()
+}
+
+/// Returns false when the bootloader explicitly withheld J700's controller.
+pub(crate) fn enable_spi_sensor(base: u64, cs: u32) -> Result<bool> {
     // A machine that describes the sensor in its own device tree (compatible
     // apple,mesa-fingerprint) is handled machine-agnostically: enable that node
     // and its SPI controller wherever they sit, with the power/IRQ GPIOs coming
@@ -411,6 +416,9 @@ pub(crate) fn enable_spi_sensor(base: u64, cs: u32) -> Result<()> {
             pr_err!("apple_sep: sensor node has no parent SPI controller\n");
             ENODEV
         })?;
+        if sensor_controller_refused(&controller) {
+            return Ok(false);
+        }
         pr_info!(
             "apple_sep: sensor node present in the device tree; enabling it and its SPI bus\n"
         );
@@ -425,7 +433,7 @@ pub(crate) fn enable_spi_sensor(base: u64, cs: u32) -> Result<()> {
                 queued = true;
             }
             Ok(queued)
-        });
+        }).map(|()| true);
     }
 
     let controller = node_at_address(base).ok_or_else(|| {
@@ -436,6 +444,9 @@ pub(crate) fn enable_spi_sensor(base: u64, cs: u32) -> Result<()> {
         ENODEV
     })?;
 
+    if sensor_controller_refused(&controller) {
+        return Ok(false);
+    }
     let controller_ok = controller.is_available();
     let existing = controller.child_with_reg(cs);
     pr_info!(
@@ -447,7 +458,7 @@ pub(crate) fn enable_spi_sensor(base: u64, cs: u32) -> Result<()> {
     );
 
     if controller_ok && existing.is_some() {
-        return Ok(());
+        return Ok(true);
     }
 
     if existing.is_some() && !controller_ok {
@@ -456,7 +467,7 @@ pub(crate) fn enable_spi_sensor(base: u64, cs: u32) -> Result<()> {
         return with_changeset(|cs_handle| {
             queue_status_okay(cs_handle, &controller)?;
             Ok(true)
-        });
+        }).map(|()| true);
     }
 
     pr_info!(
@@ -470,7 +481,7 @@ pub(crate) fn enable_spi_sensor(base: u64, cs: u32) -> Result<()> {
         }
         queue_sensor_node(cs_handle, &controller)?;
         Ok(true)
-    })
+    }).map(|()| true)
 }
 
 /// Resolve a reserved-memory region by name on the SEP node's device.

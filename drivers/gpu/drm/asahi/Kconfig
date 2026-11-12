@@ -17,12 +17,10 @@ config DRM_ASAHI
 	depends on IOMMU_SUPPORT
 	depends on PAGE_SIZE_16KB
 	select APPLE_PMP_REPORT
-	select CRYPTO_LIB_SHA256
 	select RUST_DRM_SCHED
 	select RUST_DRM_GEM_SHMEM_HELPER
 	select RUST_DRM_GPUVM
 	select RUST_APPLE_RTKIT
-	select WANT_DEV_COREDUMP
 	help
 	  DRM driver for Apple AGX GPUs (G13x, found in the M1 SoC family)
 
@@ -37,3 +35,45 @@ config DRM_ASAHI_DEBUG_ALLOCATOR
 
 	  Say N unless you are debugging firmware structures or porting to a
 	  new firmware version.
+
+config DRM_ASAHI_UAT_ADOPTION
+	bool
+	help
+	  The firmware UAT handoff adoption shared by the G15 backend and the
+	  T8122 runtime (g15/uat.rs, g15/regs.rs).
+
+config DRM_ASAHI_M3_T8122
+	bool "M3 MacBook Air GPU runtime (T8122, 14.8.3 firmware)"
+	depends on DRM_ASAHI
+	# The runtime adopts the firmware's UAT as the G15 backend does, without
+	# needing that backend: M3 Pro/Max keep their own setting.
+	# Its PMP votes call apple-pmp directly (m3_device.rs).
+	depends on APPLE_PMP=y || (APPLE_PMP=m && DRM_ASAHI=m)
+	select DRM_ASAHI_UAT_ADOPTION
+	select APPLE_T8122_GPU_PMP_LINK
+	select CRYPTO_LIB_SHA256
+	default n
+	help
+	  Build the M3 runtime that starts the GPU of the M3 MacBook Air
+	  (J613, J615) on the 14.8.3 GPU firmware the boot loader leaves
+	  loaded. On the listed Air boards it starts after the boot loader
+	  handed the GPU over and resource/firmware identity checks pass.
+	  asahi.t8122_start=0 keeps startup disabled for recovery. Unknown
+	  boards and firmware do not gain automatic admission. Other GPUs
+	  are not affected.
+
+config DRM_ASAHI_G15
+	bool "Native G15 firmware backend (M3 Pro/Max)"
+	depends on DRM_ASAHI
+	depends on DRM_APPLE=y || (DRM_APPLE=m && DRM_ASAHI=m)
+	select APPLE_T6030_GPU_PMP_LINK
+	select CRYPTO_LIB_SHA256
+	select DRM_ASAHI_UAT_ADOPTION
+	default n
+	help
+	  Enable the native G15 backend for explicitly admitted M3 Pro/Max
+	  firmware and boards. Other GPUs keep the maintained backend.
+	  The firmware session is retained until reboot once started.
+	  The native display driver must be built in, or both drivers must
+	  be modules, so a modular display provider finishes initialization
+	  before the GPU module can probe through its direct helper import.
