@@ -595,6 +595,7 @@ impl kernel::Module for S2rModule {
             window_record: p(*module_parameters::window_record.value()),
             aop_notify: p(*module_parameters::aop_notify.value()),
             mark_release: p(*module_parameters::mark_release.value()),
+            go_last: p(*module_parameters::go_last.value()),
             watch_ms: (*module_parameters::watch_ms.value()).min(2500),
         };
         let dry = p(*module_parameters::dry.value());
@@ -623,7 +624,7 @@ impl kernel::Module for S2rModule {
         // SAFETY: plain C call; the driver's state is in place.
         kernel::error::to_result(unsafe { s2r_rs_register_ops() })?;
         pr_info!(
-            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={}\n",
+            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={}\n",
             u8::from(dry),
             cfg.alarm_secs,
             u8::from(cfg.no_alarm_ok),
@@ -636,7 +637,8 @@ impl kernel::Module for S2rModule {
             u8::from(cfg.window_record),
             u8::from(cfg.aop_notify),
             u8::from(cfg.mark_release),
-            cfg.watch_ms
+            cfg.watch_ms,
+            u8::from(cfg.go_last)
         );
         let selftest = *module_parameters::pmu_selftest.value();
         if selftest != 0 {
@@ -782,6 +784,10 @@ module! {
         mark_release: u8 {
             default: 0,
             description: "Write the stage byte 'R' to the power chip's scratch directly before the release (1)",
+        },
+        go_last: u8 {
+            default: 0,
+            description: "EXPERIMENT: write the S2R timer once, as the last register write, directly before the release (1)",
         },
         watch_ms: u32 {
             default: 0,

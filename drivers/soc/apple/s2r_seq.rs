@@ -593,6 +593,14 @@ pub struct Cfg {
     pub aop_notify: bool,
     /// One more scratch write, the stage byte 'R', directly before the release.
     pub mark_release: bool,
+    /// EXPERIMENT, a departure from the sequence as read for this chip (tests R20, R21's
+    /// order clause, R24, R25): the S2R timer word is written ONCE, as the last register
+    /// write of all, after the mark and directly before the release, instead of once at the
+    /// end of the power manager's step and twice after the alarm. That is the order a
+    /// working t6000 driver has ("the last MMIO write"); the other cores go down only
+    /// after it. The wake-status words latch at that write, so nothing can be kept of them:
+    /// the record's count byte reads 0xfe.
+    pub go_last: bool,
     /// DIAGNOSTIC, not an entry into sleep: after the release the boot core does not wait
     /// but watches for this many milliseconds (wake status, cluster words, the engine's
     /// progress word), keeping what it sees in the scratch; then it waits after all.
@@ -615,6 +623,7 @@ impl Cfg {
         window_record: false,
         aop_notify: true,
         mark_release: false,
+        go_last: false,
         watch_ms: 0,
     };
 }
@@ -1253,9 +1262,11 @@ impl Seq {
             Self::rmw32(b, a, 1 << 28, 0);
         }
         // 3f. The S2R timer, first time. The wake-status words latch at this write.
-        Self::w32(b, S2R_TIMER, 1);
-        for (i, word) in self.status.iter_mut().enumerate() {
-            *word = Self::r32(b, WAKE_STATUS + 4 * i as u64);
+        if !self.cfg.go_last {
+            Self::w32(b, S2R_TIMER, 1);
+            for (i, word) in self.status.iter_mut().enumerate() {
+                *word = Self::r32(b, WAKE_STATUS + 4 * i as u64);
+            }
         }
 
         // 4. Interrupt controller: every interrupt masked, every CPU slot set and drained.
@@ -1301,6 +1312,8 @@ impl Seq {
             // of them by number (0xff: none). What follows is register writes only.
             let units = ((b.now_us() - t0) / 16).min(0xffff) as u16;
             let (n, src) = Self::sources(&self.status);
+            // With the timer written last the status words have not latched yet: 0xfe.
+            let n = if self.cfg.go_last { 0xfe } else { n };
             let _ = Self::pmu_write(b, PMU_RECORD, &[0x80 | flags, units as u8, (units >> 8) as u8, n, src[0], src[1], src[2], src[3]]);
         }
         // Carried over from the recorded runs: every command of ours leaves a vector in the
@@ -1309,8 +1322,10 @@ impl Seq {
             Self::spmi_ack(b);
         }
         // The timer again, once per power-chip node.
-        Self::w32(b, S2R_TIMER, 1);
-        Self::w32(b, S2R_TIMER, 1);
+        if !self.cfg.go_last {
+            Self::w32(b, S2R_TIMER, 1);
+            Self::w32(b, S2R_TIMER, 1);
+        }
         // Carried over: both clusters reported idle. In no reading; a word that already reads
         // 0 needs nothing.
         if self.cfg.carry_over & CARRY_CLUSTER != 0 {
@@ -1421,6 +1436,10 @@ impl Seq {
             // The boot core got as far as the release: said before it, where a restart
             // right after it cannot take the mark back.
             self.late_write(b, PMU_STAGE, &[b'R']);
+        }
+        if self.cfg.go_last {
+            // The one timer write of this variant: the last register write of the entry.
+            Self::w32(b, S2R_TIMER, 1);
         }
         Self::rec(b, 0, Kind::Release, 0, 0, 0);
         b.release();
