@@ -176,6 +176,10 @@ impl Bus for Model {
         }
         Ok(())
     }
+    fn sep_open(&mut self) -> Result<(), ()> {
+        self.t += 50;
+        Ok(())
+    }
     fn sep_send(&mut self, _msg: u64) -> Result<(), ()> {
         self.t += 50;
         Ok(())

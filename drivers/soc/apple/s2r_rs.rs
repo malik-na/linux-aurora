@@ -95,7 +95,8 @@ impl mailbox::MailCallback for SepRx {
     type Data = Arc<SepBox>;
 
     fn recv_message(data: ArcBorrow<'_, SepBox>, msg: mailbox::Message) {
-        // Only the first message counts: it is the answer to the one message we sent.
+        // Only the first message counts: after `sep_send` has cleared the box, it is the
+        // answer to the one message we sent.
         if !data.got.load(Ordering::Acquire) {
             data.msg.store(msg.msg0, Ordering::Relaxed);
             data.got.store(true, Ordering::Release);
@@ -257,7 +258,7 @@ impl Bus for Hw {
         s2r_seq::spmi_cmd(&mut Spmi0(self), reg, buf, &mut [])
     }
 
-    fn sep_send(&mut self, msg: u64) -> Result<(), ()> {
+    fn sep_open(&mut self) -> Result<(), ()> {
         // SAFETY: plain C call; the device it returns is kept referenced for good.
         let raw = unsafe { s2r_rs_sep_dev() };
         if raw.is_null() {
@@ -279,11 +280,27 @@ impl Bus for Hw {
             GFP_KERNEL,
         )
         .map_err(|_| ())?;
+        // Claiming the mailbox starts it.
         let mbox = mailbox::Mailbox::<SepRx>::new_byname(dev, c"mbox", sep_box.clone()).map_err(|_| ())?;
-        let sent = mbox.send(mailbox::Message { msg0: msg, msg1: 0 }, false);
         self.sep = Some(mbox);
         self.sep_box = Some(sep_box);
-        sent.map_err(|_| ())
+        Ok(())
+    }
+
+    fn sep_send(&mut self, msg: u64) -> Result<(), ()> {
+        let mbox = self.sep.as_ref().ok_or(())?;
+        // The mailbox has been held since the start of the transition: a message that came
+        // in before ours is not the answer to it. It is named and left unanswered.
+        if let Some(sep_box) = self.sep_box.as_ref() {
+            if sep_box.got.load(Ordering::Acquire) {
+                pr_info!(
+                    "a message from the Secure Enclave before the sleep message: {:#018x} (not answered)\n",
+                    sep_box.msg.load(Ordering::Relaxed)
+                );
+                sep_box.got.store(false, Ordering::Release);
+            }
+        }
+        mbox.send(mailbox::Message { msg0: msg, msg1: 0 }, false).map_err(|_| ())
     }
 
     fn sep_recv(&mut self, ms: u32) -> Option<u64> {
@@ -455,6 +472,8 @@ pub extern "C" fn s2r_rs_begin() -> c_int {
     let ret = unsafe { s2r_rs_sep_dart_quiesce() };
     if ret != 0 {
         pr_err!("cannot quiesce the Secure Enclave's DART ({})\n", ret);
+        // Gives back the mailbox claimed a moment ago.
+        d.seq.unprepare(&mut d.hw);
         d.active = false;
         return ret;
     }

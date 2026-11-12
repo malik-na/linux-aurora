@@ -534,7 +534,10 @@ pub trait Bus {
     fn pmu_read(&mut self, reg: u16, buf: &mut [u8]) -> Result<(), ()>;
     /// One write command to the primary power chip.
     fn pmu_write(&mut self, reg: u16, buf: &[u8]) -> Result<(), ()>;
-    /// Secure Enclave: claim its mailbox and send one control message.
+    /// Secure Enclave: claim its mailbox and start it. A started mailbox keeps the enclave's
+    /// domain on; with nobody holding it the enclave gates itself once it idles.
+    fn sep_open(&mut self) -> Result<(), ()>;
+    /// Send one control message on the claimed mailbox.
     fn sep_send(&mut self, msg: u64) -> Result<(), ()>;
     /// Its next message, waited for at most `ms` milliseconds.
     fn sep_recv(&mut self, ms: u32) -> Option<u64>;
@@ -651,6 +654,7 @@ pub struct Seq {
     /// The run's choices.
     pub cfg: Cfg,
     smc_bits: u8,
+    sep_open: bool,
     sep_told: bool,
     sep_asleep: bool,
     aop_told: bool,
@@ -669,6 +673,7 @@ impl Seq {
         Seq {
             cfg,
             smc_bits: 0,
+            sep_open: false,
             sep_told: false,
             sep_asleep: false,
             aop_told: false,
@@ -773,11 +778,19 @@ impl Seq {
         why
     }
 
-    /// Start of the transition, before any device is suspended.
+    /// Start of the transition, before any device is suspended. The Secure Enclave's
+    /// mailbox is claimed here, at once: its own driver has just been unloaded, and an
+    /// enclave whose mailbox nobody holds gates itself within a second or less (chip,
+    /// 2026-11-12: off 0.87 s after the unload in one run, still on at 0.9 s in another).
+    /// The recorded runs claimed it about 0.1 s after the unload and sent the sleep
+    /// message 2 s later; so does this: claimed now, the message goes out in `prepare`.
     pub fn begin<B: Bus>(&mut self, b: &mut B) {
         let cfg = self.cfg;
         *self = Seq::new(cfg);
         Self::rec(b, 0, Kind::Phase, 0, 0, Phase::Prepare as u64);
+        if Self::r32(b, SEP_PS) & 0xf0 == 0xf0 {
+            self.sep_open = b.sep_open().is_ok();
+        }
     }
 
     /// The system controller's driver reports how far its sleep handshake has got.
@@ -808,11 +821,18 @@ impl Seq {
         if self.smc_bits & SMC_SLPW == 0 {
             return Err(Self::fail(b, Fail::Smc, 0, self.smc_bits.into()));
         }
-        // The Secure Enclave must be up to be told: its domain on, its mailbox answered.
+        // The Secure Enclave must be up to be told: its mailbox claimed at the start, its
+        // domain on now.
         let ps = Self::r32(b, SEP_PS);
+        if !self.sep_open {
+            return Err(Self::fail(b, Fail::SepSleep, 4, ps.into()));
+        }
         if ps & 0xf0 != 0xf0 {
+            self.sep_open = false;
+            b.sep_forget();
             return Err(Self::fail(b, Fail::SepSleep, SEP_PS, ps.into()));
         }
+        self.sep_open = false;
         if b.sep_send(SEP_SLEEP_MSG).is_err() {
             Self::sep_end(b, false);
             return Err(Self::fail(b, Fail::SepSleep, 0, 0));
@@ -864,8 +884,13 @@ impl Seq {
         true
     }
 
-    /// After a stopped entry: tell the always-on processor the AP stays up.
+    /// After a stopped entry: give back a mailbox that was claimed and never used, and tell
+    /// the always-on processor the AP stays up.
     pub fn unprepare<B: Bus>(&mut self, b: &mut B) {
+        if self.sep_open {
+            self.sep_open = false;
+            Self::sep_end(b, false);
+        }
         if self.aop_told {
             self.aop_told = false;
             let msg = AP_POWER_MSG | 0x20;
