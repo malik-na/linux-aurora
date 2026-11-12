@@ -802,7 +802,11 @@ impl kernel::Module for S2rModule {
             carry_over: *module_parameters::carry_over.value(),
             spmi_setup: p(*module_parameters::spmi_setup.value()),
             spmi_ack: p(*module_parameters::spmi_ack.value()),
-            wake_mask: if p(*module_parameters::wake_mask.value()) { Some(s2r_seq::WAKE_MASK_RECORDED) } else { None },
+            wake_mask: match *module_parameters::wake_mask.value() {
+                0 => None,
+                2 => Some(s2r_seq::WAKE_MASK_NAMED_ONLY),
+                _ => Some(s2r_seq::WAKE_MASK_RECORDED),
+            },
             window_record: p(*module_parameters::window_record.value()),
             aop_notify: p(*module_parameters::aop_notify.value()),
             mark_release: p(*module_parameters::mark_release.value()),
@@ -854,7 +858,7 @@ impl kernel::Module for S2rModule {
             cfg.carry_over,
             u8::from(cfg.spmi_setup),
             u8::from(cfg.spmi_ack),
-            u8::from(cfg.wake_mask.is_some()),
+            *module_parameters::wake_mask.value(),
             u8::from(cfg.window_record),
             u8::from(cfg.aop_notify),
             u8::from(cfg.mark_release),
@@ -996,7 +1000,7 @@ module! {
         },
         wake_mask: u8 {
             default: 1,
-            description: "Wake masks before the last stage: those of the recorded runs that stayed down (1) or as found (0)",
+            description: "Wake masks before the last stage: those of the recorded runs that stayed down (1), named sources only (2), or as found (0)",
         },
         window_record: u8 {
             default: 0,

@@ -429,7 +429,7 @@ fn deviations(cfg: &Cfg) {
 fn usage() -> ExitCode {
     eprintln!(
         "usage: apple-s2r-trace [--alarm SECS] [--no-alarm] [--net-wd1 SECS] [--base-steps N] [--carry-over N]\n\
-         \x20                      [--no-spmi-ack] [--no-spmi-setup] [--no-wake-mask] [--no-aop]\n\
+         \x20                      [--no-spmi-ack] [--no-spmi-setup] [--no-wake-mask] [--wake-mask-named-only] [--no-aop]\n\
          \x20                      [--window-record] [--mark-release] [--go-last] [--timer-record] [--wake-path] [--timer-stop] [--sec-timer-stop] [--watch MS] [--scenario ok|sep-noreply|sep-nogate|sep-badreply]"
     );
     ExitCode::from(2)
@@ -480,6 +480,7 @@ fn main() -> ExitCode {
             "--no-spmi-ack" => cfg.spmi_ack = false,
             "--no-spmi-setup" => cfg.spmi_setup = false,
             "--no-wake-mask" => cfg.wake_mask = None,
+            "--wake-mask-named-only" => cfg.wake_mask = Some(WAKE_MASK_NAMED_ONLY),
             "--no-aop" => cfg.aop_notify = false,
             "--window-record" => cfg.window_record = true,
             "--mark-release" => cfg.mark_release = true,
@@ -717,6 +718,28 @@ mod tests {
                 // As found: the Secure Enclave word's low byte (the model's word still reads
                 // on when the entry looks) and the AOP's status.
                 assert_eq!((m.pmu[&0x9f1d], m.pmu[&0x9f1e]), (0xff, 0x2c));
+            }
+        }
+    }
+
+    /// The named-only wake mask (a set bit masks, ledger 58(a)): of this M1's sixteen named
+    /// wake sources (ledger 110) the thirteen that the recorded mask leaves open stay open,
+    /// 26, 27 and 81 stay masked as in the recorded mask, and every source without a name
+    /// (38 and the five that stand at the timer write, 23, 25, 78, 80, 105, among them) is
+    /// masked.
+    #[test]
+    fn wake_mask_named_only() {
+        let named = [12u32, 14, 26, 27, 40, 47, 49, 50, 54, 64, 76, 81, 131, 132, 133, 134];
+        let masked_named = [26u32, 27, 81];
+        let bit = |w: &[u32; 5], n: u32| w[(n / 32) as usize] >> (n % 32) & 1;
+        for n in 0..160 {
+            let want = if named.contains(&n) && !masked_named.contains(&n) { 0 } else { 1 };
+            assert_eq!(bit(&WAKE_MASK_NAMED_ONLY, n), want, "source {n}");
+        }
+        // Every source the recorded mask masks stays masked.
+        for n in 0..160 {
+            if bit(&WAKE_MASK_RECORDED, n) == 1 {
+                assert_eq!(bit(&WAKE_MASK_NAMED_ONLY, n), 1, "source {n}");
             }
         }
     }
