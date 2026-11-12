@@ -798,6 +798,7 @@ impl kernel::Module for S2rModule {
             aop_queue_stop: p(*module_parameters::aop_queue_stop.value()),
             disp_park: p(*module_parameters::disp_park.value()),
             gate_record: p(*module_parameters::gate_record.value()),
+            fpwm_settle: p(*module_parameters::fpwm_settle.value()),
             disp_gpu_check: p(*module_parameters::disp_gpu_check.value()),
             aic_restore: p(*module_parameters::aic_restore.value()),
             wake_restore: p(*module_parameters::wake_restore.value()),
@@ -847,7 +848,7 @@ impl kernel::Module for S2rModule {
         // SAFETY: plain C call; the driver's state is in place.
         kernel::error::to_result(unsafe { s2r_rs_register_ops() })?;
         pr_info!(
-            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={} gate_record={}\n",
+            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={} gate_record={} fpwm_settle={}\n",
             u8::from(dry),
             cfg.alarm_secs,
             u8::from(cfg.no_alarm_ok),
@@ -871,7 +872,8 @@ impl kernel::Module for S2rModule {
             u8::from(cfg.aic_restore),
             u8::from(cfg.wake_restore),
             u8::from(cfg.disp_park),
-            u8::from(cfg.gate_record)
+            u8::from(cfg.gate_record),
+            u8::from(cfg.fpwm_settle)
         );
         let selftest = *module_parameters::pmu_selftest.value();
         if selftest != 0 {
@@ -1040,7 +1042,11 @@ module! {
         },
         gate_record: u8 {
             default: 0,
-            description: "RECORD ONLY: just before the release, the words the chip's sequence 0 waits on into the trace; how many are not yet as it needs and the first one's index into 0x9f15-16 (1)",
+            description: "RECORD ONLY: the words the chip's sequence 0 waits on, read at the end of the slow part (open count and first three indices into 0x9f13-16) and just before the release (into 0x9f1a, 0x9f1c-1e) (1)",
+        },
+        fpwm_settle: u8 {
+            default: 0,
+            description: "At the end of the slow part, wait up to 50 ms for ps_fpwm1's transition to finish (busy bit clear), else refuse; its word as found (bits 4-11) into 0x9f17 (1)",
         },
         disp_park: u8 {
             default: 0,

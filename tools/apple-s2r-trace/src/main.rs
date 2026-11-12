@@ -504,6 +504,7 @@ fn main() -> ExitCode {
             "--aop-queue-stop" => cfg.aop_queue_stop = true,
             "--disp-park" => cfg.disp_park = true,
             "--gate-record" => cfg.gate_record = true,
+            "--fpwm-settle" => cfg.fpwm_settle = true,
             "--wake-mask-no-mbox" => cfg.wake_mask = Some(WAKE_MASK_NAMED_NO_MBOX),
             "--disp-gpu-check" => cfg.disp_gpu_check = true,
             "--aic-restore" => cfg.aic_restore = true,
@@ -877,6 +878,33 @@ mod tests {
         // (index 3) and the five unset ones (44 to 48).
         assert_eq!((m.pmu[&0x9f13], m.pmu[&0x9f14], m.pmu[&0x9f15], m.pmu[&0x9f16]), (6, 3, 44, 45));
         assert_eq!((m.pmu[&0x9f1a], m.pmu[&0x9f1c], m.pmu[&0x9f1d], m.pmu[&0x9f1e]), (6, 3, 44, 45));
+        assert_eq!(m.refused, None);
+    }
+
+    /// Run 19: ps_fpwm1 not busy lets the entry through with its word's bits 4-11 in 0x9f17;
+    /// one that stays busy for the 50 ms refuses it before the last stage.
+    #[test]
+    fn fpwm_settle_waits_or_refuses() {
+        let mut cfg = all_cfg();
+        cfg.aop_queue_stop = false;
+        cfg.disp_park = true;
+        cfg.gate_record = true;
+        cfg.fpwm_settle = true;
+        let mut m = Model::new();
+        m.reg.insert(PMGR + 0x1_0018, 0x1404_020f);
+        m.reg.insert(PMGR + 0x378, 0x1404_020f);
+        m.reg.insert(PMGR + 0x1e0, 0x0000_02ff);
+        let (_, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok());
+        assert_eq!(m.pmu[&0x9f17], 0x2f);
+        assert_eq!(m.refused, None);
+
+        let mut m = Model::new();
+        m.reg.insert(PMGR + 0x1_0018, 0x1404_020f);
+        m.reg.insert(PMGR + 0x378, 0x1404_020f);
+        m.reg.insert(PMGR + 0x1e0, 0x0000_0a00);
+        let (_, r) = enter_all(&mut m, cfg);
+        assert_eq!(r, Err(Fail::Precheck));
         assert_eq!(m.refused, None);
     }
 

@@ -218,6 +218,10 @@ const AIC_TARGET: u64 = AIC + 0x3000;
 /// DISP0_CPU0, DISPDFR_FE, DISPDFR_BE): this M1's device tree.
 const GFX_PS: u64 = PMGR + 0x3f8;
 const DISP0_CPU0_PS: u64 = PMGR + 0x1_0018;
+/// ps_fpwm1 (the keyboard backlight's PWM), sequence 0's wait index 1: bit 11 must read 0.
+const FPWM1_PS: u64 = PMGR + 0x1e0;
+/// The power-state words' transition-in-progress bit.
+const PS_BUSY: u32 = 1 << 11;
 const DISPEXT_CPU0_PS: u64 = PMGR + 0x378;
 const DISP_WORDS: [u64; 7] = [PMGR + 0x350, PMGR + 0x360, PMGR + 0x368, PMGR + 0x378, PMGR + 0x1_0018, PMGR + 0x3a8, PMGR + 0x3b0];
 const AIC_MASK_CLR: u64 = AIC + 0x4180;
@@ -757,6 +761,11 @@ pub struct Cfg {
     /// RECORD bytes 3-6, 0x9f13-16) and just before the release (into 0x9f1a and 0x9f1c-1e, in
     /// place of the timer and secondaries bytes). 0xff = none.
     pub gate_record: bool,
+    /// Run 18's fix: at the end of the slow part (before the gate reading and the cluster words)
+    /// ps_fpwm1's transition is let finish: its busy bit polled up to 50 ms; still busy refuses
+    /// the entry. Its word as found (bits 4-11: actual state, the four flags) goes to RECORD
+    /// byte 7 (0x9f17) in place of the display byte.
+    pub fpwm_settle: bool,
     /// ALL port (C, D): before the last stage the display words and the GPU word are read into
     /// the trace; a GPU domain that does not read off refuses the entry.
     pub disp_gpu_check: bool,
@@ -797,6 +806,7 @@ impl Cfg {
         aop_queue_stop: false,
         disp_park: false,
         gate_record: false,
+        fpwm_settle: false,
         disp_gpu_check: false,
         aic_restore: false,
         wake_restore: false,
@@ -854,6 +864,8 @@ pub struct Seq {
     /// gate_record: [`SEQ0_GATES`] as the end of the slow part found them: how many open and the
     /// first three open indices (0xff: none).
     gate_before: [u8; 4],
+    /// fpwm_settle: ps_fpwm1's word as the slow part found it, bits 4-11.
+    fpwm_found: u8,
     /// The interrupt controller as found before the last stage: target words, mask words.
     aic_target: [u32; 1024],
     aic_mask: [u32; 32],
@@ -885,6 +897,7 @@ impl Seq {
             status: [0; 5],
             aop_queues_stopped: false,
             gate_before: [0, 0xff, 0xff, 0xff],
+            fpwm_found: 0,
             aic_target: [0; 1024],
             aic_mask: [0; 32],
             aic_saved: false,
@@ -1271,6 +1284,17 @@ impl Seq {
             for (i, a) in PS_WORDS.iter().enumerate() {
                 self.ps_found[i] = b.r32(*a);
             }
+        }
+        // Run 18: Linux's suspend left ps_fpwm1 mid-transition (busy before sequence 0 starts;
+        // never busy while awake). Let it finish before anything of the chip's way down.
+        if self.cfg.fpwm_settle {
+            let v = Self::r32(b, FPWM1_PS);
+            self.fpwm_found = (v >> 4) as u8;
+            if v & PS_BUSY != 0 && !Self::poll(b, FPWM1_PS, PS_BUSY, 0, 50_000) {
+                let v = Self::r32(b, FPWM1_PS);
+                return Err(Self::fail(b, Fail::Precheck, FPWM1_PS, v.into()));
+            }
+            Self::r32(b, FPWM1_PS);
         }
         // RECORD ONLY: what sequence 0 would find as Linux leaves it, before anything of the
         // chip's own way down has started; kept in the last stage's record (bytes 3-6).
@@ -1833,6 +1857,9 @@ impl Seq {
             let d0 = (Self::r32(b, DISP0_CPU0_PS) >> 4) & 0xf;
             let de = (Self::r32(b, DISPEXT_CPU0_PS) >> 4) & 0xf;
             self.late_write(b, PMU_RECORD + 7, &[(d0 << 4 | de) as u8]);
+        }
+        if self.cfg.fpwm_settle {
+            self.late_write(b, PMU_RECORD + 7, &[self.fpwm_found]);
         }
         if self.cfg.timer_stop {
             b.timers_stop();
