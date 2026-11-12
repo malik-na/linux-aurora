@@ -62,3 +62,6 @@ apple-mcc-y := mcc.o
 obj-$(CONFIG_APPLE_CLPC) += clpc.o
 
 obj-$(CONFIG_APPLE_S2R) += apple-s2r.o apple-s2r-asm.o
+
+obj-$(CONFIG_APPLE_S2R_RS) += apple-s2r-rs.o
+apple-s2r-rs-y := s2r_rs.o s2r_rs_shim.o

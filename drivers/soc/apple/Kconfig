@@ -59,6 +59,24 @@ config APPLE_S2R
 
 	  If unsure, say N.
 
+config APPLE_S2R_RS
+	bool "Apple M1 (t8103) suspend-to-RAM in Rust (the vendor OS's last stage as read)"
+	depends on ARCH_APPLE && ARM64 && SUSPEND && HOTPLUG_CPU && RUST
+	depends on APPLE_MAILBOX=y && APPLE_DART=y
+	default APPLE_S2R
+	help
+	  The t8103 suspend-to-RAM entry written anew in Rust: the sequence is one
+	  file (s2r_seq.rs) that is also built for the host, where the trace of an
+	  entry is checked off the machine. Active only with apple_s2r_rs.enable=1
+	  and apple_cpu_hotplug=park on the kernel command line, and not together
+	  with apple_s2r=1. An entry is dry unless apple_s2r_rs.dry=0 is given:
+	  no write to the chip once interrupts are off. Before that point a dry
+	  entry is real: the Secure Enclave is sent to sleep and the AOP is told.
+	  So one entry per boot, dry or not, and a restart after it. A real entry
+	  does not return; the wake restarts the machine through the boot loader.
+
+	  If unsure, say N.
+
 config APPLE_PMGR_MISC
 	bool "Apple SoC PMGR miscellaneous support"
 	depends on PM

@@ -1,0 +1,9 @@
+# Host-side build of the t8103 suspend-to-RAM sequence (drivers/soc/apple/s2r_seq.rs) against a
+# recording model of the chip. It prints the trace an entry would leave; nothing here touches a machine.
+[package]
+name = "apple-s2r-trace"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-only OR MIT"
+
+[dependencies]

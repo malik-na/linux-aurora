@@ -554,6 +554,11 @@ void apple_s2r_note_smc(u8 bits);
 #else
 static inline void apple_s2r_note_smc(u8 bits) { }
 #endif
+#if IS_ENABLED(CONFIG_APPLE_S2R_RS)
+void apple_s2r_rs_note_smc(u8 bits);
+#else
+static inline void apple_s2r_rs_note_smc(u8 bits) { }
+#endif
 static u8 apple_smc_handshake_bits;
 
 static bool apple_smc_deep_suspend(void)
@@ -571,6 +576,7 @@ static int apple_smc_suspend(struct device *dev)
 	ret = apple_smc_write_u32(smc, SMC_KEY(MBSE), SMC_KEY(slpw));
 	apple_smc_handshake_bits = ret ? 0 : BIT(0);
 	apple_s2r_note_smc(apple_smc_handshake_bits);
+	apple_s2r_rs_note_smc(apple_smc_handshake_bits);
 	dev_info(dev, "sleep handshake: MBSE slpw (%d)\n", ret);
 	return 0;
 }
@@ -583,10 +589,15 @@ static int apple_smc_suspend_late(struct device *dev)
 	if (!apple_smc_deep_suspend())
 		return 0;
 	r1 = apple_smc_write_u8(smc, SMC_KEY(WKTP), 2);
+	apple_smc_handshake_bits |= r1 ? 0 : BIT(1);
+	apple_s2r_rs_note_smc(apple_smc_handshake_bits);
 	r2 = apple_smc_write_u32(smc, SMC_KEY(MBSE), SMC_KEY(slpa));
+	apple_smc_handshake_bits |= r2 ? 0 : BIT(2);
+	apple_s2r_rs_note_smc(apple_smc_handshake_bits);
 	r3 = apple_rtkit_set_ap_power(smc->rtk, SMC_AP_POWER_IDLE);
-	apple_smc_handshake_bits |= (r1 ? 0 : BIT(1)) | (r2 ? 0 : BIT(2)) | (r3 ? 0 : BIT(3));
+	apple_smc_handshake_bits |= r3 ? 0 : BIT(3);
 	apple_s2r_note_smc(apple_smc_handshake_bits);
+	apple_s2r_rs_note_smc(apple_smc_handshake_bits);
 	dev_info(dev, "sleep handshake: WKTP=2 (%d), MBSE slpa (%d), AP power 0x201 (%d)\n",
 		 r1, r2, r3);
 	return 0;

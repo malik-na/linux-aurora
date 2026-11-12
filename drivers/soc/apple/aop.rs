@@ -1733,6 +1733,7 @@ impl AOP for AopData {
                 return;
             }
         }
+        s2r_hook::unregister();
         // No registration is queued after this point, so once the queue is
         // empty the list of children is complete.
         self.registration_queue.drain();
@@ -2386,6 +2387,7 @@ impl platform::Driver for AopDriver {
             data.start()?;
         }
         probe_guard.dismiss();
+        s2r_hook::register(&data);
         let data = data as Arc<dyn AOP>;
         Ok(Self(data))
     }
@@ -2406,6 +2408,81 @@ impl Drop for AopDriver {
 // SAFETY: the wrapped `Arc<dyn AOP>` is `Send + Sync` (the trait requires
 // both), so the handle may move to the thread that unbinds the device.
 unsafe impl Send for AopDriver {}
+
+/// The t8103 suspend-to-RAM driver (s2r_rs.rs) tells the AOP which power state the AP is
+/// going to: "AP power" on the management endpoint, acknowledged by the AOP, which itself
+/// keeps running.
+#[cfg(CONFIG_APPLE_S2R_RS)]
+mod s2r_hook {
+    use super::AopData;
+    use core::sync::atomic::{
+        AtomicPtr,
+        Ordering, //
+    };
+    use kernel::{
+        prelude::*,
+        sync::Arc, //
+    };
+
+    /// The running AOP, with a reference of its own.
+    static AOP: AtomicPtr<AopData> = AtomicPtr::new(core::ptr::null_mut());
+
+    extern "C" {
+        /// Built-in (s2r_rs_shim.c).
+        fn apple_s2r_rs_set_aop_power(f: Option<unsafe extern "C" fn(u32) -> c_int>);
+    }
+
+    /// Called from the suspend path, process context, user space frozen.
+    unsafe extern "C" fn ap_power(state: u32) -> c_int {
+        let p = AOP.load(Ordering::Acquire);
+        if p.is_null() {
+            return ENODEV.to_errno();
+        }
+        // SAFETY: `p` came from `Arc::into_raw` in `register` and that reference is given
+        // up only in `unregister`, which runs on unbind; no unbind runs while the suspend
+        // path that calls this is under way.
+        let data = unsafe { &*p };
+        let mut guard = data.rtkit.lock();
+        let r = match guard.as_mut().as_pin_mut() {
+            None => Err(ENODEV),
+            Some(rtk) => rtk.set_ap_power(state),
+        };
+        match r {
+            Ok(()) => 0,
+            Err(e) => e.to_errno(),
+        }
+    }
+
+    pub(super) fn register(data: &Arc<AopData>) {
+        let p = Arc::into_raw(data.clone()).cast_mut();
+        let old = AOP.swap(p, Ordering::AcqRel);
+        if !old.is_null() {
+            // SAFETY: `old` came from `Arc::into_raw` in an earlier `register`.
+            drop(unsafe { Arc::from_raw(old) });
+        }
+        // SAFETY: plain C call; the callback only uses the pointer stored above.
+        unsafe { apple_s2r_rs_set_aop_power(Some(ap_power)) };
+    }
+
+    pub(super) fn unregister() {
+        // SAFETY: plain C call.
+        unsafe { apple_s2r_rs_set_aop_power(None) };
+        let old = AOP.swap(core::ptr::null_mut(), Ordering::AcqRel);
+        if !old.is_null() {
+            // SAFETY: `old` came from `Arc::into_raw` in `register`.
+            drop(unsafe { Arc::from_raw(old) });
+        }
+    }
+}
+
+#[cfg(not(CONFIG_APPLE_S2R_RS))]
+mod s2r_hook {
+    use super::AopData;
+    use kernel::sync::Arc;
+
+    pub(super) fn register(_data: &Arc<AopData>) {}
+    pub(super) fn unregister() {}
+}
 
 module_platform_driver! {
     type: AopDriver,

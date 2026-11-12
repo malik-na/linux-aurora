@@ -299,6 +299,13 @@ impl<T: Operations> RtKit<T> {
         to_result(unsafe { bindings::apple_rtkit_idle(self.rtk) })
     }
 
+    /// Tells the coprocessor which power state the AP is going to, and waits for its
+    /// acknowledgement. The coprocessor's own state is left alone.
+    pub fn set_ap_power(self: Pin<&mut Self>, state: u32) -> Result {
+        // SAFETY: `rtk` is valid and the mutable borrow excludes other callers.
+        to_result(unsafe { bindings::apple_rtkit_set_ap_power(self.rtk, state) })
+    }
+
     /// Boots (wakes up) the RTKit coprocessor.
     pub fn wake(self: Pin<&mut Self>) -> Result {
         // SAFETY: `rtk` is valid per the type invariant.
