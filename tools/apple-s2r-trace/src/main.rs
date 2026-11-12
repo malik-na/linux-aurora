@@ -505,6 +505,7 @@ fn main() -> ExitCode {
             "--disp-park" => cfg.disp_park = true,
             "--gate-record" => cfg.gate_record = true,
             "--fpwm-settle" => cfg.fpwm_settle = true,
+            "--relock-off" => cfg.relock_off = true,
             "--wake-mask-no-mbox" => cfg.wake_mask = Some(WAKE_MASK_NAMED_NO_MBOX),
             "--disp-gpu-check" => cfg.disp_gpu_check = true,
             "--aic-restore" => cfg.aic_restore = true,
@@ -905,6 +906,29 @@ mod tests {
         m.reg.insert(PMGR + 0x1e0, 0x0000_0a00);
         let (_, r) = enter_all(&mut m, cfg);
         assert_eq!(r, Err(Fail::Precheck));
+        assert_eq!(m.refused, None);
+    }
+
+    /// Run 21 (E80): bit 42 of both perf-state words cleared after the perf requests and read
+    /// back clear before the release (0x9f17 = 0xb0); a stopped entry puts it back.
+    #[test]
+    fn relock_off_clears_bit_42() {
+        let mut cfg = all_cfg();
+        cfg.aop_queue_stop = false;
+        cfg.disp_park = true;
+        cfg.fpwm_settle = true;
+        cfg.relock_off = true;
+        let mut m = Model::new();
+        m.reg.insert(PMGR + 0x1_0018, 0x1404_020f);
+        m.reg.insert(PMGR + 0x378, 0x1404_020f);
+        m.reg.insert(PMGR + 0x1e0, 0x0000_02ff);
+        m.reg.insert(ACC[0] + 0x2_0020, 0x0000_0400_0010_5105);
+        m.reg.insert(ACC[1] + 0x2_0020, 0x0000_0400_0010_c10c);
+        let (_, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok());
+        assert_eq!(m.pmu[&0x9f17], 0xb0);
+        assert_eq!(m.reg[&(ACC[0] + 0x2_0020)] & (1 << 42), 0);
+        assert_eq!(m.reg[&(ACC[1] + 0x2_0020)] & (1 << 42), 0);
         assert_eq!(m.refused, None);
     }
 

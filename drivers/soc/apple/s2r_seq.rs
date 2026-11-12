@@ -74,6 +74,9 @@ const ACC_PSTATE: u64 = 0x2_0020;
 /// What a performance-state request keeps of the word: everything but the two state fields
 /// and the request bit.
 const PSTATE_KEEP: u64 = 0xffff_ffff_fdff_0ff0;
+/// The perf-state word's fixed-frequency PLL relock bit: set under Linux, cleared by macOS's
+/// last stage (feature cpu-fixed-freq-pll-relock switched off; E then P, no poll).
+const PSTATE_RELOCK: u64 = 1 << 42;
 /// Throttler words: bit 63 cleared at sleep. The third read clear on this machine under
 /// Linux; it is written only if it does not.
 const ACC_THROTTLE: [u64; 3] = [0x4_8400, 0x4_0250, 0x4_0240];
@@ -756,6 +759,11 @@ pub struct Cfg {
     /// during the transition; before the cluster words the two DCP words must not read fully
     /// on, and just before the release their actual states go to RECORD byte 7.
     pub disp_park: bool,
+    /// Run 20's inventory (E80): right after the perf-state requests, bit 42 of both clusters'
+    /// perf-state words cleared (E then P, no poll), as macOS's last stage does; read back before
+    /// the release into 0x9f17 = 0xb0 | E bit 42 << 1 | P bit 42 (0xb0 = both clear). Put back
+    /// with the saved word.
+    pub relock_off: bool,
     /// RECORD ONLY: every word of [`SEQ0_GATES`] read into the trace twice: at the end of the
     /// slow part (before the cluster words; how many open and the first three open indices into
     /// RECORD bytes 3-6, 0x9f13-16) and just before the release (into 0x9f1a and 0x9f1c-1e, in
@@ -805,6 +813,7 @@ impl Cfg {
         sec_timer_stop: false,
         aop_queue_stop: false,
         disp_park: false,
+        relock_off: false,
         gate_record: false,
         fpwm_settle: false,
         disp_gpu_check: false,
@@ -1507,6 +1516,16 @@ impl Seq {
                 }
             }
         }
+        if self.cfg.relock_off {
+            for (i, acc) in ACC.iter().enumerate() {
+                let a = acc + ACC_PSTATE;
+                let v = Self::r64(b, a);
+                if self.saved.pstate[i].is_none() {
+                    self.saved.pstate[i] = Some(v);
+                }
+                Self::w64(b, a, v & !PSTATE_RELOCK);
+            }
+        }
         if self.cfg.base_steps & BASE_APSC != 0 {
             for (i, acc) in ACC.iter().enumerate() {
                 let a = acc + ACC_PSTATE;
@@ -1659,7 +1678,8 @@ impl Seq {
                 // The state as found is asked for again; APSC as found.
                 let a = acc + ACC_PSTATE;
                 let cur = b.r64(a);
-                Self::w64(b, a, (cur & PSTATE_KEEP & !(1 << 22)) | (v & (0xf00f | 1 << 22)) | 1 << 25);
+                let back = 0xf00f | 1 << 22 | PSTATE_RELOCK;
+                Self::w64(b, a, (cur & PSTATE_KEEP & !back) | (v & back) | 1 << 25);
                 Self::wait64(b, a, 1 << 31, 0, POLL_TIMEOUT_US);
             }
         }
@@ -1860,6 +1880,11 @@ impl Seq {
         }
         if self.cfg.fpwm_settle {
             self.late_write(b, PMU_RECORD + 7, &[self.fpwm_found]);
+        }
+        if self.cfg.relock_off {
+            let e = (Self::r64(b, ACC[0] + ACC_PSTATE) & PSTATE_RELOCK != 0) as u8;
+            let p = (Self::r64(b, ACC[1] + ACC_PSTATE) & PSTATE_RELOCK != 0) as u8;
+            self.late_write(b, PMU_RECORD + 7, &[0xb0 | e << 1 | p]);
         }
         if self.cfg.timer_stop {
             b.timers_stop();
