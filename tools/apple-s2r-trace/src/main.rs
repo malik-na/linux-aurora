@@ -39,6 +39,8 @@ struct Model {
     sep_closed_at: Option<u64>,
     sep_forgotten: bool,
     refused: Option<u64>,
+    /// Every allowed register write's address, in order (for order tests).
+    wlog: Vec<u64>,
     out: Vec<Rec>,
     /// The boot core's timers as the record reads them (two bits each, ENABLE then ISTATUS).
     timers: u8,
@@ -95,6 +97,7 @@ impl Model {
             sep_closed_at: None,
             sep_forgotten: false,
             refused: None,
+            wlog: Vec::new(),
             out: Vec::new(),
             timers: 0,
             sec: (0, 0),
@@ -148,6 +151,7 @@ impl Bus for Model {
     fn w32(&mut self, a: u64, v: u32) {
         self.t += MMIO_US;
         if self.allowed(a, 4, true) {
+            self.wlog.push(a);
             self.reg.insert(a, v.into());
         }
     }
@@ -160,6 +164,7 @@ impl Bus for Model {
     fn w64(&mut self, a: u64, v: u64) {
         self.t += MMIO_US;
         if self.allowed(a, 8, true) {
+            self.wlog.push(a);
             self.reg.insert(a, v);
         }
     }
@@ -506,6 +511,7 @@ fn main() -> ExitCode {
             "--gate-record" => cfg.gate_record = true,
             "--fpwm-settle" => cfg.fpwm_settle = true,
             "--relock-off" => cfg.relock_off = true,
+            "--mac-order" => cfg.mac_order = true,
             "--wake-mask-no-mbox" => cfg.wake_mask = Some(WAKE_MASK_NAMED_NO_MBOX),
             "--disp-gpu-check" => cfg.disp_gpu_check = true,
             "--aic-restore" => cfg.aic_restore = true,
@@ -930,6 +936,33 @@ mod tests {
         assert_eq!(m.reg[&(ACC[0] + 0x2_0020)] & (1 << 42), 0);
         assert_eq!(m.reg[&(ACC[1] + 0x2_0020)] & (1 << 42), 0);
         assert_eq!(m.refused, None);
+    }
+
+    /// Run 22: with mac_order the perf requests come before the throttlers, the throttlers
+    /// before the TVMs (each followed by a read of its completion word), APSC last; the entry
+    /// goes through and touches nothing outside the ranges.
+    #[test]
+    fn mac_order_is_the_vendor_order() {
+        let mut cfg = all_cfg();
+        cfg.aop_queue_stop = false;
+        cfg.disp_park = true;
+        cfg.fpwm_settle = true;
+        cfg.mac_order = true;
+        let mut m = Model::new();
+        m.reg.insert(PMGR + 0x1_0018, 0x1404_020f);
+        m.reg.insert(PMGR + 0x378, 0x1404_020f);
+        m.reg.insert(PMGR + 0x1e0, 0x0000_02ff);
+        let (_, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok());
+        assert_eq!(m.refused, None);
+        let w = m.wlog.clone();
+        let pos = |a: u64| w.iter().position(|x| *x == a).unwrap_or_else(|| panic!("no write to {a:#x}"));
+        let perf = pos(ACC[0] + 0x2_0020);
+        let amx = pos(ACC[0] + 0x4_0250);
+        let dcs = pos(PMGR + 0x4_8400);
+        let soc = pos(PMGR + 0x4_8000);
+        let apsc = w.iter().rposition(|x| *x == ACC[1] + 0x2_0020).unwrap();
+        assert!(perf < amx && amx < dcs && dcs < soc && soc < apsc);
     }
 
     #[test]

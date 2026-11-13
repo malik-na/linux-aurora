@@ -764,6 +764,10 @@ pub struct Cfg {
     /// the release into 0x9f17 = 0xb0 | E bit 42 << 1 | P bit 42 (0xb0 = both clear). Put back
     /// with the saved word.
     pub relock_off: bool,
+    /// Run 22: the base class's steps in the vendor's feature-loop order on t8103 (perf, relock,
+    /// throttlers by feature, TVMs with their completion bit polled (bounded), APSC last)
+    /// instead of TVM, perf, APSC, throttlers.
+    pub mac_order: bool,
     /// RECORD ONLY: every word of [`SEQ0_GATES`] read into the trace twice: at the end of the
     /// slow part (before the cluster words; how many open and the first three open indices into
     /// RECORD bytes 3-6, 0x9f13-16) and just before the release (into 0x9f1a and 0x9f1c-1e, in
@@ -814,6 +818,7 @@ impl Cfg {
         aop_queue_stop: false,
         disp_park: false,
         relock_off: false,
+        mac_order: false,
         gate_record: false,
         fpwm_settle: false,
         disp_gpu_check: false,
@@ -1316,6 +1321,114 @@ impl Seq {
         Ok(())
     }
 
+    fn step_tvm<B: Bus>(&mut self, b: &mut B) {
+        if self.cfg.base_steps & BASE_TVM != 0 {
+            for (i, a) in TVM.iter().enumerate() {
+                self.saved.tvm[i] = Some(Self::rmw32(b, *a, 1, 0));
+            }
+        }
+    }
+
+    fn step_perf<B: Bus>(&mut self, b: &mut B) -> Result<(), Fail> {
+        if self.cfg.base_steps & BASE_PERF != 0 {
+            // Performance state 1 on each cluster: both state fields, the request bit, then
+            // the busy bit waited clear.
+            for (i, acc) in ACC.iter().enumerate() {
+                let a = acc + ACC_PSTATE;
+                let v = Self::r64(b, a);
+                self.saved.pstate[i] = Some(v);
+                Self::w64(b, a, (v & PSTATE_KEEP) | 1 | 1 << 12 | 1 << 25);
+                if !Self::wait64(b, a, 1 << 31, 0, POLL_TIMEOUT_US) && !b.dry() {
+                    let v = b.r64(a);
+                    return Err(Self::fail(b, Fail::Apsc, a, v));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn step_relock<B: Bus>(&mut self, b: &mut B) {
+        if self.cfg.relock_off {
+            for (i, acc) in ACC.iter().enumerate() {
+                let a = acc + ACC_PSTATE;
+                let v = Self::r64(b, a);
+                if self.saved.pstate[i].is_none() {
+                    self.saved.pstate[i] = Some(v);
+                }
+                Self::w64(b, a, v & !PSTATE_RELOCK);
+            }
+        }
+    }
+
+    fn step_apsc<B: Bus>(&mut self, b: &mut B) -> Result<(), Fail> {
+        if self.cfg.base_steps & BASE_APSC != 0 {
+            for (i, acc) in ACC.iter().enumerate() {
+                let a = acc + ACC_PSTATE;
+                let v = Self::r64(b, a);
+                if self.saved.pstate[i].is_none() {
+                    self.saved.pstate[i] = Some(v);
+                }
+                Self::w64(b, a, v | (1 << 22));
+                if !Self::wait64(b, a, 1 << 7, 0, POLL_TIMEOUT_US) && !b.dry() {
+                    let v = b.r64(a);
+                    return Err(Self::fail(b, Fail::Apsc, a, v));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn step_throttle<B: Bus>(&mut self, b: &mut B) {
+        if self.cfg.base_steps & BASE_THROTTLE != 0 {
+            for (i, acc) in ACC.iter().enumerate() {
+                for (k, off) in ACC_THROTTLE.iter().enumerate() {
+                    let v = Self::r64(b, acc + off);
+                    if k < 2 || v >> 63 != 0 {
+                        self.saved.throttle[i][k] = Some(v);
+                        Self::w64(b, acc + off, v & !(1 << 63));
+                    }
+                }
+            }
+        }
+
+    }
+
+    /// mac_order: the throttlers one feature at a time (amx +0x40250, llc +0x40240, ppt
+    /// +0x48400), each on E then P; what is saved and cleared is as in [`Self::step_throttle`].
+    fn step_throttle_by_feature<B: Bus>(&mut self, b: &mut B) {
+        if self.cfg.base_steps & BASE_THROTTLE == 0 {
+            return;
+        }
+        for k in [1usize, 2, 0] {
+            for (i, acc) in ACC.iter().enumerate() {
+                let off = ACC_THROTTLE[k];
+                let v = Self::r64(b, acc + off);
+                if k < 2 || v >> 63 != 0 {
+                    self.saved.throttle[i][k] = Some(v);
+                    Self::w64(b, acc + off, v & !(1 << 63));
+                }
+            }
+        }
+    }
+
+    /// mac_order: the TVM words in the vendor's order (dcs 0x48400, gfx 0x48800, disp 0x48c00,
+    /// soc 0x48000), bit 0 cleared, then bit 1 of the same block's +0x3e0 polled clear; the
+    /// vendor's poll has no bound, ours refuses the entry after POLL_TIMEOUT_US.
+    fn step_tvm_polled<B: Bus>(&mut self, b: &mut B) -> Result<(), Fail> {
+        if self.cfg.base_steps & BASE_TVM == 0 {
+            return Ok(());
+        }
+        for i in (0..TVM.len()).rev() {
+            let a = TVM[i];
+            self.saved.tvm[i] = Some(Self::rmw32(b, a, 1, 0));
+            if !Self::wait32(b, a + 0x3e0, 2, 0, POLL_TIMEOUT_US) && !b.dry() {
+                let v = b.r32(a + 0x3e0);
+                return Err(Self::fail(b, Fail::Precheck, a + 0x3e0, v.into()));
+            }
+        }
+        Ok(())
+    }
+
     /// gate_record: every word of [`SEQ0_GATES`] read (traced); how many do not read as sequence
     /// 0 needs, and the indices of the first three such (0xff where there is none).
     fn gate_scan<B: Bus>(b: &mut B) -> [u8; 4] {
@@ -1497,59 +1610,21 @@ impl Seq {
 
         // The base class's steps: APSC off and throttlers off are real changes under Linux;
         // the four TVM words read 0 there already and get the same read-modify-write.
-        if self.cfg.base_steps & BASE_TVM != 0 {
-            for (i, a) in TVM.iter().enumerate() {
-                self.saved.tvm[i] = Some(Self::rmw32(b, *a, 1, 0));
-            }
-        }
-        if self.cfg.base_steps & BASE_PERF != 0 {
-            // Performance state 1 on each cluster: both state fields, the request bit, then
-            // the busy bit waited clear.
-            for (i, acc) in ACC.iter().enumerate() {
-                let a = acc + ACC_PSTATE;
-                let v = Self::r64(b, a);
-                self.saved.pstate[i] = Some(v);
-                Self::w64(b, a, (v & PSTATE_KEEP) | 1 | 1 << 12 | 1 << 25);
-                if !Self::wait64(b, a, 1 << 31, 0, POLL_TIMEOUT_US) && !b.dry() {
-                    let v = b.r64(a);
-                    return Err(Self::fail(b, Fail::Apsc, a, v));
-                }
-            }
-        }
-        if self.cfg.relock_off {
-            for (i, acc) in ACC.iter().enumerate() {
-                let a = acc + ACC_PSTATE;
-                let v = Self::r64(b, a);
-                if self.saved.pstate[i].is_none() {
-                    self.saved.pstate[i] = Some(v);
-                }
-                Self::w64(b, a, v & !PSTATE_RELOCK);
-            }
-        }
-        if self.cfg.base_steps & BASE_APSC != 0 {
-            for (i, acc) in ACC.iter().enumerate() {
-                let a = acc + ACC_PSTATE;
-                let v = Self::r64(b, a);
-                if self.saved.pstate[i].is_none() {
-                    self.saved.pstate[i] = Some(v);
-                }
-                Self::w64(b, a, v | (1 << 22));
-                if !Self::wait64(b, a, 1 << 7, 0, POLL_TIMEOUT_US) && !b.dry() {
-                    let v = b.r64(a);
-                    return Err(Self::fail(b, Fail::Apsc, a, v));
-                }
-            }
-        }
-        if self.cfg.base_steps & BASE_THROTTLE != 0 {
-            for (i, acc) in ACC.iter().enumerate() {
-                for (k, off) in ACC_THROTTLE.iter().enumerate() {
-                    let v = Self::r64(b, acc + off);
-                    if k < 2 || v >> 63 != 0 {
-                        self.saved.throttle[i][k] = Some(v);
-                        Self::w64(b, acc + off, v & !(1 << 63));
-                    }
-                }
-            }
+        if self.cfg.mac_order {
+            // Run 22: the vendor's feature-loop order on t8103 (E80-FEATURE-LOOP.md): the perf
+            // requests, then the throttlers by feature (amx, llc, ppt; E then P), the TVMs
+            // (dcs, gfx, disp, soc) each with its completion bit polled clear (bounded), APSC last.
+            self.step_perf(b)?;
+            self.step_relock(b);
+            self.step_throttle_by_feature(b);
+            self.step_tvm_polled(b)?;
+            self.step_apsc(b)?;
+        } else {
+            self.step_tvm(b);
+            self.step_perf(b)?;
+            self.step_relock(b);
+            self.step_apsc(b)?;
+            self.step_throttle(b);
         }
 
         // 3b. Gating words.
