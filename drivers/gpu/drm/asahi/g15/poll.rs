@@ -25,7 +25,7 @@ use kernel::{
         },
         msecs_to_jiffies, Delta, Jiffies, Monotonic,
     },
-    workqueue::RawWorkItem,
+    workqueue::{self, RawWorkItem},
 };
 
 use super::channel::Channel;
@@ -87,7 +87,8 @@ impl Shared {
                     Ok(true) => self.rearm(firmware.engine.chan_wait),
                     // Idle: nothing polls until new work arrives, so a PB reclaim that comes
                     // due with more idle time gets one more pass then. A job's arrival brings
-                    // the poll work forward (`rearm`), which replaces this expiry.
+                    // the poll work forward (the `resnap` timer's `poll_now`), which replaces
+                    // this expiry.
                     Ok(false) => {
                         if let Some(ns) = firmware.reclaim_delay_ns() {
                             let ms = ns.div_ceil(1_000_000).min(u32::MAX as u64) as u32;
@@ -152,7 +153,8 @@ impl Shared {
     }
 
     /// Re-checks a published command soon: hrtimer, with a one-jiffy backup; sooner while a
-    /// ready prefix waits for a channel record's consumption.
+    /// ready prefix waits for a channel record's consumption. The backup leaves a poll that is
+    /// already queued alone, so one a `kick` queued to run now is not pushed out a jiffy.
     pub(crate) fn rearm(self: &Arc<Self>, chan_wait: bool) {
         let mut us = params::resnap_us();
         if chan_wait && *module_parameters::g15_repoll_us.value() != 0 {
@@ -165,7 +167,10 @@ impl Shared {
             drop(handle.take());
             *handle = Some(self.clone().start(Delta::from_micros(us as i64)));
         }
-        self.mod_poll(1);
+        // Already queued if this fails. One queued to run now needs no backup, and a later one
+        // (the idle PB reclaim) is brought forward by the timer above.
+        let _ =
+            workqueue::system_highpri().enqueue_delayed::<Arc<Self>, POLL_WORK>(self.clone(), 1);
     }
 
     /// Starts what the engine needs besides the firmware state: the `asahi-g15/stats` and
