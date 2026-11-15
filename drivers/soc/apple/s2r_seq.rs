@@ -768,6 +768,13 @@ pub struct Cfg {
     /// throttlers by feature, TVMs with their completion bit polled (bounded), APSC last)
     /// instead of TVM, perf, APSC, throttlers.
     pub mac_order: bool,
+    /// Run 26 (2026-11-16, system firmware 13.5): take the Secure Enclave as "on" from the TARGET
+    /// nibble of its power word (bits 3:0 = 0xf) instead of the actual state (bits 7:4). Under the
+    /// 13.5 firmware the hardware gates an idle enclave about 1.4 s after its driver's last
+    /// exchange (actual 0, target f: power word 1000230f), before `begin` runs, so the mailbox was
+    /// never claimed and `prepare` refused. With this set the mailbox is claimed while the target
+    /// is on and the sleep message is sent as the vendor OS does; no answer within 5 s still stops.
+    pub sep_target: bool,
     /// RECORD ONLY: every word of [`SEQ0_GATES`] read into the trace twice: at the end of the
     /// slow part (before the cluster words; how many open and the first three open indices into
     /// RECORD bytes 3-6, 0x9f13-16) and just before the release (into 0x9f1a and 0x9f1c-1e, in
@@ -819,6 +826,7 @@ impl Cfg {
         disp_park: false,
         relock_off: false,
         mac_order: false,
+        sep_target: false,
         gate_record: false,
         fpwm_settle: false,
         disp_gpu_check: false,
@@ -1024,9 +1032,15 @@ impl Seq {
         let cfg = self.cfg;
         *self = Seq::new(cfg);
         Self::rec(b, 0, Kind::Phase, 0, 0, Phase::Prepare as u64);
-        if Self::r32(b, SEP_PS) & 0xf0 == 0xf0 {
+        if Self::sep_on(cfg, Self::r32(b, SEP_PS)) {
             self.sep_open = b.sep_open().is_ok();
         }
+    }
+
+    /// Whether the Secure Enclave counts as on: its actual state fully on (bits 7:4), or with
+    /// `sep_target` its target fully on (bits 3:0), see [`Cfg::sep_target`].
+    fn sep_on(cfg: Cfg, ps: u32) -> bool {
+        if cfg.sep_target { ps & 0x0f == 0x0f } else { ps & 0xf0 == 0xf0 }
     }
 
     /// The system controller's driver reports how far its sleep handshake has got.
@@ -1063,7 +1077,7 @@ impl Seq {
         if !self.sep_open {
             return Err(Self::fail(b, Fail::SepSleep, 4, ps.into()));
         }
-        if ps & 0xf0 != 0xf0 {
+        if !Self::sep_on(self.cfg, ps) {
             self.sep_open = false;
             b.sep_forget();
             return Err(Self::fail(b, Fail::SepSleep, SEP_PS, ps.into()));

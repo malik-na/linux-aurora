@@ -1002,4 +1002,37 @@ mod tests {
             assert_eq!(m.refused, None);
         }
     }
+
+    /// Run 26, system firmware 13.5: the enclave has gated itself (actual 0, target f) before
+    /// the transition starts. The run 22 rule (actual state on) never claims its mailbox and
+    /// `prepare` refuses; with `sep_target` the mailbox is claimed, the sleep message goes out
+    /// and the entry goes on.
+    #[test]
+    fn gated_enclave_needs_sep_target() {
+        let mut m = Model::new();
+        m.reg.insert(SEP_PS, 0x1000_230f);
+        let (seq, r) = enter_all(&mut m, all_cfg());
+        assert!(matches!(r, Err(Fail::SepSleep)), "run 22 rule must refuse a gated enclave");
+        assert!(!seq.sep_told());
+
+        let mut m = Model::new();
+        m.reg.insert(SEP_PS, 0x1000_230f);
+        let mut cfg = all_cfg();
+        cfg.sep_target = true;
+        let (seq, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok(), "sep_target must enter with a gated enclave: {:?}", r.err().map(|f| f as u32));
+        assert!(seq.sep_told());
+    }
+
+    /// With `sep_target`, an enclave whose target is off is still refused.
+    #[test]
+    fn sep_target_still_needs_the_target_on() {
+        let mut m = Model::new();
+        m.reg.insert(SEP_PS, 0x1000_2300);
+        let mut cfg = all_cfg();
+        cfg.sep_target = true;
+        let (seq, r) = enter_all(&mut m, cfg);
+        assert!(matches!(r, Err(Fail::SepSleep)));
+        assert!(!seq.sep_told());
+    }
 }

@@ -801,6 +801,7 @@ impl kernel::Module for S2rModule {
             fpwm_settle: p(*module_parameters::fpwm_settle.value()),
             relock_off: p(*module_parameters::relock_off.value()),
             mac_order: p(*module_parameters::mac_order.value()),
+            sep_target: p(*module_parameters::sep_target.value()),
             disp_gpu_check: p(*module_parameters::disp_gpu_check.value()),
             aic_restore: p(*module_parameters::aic_restore.value()),
             wake_restore: p(*module_parameters::wake_restore.value()),
@@ -850,7 +851,7 @@ impl kernel::Module for S2rModule {
         // SAFETY: plain C call; the driver's state is in place.
         kernel::error::to_result(unsafe { s2r_rs_register_ops() })?;
         pr_info!(
-            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={} gate_record={} fpwm_settle={} relock_off={} mac_order={}\n",
+            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={} gate_record={} fpwm_settle={} relock_off={} mac_order={} sep_target={}\n",
             u8::from(dry),
             cfg.alarm_secs,
             u8::from(cfg.no_alarm_ok),
@@ -877,7 +878,8 @@ impl kernel::Module for S2rModule {
             u8::from(cfg.gate_record),
             u8::from(cfg.fpwm_settle),
             u8::from(cfg.relock_off),
-            u8::from(cfg.mac_order)
+            u8::from(cfg.mac_order),
+            u8::from(cfg.sep_target)
         );
         let selftest = *module_parameters::pmu_selftest.value();
         if selftest != 0 {
@@ -1047,6 +1049,10 @@ module! {
         gate_record: u8 {
             default: 0,
             description: "RECORD ONLY: the words the chip's sequence 0 waits on, read at the end of the slow part (open count and first three indices into 0x9f13-16) and just before the release (into 0x9f1a, 0x9f1c-1e) (1)",
+        },
+        sep_target: u8 {
+            default: 0,
+            description: "Run 26, system firmware 13.5: the Secure Enclave counts as on when its power word's TARGET is on (bits 3:0), not only its actual state: the hardware gates an idle enclave about 1.4 s after its driver's last exchange, so the mailbox is claimed and the sleep message sent while the target is on (1)",
         },
         mac_order: u8 {
             default: 0,
