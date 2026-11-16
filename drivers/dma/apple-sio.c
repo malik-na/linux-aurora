@@ -165,6 +165,7 @@ struct sio_data {
 	} tags;
 
 	int nchannels;
+	bool s2r_parked;
 #if IS_ENABLED(CONFIG_APPLE_SIO_T6030)
 	bool t6030;
 #endif
@@ -1628,7 +1629,45 @@ static __maybe_unused int sio_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_RUNTIME_DEV_PM_OPS(sio_pm_ops, sio_suspend, sio_resume, NULL);
+static bool s2r_idle;
+module_param(s2r_idle, bool, 0644);
+MODULE_PARM_DESC(s2r_idle,
+		 "Put the SIO coprocessor in RTKit idle (0x201) for system sleep, as DCP does for deep sleep");
+
+#define REG_CPU_STATUS	0x48
+
+static __maybe_unused int sio_suspend_late(struct device *dev)
+{
+	struct sio_data *sio = dev_get_drvdata(dev);
+	int ret;
+
+	if (!s2r_idle)
+		return 0;
+	ret = apple_rtkit_idle(sio->rtk);
+	sio->s2r_parked = !ret;
+	dev_info(dev, "system sleep: coprocessor to RTKit idle: %d (cpu control %#x status %#x)\n",
+		 ret, readl(sio->base + REG_CPU_CONTROL), readl(sio->base + REG_CPU_STATUS));
+	return 0;
+}
+
+static __maybe_unused int sio_resume_early(struct device *dev)
+{
+	struct sio_data *sio = dev_get_drvdata(dev);
+	int ret;
+
+	if (!sio->s2r_parked)
+		return 0;
+	sio->s2r_parked = false;
+	ret = apple_rtkit_wake(sio->rtk);
+	dev_info(dev, "after system sleep: coprocessor woken: %d\n", ret);
+	return 0;
+}
+
+static const struct dev_pm_ops sio_pm_ops = {
+	SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
+	LATE_SYSTEM_SLEEP_PM_OPS(sio_suspend_late, sio_resume_early)
+	RUNTIME_PM_OPS(sio_suspend, sio_resume, NULL)
+};
 
 static struct platform_driver apple_sio_driver = {
 	.driver = {
