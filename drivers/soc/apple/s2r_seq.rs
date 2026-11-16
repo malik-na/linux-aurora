@@ -32,6 +32,8 @@ pub const CLUSTER_PS: [u64; 2] = [PMGR + 0x18000, PMGR + 0x18004];
 pub const SIO_PS: [u64; 3] = [PMGR + 0x1c8, PMGR + 0x1c0, PMGR + 0x1d0];
 /// The SIO island's parents, parent first: sio_busif, sio, sio_cpu.
 pub const SIO_PARENTS: [u64; 3] = [PMGR + 0x1c0, PMGR + 0x1c8, PMGR + 0x1d0];
+/// Run 37: atc0_common, gfx, i2c0, i2c3 (see [`Cfg::mac_off`]).
+pub const MAC_OFF: [u64; 4] = [PMGR + 0x420, PMGR + 0x3f8, PMGR + 0x1f0, PMGR + 0x208];
 /// Four words whose bit 0 is cleared at sleep (they read 0 under Linux), in the order read.
 pub const TVM: [u64; 4] = [PMGR + 0x48000, PMGR + 0x48c00, PMGR + 0x48800, PMGR + 0x48400];
 /// Five clock words: bits 27:24 cleared, bit 31 set, then bit 30 waited clear.
@@ -785,6 +787,9 @@ pub struct Cfg {
     /// island never reads ready and the watchdog resets the SoC. macOS turns them on about 1 ms
     /// before its commit (docs/evidence/2026-11-16-run29-sio-island/README.md).
     pub sio_on: bool,
+    /// Run 37, system firmware 13.5: in the slow part, the domains macOS turns off before its
+    /// commit and Linux keeps on (atc0_common, gfx, i2c0, i2c3): target 0, auto flag clear.
+    pub mac_off: bool,
     /// RECORD ONLY: every word of [`SEQ0_GATES`] read into the trace twice: at the end of the
     /// slow part (before the cluster words; how many open and the first three open indices into
     /// RECORD bytes 3-6, 0x9f13-16) and just before the release (into 0x9f1a and 0x9f1c-1e, in
@@ -811,7 +816,8 @@ pub struct Cfg {
     pub watch_ms: u32,
     /// DIAGNOSTIC (run 36): right after the release the boot core waits (at most 200 ms)
     /// for the engine to arm watchdog 2 with its 5 s deadline, moves that deadline to this
-    /// many seconds, and goes down as usual. A reset that stays at ~5 s is then not
+    /// many seconds, and goes down as usual. Record byte 6 is [`Seq::pmp_note`]. A reset
+    /// that stays at ~5 s is then not
     /// watchdog 2. Record in RECORD (0x9f10-17), see [`Seq::wd2_extend`].
     pub wd2_extend_s: u32,
 }
@@ -843,6 +849,7 @@ impl Cfg {
         mac_order: false,
         sep_target: false,
         sio_on: false,
+        mac_off: false,
         gate_record: false,
         fpwm_settle: false,
         disp_gpu_check: false,
@@ -916,6 +923,9 @@ pub struct Seq {
     pub wake_raised: u32,
     pub wake_stuck: u32,
     pub wake_p_up: bool,
+    /// Run 37: what the PMP idle in "prepare" gave (0 not asked, 1 acked, 0x80 | -errno);
+    /// set by the platform glue, kept in the wd2_extend record.
+    pub pmp_note: u8,
 }
 
 impl Seq {
@@ -944,6 +954,7 @@ impl Seq {
             wake_raised: 0,
             wake_stuck: 0,
             wake_p_up: false,
+            pmp_note: 0,
         }
     }
 
@@ -1359,6 +1370,13 @@ impl Seq {
                 Self::r32(b, a);
             }
         }
+        // Run 37: macOS's commit has these at target 0 (atc0_common 0x23f0, gfx 0x0f0023f0,
+        // i2c0 and i2c3 0x3f0); Linux keeps them on. No wait: macOS does not wait either.
+        if self.cfg.mac_off {
+            for a in MAC_OFF {
+                Self::rmw32(b, a, 1 << 28 | 0xf, 0);
+            }
+        }
         // RECORD ONLY: what sequence 0 would find as Linux leaves it, before anything of the
         // chip's own way down has started; kept in the last stage's record (bytes 3-6).
         if self.cfg.gate_record {
@@ -1574,7 +1592,8 @@ impl Seq {
     /// alarm 120 000 000 = 5 s at 24 MHz, control 4); sequence 1 disarms it as its last.
     /// Seen armed with that alarm, the alarm is moved to `wd2_extend_s` seconds. RECORD:
     /// 0xd2, polls (capped 255), control seen, alarm seen in s, alarm read back in s, engine
-    /// progress top byte, ms waited (capped 255), 1 if moved / 0 if never seen armed.
+    /// progress top byte, the PMP idle note (run 37: 0 not asked, 1 acked, 0x80 | -errno),
+    /// 1 if moved / 0 if never seen armed.
     fn wd2_extend<B: Bus>(&mut self, b: &mut B) {
         const ENGINE_ALARM: u32 = 120_000_000;
         let t0 = b.now_us();
@@ -1591,7 +1610,6 @@ impl Seq {
                 break;
             }
         }
-        let ms = (b.now_us() - t0) / 1000;
         let rec = [
             0xd2,
             polls.min(255) as u8,
@@ -1599,7 +1617,7 @@ impl Seq {
             (alarm / 24_000_000).min(255) as u8,
             (moved / 24_000_000).min(255) as u8,
             (b.r32(ENG_PROGRESS) >> 24) as u8,
-            ms.min(255) as u8,
+            self.pmp_note,
             u8::from(moved != 0),
         ];
         self.late_write(b, PMU_RECORD, &rec);

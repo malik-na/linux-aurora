@@ -330,6 +330,15 @@ void apple_s2r_set_pmp_power(int (*fn)(bool idle))
 }
 EXPORT_SYMBOL_GPL(apple_s2r_set_pmp_power);
 
+/* For apple-s2r-rs (run 37): call the PMP hook; -ENODEV when pmp_v1 has not registered one. */
+int apple_s2r_pmp_power_call(bool idle)
+{
+	int (*fn)(bool) = READ_ONCE(s2r_pmp_power);
+
+	return fn ? fn(idle) : -ENODEV;
+}
+EXPORT_SYMBOL_GPL(apple_s2r_pmp_power_call);
+
 /*
  * Self-test of the PMP idle path without suspending: write 1 to
  * /sys/module/apple_s2r/parameters/pmp_idle_test to idle the PMP (AP 0x201, IOP 0x201,

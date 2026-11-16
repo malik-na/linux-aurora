@@ -69,6 +69,8 @@ extern "C" {
     fn s2r_rs_sep_dart_quiesce() -> c_int;
     fn s2r_rs_sep_dart_resume() -> c_int;
     fn s2r_rs_aop_power(state: u32) -> c_int;
+    // apple-s2r.c (run 37): the PMP idle/wake hook pmp_v1 registers.
+    fn apple_s2r_pmp_power_call(idle: bool) -> c_int;
     fn s2r_rs_spmi_unbound() -> bool;
     fn s2r_rs_mbox_init() -> c_int;
     fn s2r_rs_mbox_resumes() -> u64;
@@ -494,6 +496,8 @@ struct Driver {
     /// The entry stopped or was dry: the AP stays up.
     returned: bool,
     sep_dart_quiesced: bool,
+    /// Run 37: the PMP was idled in "prepare" and has to be woken if the entry stops.
+    pmp_idled: bool,
     /// False if a boot-time self-test was asked for and did not pass in full: no entry then.
     selftest_ok: bool,
     /// The boot core came back through its resume entry in this transition.
@@ -601,6 +605,17 @@ pub extern "C" fn s2r_rs_prepare() -> c_int {
     let Some(d) = driver() else {
         return ENODEV.to_errno();
     };
+    // Run 37: macOS idles the PMP (AP 0x201, IOP 0x201) between MBSE slpw and slpa, which
+    // is where "prepare" runs; macOS does not complete a sleep without it (try61).
+    d.pmp_idled = false;
+    d.seq.pmp_note = 0;
+    if *module_parameters::pmp_idle.value() != 0 && !d.hw.dry {
+        // SAFETY: plain C call; the hook runs in process context, as here.
+        let r = unsafe { apple_s2r_pmp_power_call(true) };
+        pr_info!("PMP idle (AP 0x201, IOP 0x201): {}\n", r);
+        d.pmp_idled = r == 0;
+        d.seq.pmp_note = if r == 0 { 1 } else { 0x80 | (r.unsigned_abs().min(0x7f) as u8) };
+    }
     match d.seq.prepare(&mut d.hw) {
         Ok(()) => 0,
         Err(e) => {
@@ -716,6 +731,12 @@ pub extern "C" fn s2r_rs_end() {
         s2r_rs_set_deep(false)
     };
     d.seq.unprepare(&mut d.hw);
+    if d.pmp_idled {
+        // SAFETY: plain C call.
+        let r = unsafe { apple_s2r_pmp_power_call(false) };
+        pr_info!("PMP wake after a stopped entry: {}\n", r);
+        d.pmp_idled = false;
+    }
     // The Secure Enclave's DART is given back to its driver only if no sleep message was
     // sent in this boot and its power word reads "on" now; in every other case it stays
     // quiesced until the next boot.
@@ -803,6 +824,7 @@ impl kernel::Module for S2rModule {
             mac_order: p(*module_parameters::mac_order.value()),
             sep_target: p(*module_parameters::sep_target.value()),
             sio_on: p(*module_parameters::sio_on.value()),
+            mac_off: p(*module_parameters::mac_off.value()),
             disp_gpu_check: p(*module_parameters::disp_gpu_check.value()),
             aic_restore: p(*module_parameters::aic_restore.value()),
             wake_restore: p(*module_parameters::wake_restore.value()),
@@ -846,6 +868,7 @@ impl kernel::Module for S2rModule {
                 active: false,
                 returned: false,
                 sep_dart_quiesced: false,
+                pmp_idled: false,
                 selftest_ok: true,
                 resumed: false,
             });
@@ -853,7 +876,7 @@ impl kernel::Module for S2rModule {
         // SAFETY: plain C call; the driver's state is in place.
         kernel::error::to_result(unsafe { s2r_rs_register_ops() })?;
         pr_info!(
-            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={} gate_record={} fpwm_settle={} relock_off={} mac_order={} sep_target={} sio_on={} wd2_extend_s={}\n",
+            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={} gate_record={} fpwm_settle={} relock_off={} mac_order={} sep_target={} sio_on={} wd2_extend_s={} mac_off={} pmp_idle={}\n",
             u8::from(dry),
             cfg.alarm_secs,
             u8::from(cfg.no_alarm_ok),
@@ -883,7 +906,9 @@ impl kernel::Module for S2rModule {
             u8::from(cfg.mac_order),
             u8::from(cfg.sep_target),
             u8::from(cfg.sio_on),
-            cfg.wd2_extend_s
+            cfg.wd2_extend_s,
+            u8::from(cfg.mac_off),
+            *module_parameters::pmp_idle.value()
         );
         let selftest = *module_parameters::pmu_selftest.value();
         if selftest != 0 {
@@ -1097,6 +1122,14 @@ module! {
         watch_ms: u32 {
             default: 0,
             description: "DIAGNOSTIC, not an entry into sleep: after the release the boot core watches for this many ms (max 2500) and keeps what it sees in the scratch, then waits",
+        },
+        mac_off: u8 {
+            default: 0,
+            description: "Run 37, system firmware 13.5: in the slow part turn atc0_common, gfx, i2c0 and i2c3 off (target 0, auto flag clear), as macOS has them at its commit (1)",
+        },
+        pmp_idle: u8 {
+            default: 0,
+            description: "Run 37: in prepare (between MBSE slpw and slpa) idle the PMP through the pmp_v1 hook (AP 0x201, IOP 0x201), as macOS does; woken again if the entry stops (1)",
         },
         wd2_extend_s: u32 {
             default: 0,

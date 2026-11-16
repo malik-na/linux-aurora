@@ -1119,6 +1119,26 @@ mod tests {
         assert_eq!((rec[0], rec[2], rec[3], rec[4], rec[7]), (0xd2, 4, 5, 100, 1), "{rec:02x?}");
     }
 
+    /// Run 37: mac_off writes atc0_common, gfx, i2c0, i2c3 to target 0 with the auto flag
+    /// clear, before the first cluster word.
+    #[test]
+    fn mac_off_turns_the_four_domains_off_before_the_clusters() {
+        let mut m = Model::new();
+        // As Linux leaves them (linux-awake-values.json): atc0_common, gfx, i2c0, i2c3.
+        for (a, v) in MAC_OFF.iter().zip([0x0000_22ff, 0x1000_230f, 0x0000_00ff, 0x0000_00ff]) {
+            m.reg.insert(*a, v);
+        }
+        let mut cfg = all_cfg();
+        cfg.mac_off = true;
+        let (_, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok(), "{:?}", r.err().map(|f| f as u32));
+        let cluster = m.wlog.iter().position(|x| *x == CLUSTER_PS[0]).unwrap();
+        for a in MAC_OFF {
+            assert!(m.wlog[..cluster].contains(&a), "{a:#x} not written before the clusters");
+            assert_eq!(m.reg[&a] & (1 << 28 | 0xf), 0, "{a:#x}");
+        }
+    }
+
     /// Never armed within 200 ms: nothing written to watchdog 2, the record says 0.
     #[test]
     fn wd2_extend_without_the_engine_leaves_watchdog_2_alone() {
