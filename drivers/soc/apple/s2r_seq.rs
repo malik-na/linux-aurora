@@ -1339,7 +1339,10 @@ impl Seq {
         // ready while Linux has its parents off.
         if self.cfg.sio_on {
             for a in SIO_PARENTS {
-                Self::rmw32(b, a, 0xf, 0xf);
+                // Run 35: with SIO running and idle, the auto flag (bit 28) keeps a parent
+                // clock-gated at actual 4. macOS commits them with it clear (0x0f0000ff); 3d
+                // clears it again, too late for this wait.
+                Self::rmw32(b, a, 1 << 28 | 0xf, 0xf);
                 // sio_cpu is the SIO coprocessor's own domain and clock-gates itself when idle:
                 // macOS's commit value for it reads target f, actual 4 (0x0400024f).
                 let up = if a == SIO_PARENTS[2] { 0x40 } else { 0xf0 };

@@ -48,6 +48,8 @@ struct Model {
     sec: (u8, u8),
     /// SIO parents whose actual state does not follow a new target.
     ps_stuck: Vec<u64>,
+    /// Run 35: SIO running and idle; a parent with the auto flag (bit 28) set reads actual 4.
+    sio_idle: bool,
 }
 
 impl Model {
@@ -105,6 +107,7 @@ impl Model {
             timers: 0,
             sec: (0, 0),
             ps_stuck: Vec::new(),
+            sio_idle: false,
         }
     }
 
@@ -158,8 +161,12 @@ impl Bus for Model {
             self.wlog.push(a);
             let mut v = u64::from(v);
             let old = *self.reg.get(&a).unwrap_or(&0);
-            if SIO_PARENTS.contains(&a) && (old ^ v) & 0xf != 0 && !self.ps_stuck.contains(&a) {
-                v = (v & !0xf0) | (v & 0xf) << 4;
+            if SIO_PARENTS.contains(&a) && !self.ps_stuck.contains(&a) {
+                if self.sio_idle && v & 1 << 28 != 0 {
+                    v = (v & !0xf0) | 0x40;
+                } else if (old ^ v) & 0xf != 0 || self.sio_idle {
+                    v = (v & !0xf0) | (v & 0xf) << 4;
+                }
             }
             self.reg.insert(a, v);
         }
@@ -1063,6 +1070,28 @@ mod tests {
         assert!(pos[0] < pos[1] && pos[1] < pos[2] && pos[2] < cluster);
         for a in SIO_PARENTS {
             assert_eq!((m.reg[&a] >> 4) & 0xf, 0xf, "{a:#x} not on");
+        }
+    }
+
+    /// Run 35: with SIO running and idle the parents read 0x1400024f (target f, actual 4, auto
+    /// flag set) and stay clock-gated until the flag is cleared. sio_on clears it, as macOS
+    /// commits them (0x0f0000ff), and the entry goes on.
+    #[test]
+    fn sio_on_clears_the_auto_flag_with_sio_idle() {
+        let mut m = Model::new();
+        m.sio_idle = true;
+        for a in SIO_PARENTS {
+            m.reg.insert(a, 0x1400_024f);
+        }
+        let mut cfg = all_cfg();
+        cfg.sio_on = true;
+        let (_, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok(), "sio_on must enter with SIO idle: {:?}", r.err().map(|f| f as u32));
+        for a in SIO_PARENTS {
+            assert_eq!(m.reg[&a] & 1 << 28, 0, "{a:#x} auto flag still set");
+        }
+        for a in &SIO_PARENTS[..2] {
+            assert_eq!((m.reg[a] >> 4) & 0xf, 0xf, "{a:#x} not on");
         }
     }
 
