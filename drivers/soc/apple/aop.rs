@@ -2533,6 +2533,7 @@ mod s2r_hook {
     const ALS_PROPS_OFF: [(u32, u32); 3] = [(0x16, 0), (0x5c, 0), (0x00, 0)];
     const ALS_PROPS_ON: [(u32, u32); 3] = [(0x16, 1), (0x5c, 0), (0x00, 200_000)];
     const LAS_PROPS_OFF: [(u32, u32); 1] = [(0x00, 0)];
+    const LAS_ENDPOINT: u8 = 0x25;
 
     /// The services as announced: 1 << 63 | endpoint << 32 | channel, 0 if not seen.
     static ALS: AtomicU64 = AtomicU64::new(0);
@@ -2582,8 +2583,15 @@ mod s2r_hook {
             ok += set_props(data, &svc, if off { &ALS_PROPS_OFF } else { &ALS_PROPS_ON });
         }
         if off {
-            if let Some(svc) = service(&LAS) {
-                ok += set_props(data, &svc, &LAS_PROPS_OFF);
+            // macOS 13.5 writes the lid angle interval on endpoint 0x25, channel 0 (hv runs
+            // 135r5/r6); no Linux service registers that endpoint on t8103.
+            let las = service(&LAS).unwrap_or(EPICService {
+                channel: 0,
+                endpoint: LAS_ENDPOINT,
+            });
+            let i = usize::from(las.endpoint - AFK_ENDPOINT_START);
+            if i < AFK_ENDPOINT_COUNT as usize && data.endpoints[i].lock().started {
+                ok += set_props(data, &las, &LAS_PROPS_OFF);
             }
         }
         ok

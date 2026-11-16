@@ -1098,6 +1098,21 @@ impl Seq {
         if cfg.sep_target { ps & 0x0f == 0x0f } else { ps & 0xf0 == 0xf0 }
     }
 
+    /// Run 40 (mac_late): the power chip's boot-stage byte to "asleep" right after the SMC's
+    /// AP power 0x201, as macOS 13.5 does, before SIO and PMP go idle; the value before it is
+    /// kept for a stopped entry. True if written.
+    pub fn stage_early<B: Bus>(&mut self, b: &mut B) -> bool {
+        if self.saved.boot_stage.is_some() || b.dry() {
+            return false;
+        }
+        let mut stage = [0u8; 1];
+        if Self::pmu_read(b, PMU_BOOT_STAGE, &mut stage).is_err() {
+            return false;
+        }
+        self.saved.boot_stage = Some(stage[0]);
+        Self::pmu_write(b, PMU_BOOT_STAGE, &[BOOT_STAGE_SLEEP]).is_ok()
+    }
+
     /// The system controller's driver reports how far its sleep handshake has got.
     pub fn note_smc<B: Bus>(&mut self, b: &mut B, bits: u8) {
         let new = bits & !self.smc_bits;
@@ -1235,6 +1250,10 @@ impl Seq {
             Self::rec(b, 0, Kind::Msg, 0x20, u64::from(AOP_QUEUE_START) << 48, Cop::Aop as u64);
             let _ = b.aop_queues(AOP_QUEUE_START);
         }
+        // Run 40 (mac_late): the boot-stage byte, if it was set at the SMC's AP power.
+        if let Some(stage) = self.saved.boot_stage.take() {
+            let _ = Self::pmu_write(b, PMU_BOOT_STAGE, &[stage]);
+        }
         if self.aop_sensors_offed {
             self.aop_sensors_offed = false;
             Self::rec(b, 0, Kind::Msg, 0x24, u64::from(AOP_SENSORS_ON) << 48, Cop::Aop as u64);
@@ -1292,9 +1311,13 @@ impl Seq {
         let t0 = b.now_us();
         Self::pmu_read(b, PMU_BOOT_STAGE, &mut stage).map_err(|e| Self::fail(b, e, 0x9f01, 0))?;
         self.cmd_us = (b.now_us() - t0).min(0xffff) as u32;
-        self.saved.boot_stage = Some(stage[0]);
-        Self::pmu_write(b, PMU_BOOT_STAGE, &[BOOT_STAGE_SLEEP])
-            .map_err(|e| Self::fail(b, e, 0x9f01, 1))?;
+        // Run 40 (mac_late): the byte was set at the SMC's AP power already, the value
+        // before it kept then.
+        if self.saved.boot_stage.is_none() {
+            self.saved.boot_stage = Some(stage[0]);
+            Self::pmu_write(b, PMU_BOOT_STAGE, &[BOOT_STAGE_SLEEP])
+                .map_err(|e| Self::fail(b, e, 0x9f01, 1))?;
+        }
         let mut rtc = [0u8; 6];
         Self::pmu_read(b, PMU_RTC_NOW, &mut rtc).map_err(|e| Self::fail(b, e, 0xd002, 0))?;
         let now = u32::from_le_bytes([rtc[2], rtc[3], rtc[4], rtc[5]]);

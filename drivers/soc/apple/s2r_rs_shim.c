@@ -65,6 +65,8 @@ int s2r_rs_wake_slot(u64 cpu0, u64 loader_boot, const u64 *mpidr, const u64 *ent
 /* called from modules */
 void apple_s2r_rs_note_smc(u8 bits);
 void apple_s2r_rs_set_aop_power(int (*fn)(u32 state));
+void apple_s2r_rs_set_sio_idle(int (*fn)(void));
+int s2r_rs_sio_idle(void);
 
 static int s2r_rs_ops_valid(suspend_state_t state)
 {
@@ -229,6 +231,22 @@ void apple_s2r_rs_set_aop_power(int (*fn)(u32 state))
 	WRITE_ONCE(s2r_rs_aop_hook, fn);
 }
 EXPORT_SYMBOL_GPL(apple_s2r_rs_set_aop_power);
+
+static int (*s2r_rs_sio_hook)(void);
+
+/* Run 40: apple-sio's late idle, asked for after the SMC's AP power 0x201. */
+void apple_s2r_rs_set_sio_idle(int (*fn)(void))
+{
+	WRITE_ONCE(s2r_rs_sio_hook, fn);
+}
+EXPORT_SYMBOL_GPL(apple_s2r_rs_set_sio_idle);
+
+int s2r_rs_sio_idle(void)
+{
+	int (*fn)(void) = READ_ONCE(s2r_rs_sio_hook);
+
+	return fn ? fn() : -ENODEV;
+}
 
 int s2r_rs_aop_power(u32 state)
 {

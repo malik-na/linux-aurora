@@ -117,6 +117,13 @@ const OPC_INIT1_ACK: u64 = 0x201;
 const OPC_INIT2: u64 = 0x202;
 const OPC_INIT2_ACK: u64 = 0x203;
 const OPC_DEVPWR: u64 = 0x20e;
+const OPC_DEVPWR_SYNC: u64 = 0x208;
+const OPC_DEVPWR_ACK: u64 = 0x209;
+/// Run 40: what macOS 13.5 tells the PMP before idling it (hv run 135r6): DevPwr for the two
+/// display front ends (0x55, 0x54) on, then off, then DevPwrSync GFX (0x63) off, answered by a
+/// DevPwrAck.
+const MAC_DEVPWR_NOTES: [(u64, u64); 4] = [(0x55, 1), (0x54, 1), (0x55, 0), (0x54, 0)];
+const MAC_GFX_DEV: u64 = 0x63;
 
 /// Shared memory handed to the firmware in Configure.
 const SHMEM_SIZE: usize = 0x10000;
@@ -308,6 +315,8 @@ struct PmpData {
     state: AtomicU32,
     rx_count: AtomicU32,
     tx_devpwr: AtomicU32,
+    /// DevPwrAck (0x209) messages received; the S2R notes wait on it.
+    rx_devpwr_ack: AtomicU32,
     #[pin]
     done: Completion,
     /// The PMGR power-state page, mapped for the life of the system.
@@ -378,6 +387,7 @@ impl PmpData {
                 state: AtomicU32::new(ST_IDLE),
                 rx_count: AtomicU32::new(0),
                 tx_devpwr: AtomicU32::new(0),
+                rx_devpwr_ack: AtomicU32::new(0),
                 done <- Completion::new(),
                 pmgr,
                 report <- new_mutex!(ReportState {
@@ -665,6 +675,9 @@ impl PmpData {
     fn recv_message(&self, msg: u64) -> Result {
         let opc = (msg >> OPC_SHIFT) & OPC_MASK;
         let payload = msg & PAYLOAD_MASK;
+        if opc == OPC_DEVPWR_ACK {
+            self.rx_devpwr_ack.fetch_add(1, Ordering::AcqRel);
+        }
         let n = self.rx_count.fetch_add(1, Ordering::SeqCst) + 1;
         if log_this(n, RX_LOG_LIMIT) {
             dev_info!(
@@ -933,6 +946,9 @@ unsafe extern "C" fn pmp_s2r_power(idle: bool) -> core::ffi::c_int {
     }
     // SAFETY: set from a PmpData that probe leaked; it is never freed.
     let data = unsafe { &*p };
+    if idle && *module_parameters::mac_notes.value() != 0 {
+        mac_notes(data);
+    }
     let mut guard = data.rtkit.lock();
     let r = match guard.as_mut().as_pin_mut() {
         None => Err(ENODEV),
@@ -948,6 +964,32 @@ unsafe extern "C" fn pmp_s2r_power(idle: bool) -> core::ffi::c_int {
         Ok(()) => 0,
         Err(e) => e.to_errno(),
     }
+}
+
+/// Run 40: the display and GFX notes macOS sends before idling the PMP. The GFX sync waits up
+/// to 100 ms for its DevPwrAck; nothing here stops the idle that follows.
+fn mac_notes(data: &PmpData) {
+    let send = |msg: u64| -> bool {
+        let mut guard = data.rtkit.lock();
+        match guard.as_mut().as_pin_mut() {
+            Some(rtk) => rtk.send_message(PMP_ENDPOINT, msg).is_ok(),
+            None => false,
+        }
+    };
+    for (dev, on) in MAC_DEVPWR_NOTES {
+        send((OPC_DEVPWR << OPC_SHIFT) | (dev << 16) | on);
+    }
+    let acks = data.rx_devpwr_ack.load(Ordering::Acquire);
+    let sent = send((OPC_DEVPWR_SYNC << OPC_SHIFT) | (MAC_GFX_DEV << 16));
+    let mut acked = false;
+    for _ in 0..100 {
+        if data.rx_devpwr_ack.load(Ordering::Acquire) != acks {
+            acked = true;
+            break;
+        }
+        kernel::time::delay::fsleep(kernel::time::Delta::from_millis(1));
+    }
+    dev_info!(data.dev, "PMPv1: S2R notes: display front ends on/off, GFX sync sent={} acked={}\n", sent, acked);
 }
 
 extern "C" {
@@ -1006,6 +1048,10 @@ module! {
         reports: u8 {
             default: 1,
             description: "Send device power reports after the handshake (1) or not (0); changeable later in debugfs apple_pmp_v1/reports",
+        },
+        mac_notes: u8 {
+            default: 0,
+            description: "Run 40: before the S2R idle, send the display front ends' DevPwr on/off and the GFX DevPwrSync off, as macOS 13.5 does (1)",
         },
         poll_ms: u32 {
             default: 1000,

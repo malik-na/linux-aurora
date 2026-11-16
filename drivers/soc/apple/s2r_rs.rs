@@ -51,7 +51,8 @@ use s2r_seq::{
     Seq,
     SpmiIo,
     SysReg,
-    REGIONS, //
+    REGIONS,
+    SMC_AP_POWER, //
 };
 
 // `struct device` holds a lock-debugging member that is empty in this configuration, which
@@ -71,6 +72,8 @@ extern "C" {
     fn s2r_rs_aop_power(state: u32) -> c_int;
     // apple-s2r.c (run 37): the PMP idle/wake hook pmp_v1 registers.
     fn apple_s2r_pmp_power_call(idle: bool) -> c_int;
+    // s2r_rs_shim.c (run 40): apple-sio's late idle, if it registered one.
+    fn s2r_rs_sio_idle() -> c_int;
     fn s2r_rs_spmi_unbound() -> bool;
     fn s2r_rs_mbox_init() -> c_int;
     fn s2r_rs_mbox_resumes() -> u64;
@@ -498,6 +501,8 @@ struct Driver {
     sep_dart_quiesced: bool,
     /// Run 37: the PMP was idled in "prepare" and has to be woken if the entry stops.
     pmp_idled: bool,
+    /// Run 40 (mac_late): the late steps ran at the SMC's AP power in this transition.
+    late_done: bool,
     /// False if a boot-time self-test was asked for and did not pass in full: no entry then.
     selftest_ok: bool,
     /// The boot core came back through its resume entry in this transition.
@@ -608,8 +613,10 @@ pub extern "C" fn s2r_rs_prepare() -> c_int {
     // Run 37: macOS idles the PMP (AP 0x201, IOP 0x201) between MBSE slpw and slpa, which
     // is where "prepare" runs; macOS does not complete a sleep without it (try61).
     d.pmp_idled = false;
+    d.late_done = false;
     d.seq.pmp_note = 0;
-    if *module_parameters::pmp_idle.value() != 0 && !d.hw.dry {
+    let late = *module_parameters::mac_late.value() != 0;
+    if *module_parameters::pmp_idle.value() != 0 && !late && !d.hw.dry {
         // SAFETY: plain C call; the hook runs in process context, as here.
         let r = unsafe { apple_s2r_pmp_power_call(true) };
         pr_info!("PMP idle (AP 0x201, IOP 0x201): {}\n", r);
@@ -758,14 +765,46 @@ pub extern "C" fn s2r_rs_end() {
     print_trace(d, what);
 }
 
-/// The system controller's driver reports how far its sleep handshake has got.
+/// The system controller's driver reports how far its sleep handshake has got. Called from
+/// its suspend_late (process context, interrupts on).
 #[no_mangle]
 pub extern "C" fn s2r_rs_note_smc_bits(bits: u8) {
     if let Some(d) = driver() {
         if d.active {
             d.seq.note_smc(&mut d.hw, bits);
+            if bits & SMC_AP_POWER != 0 && *module_parameters::mac_late.value() != 0 && !d.late_done {
+                d.late_done = true;
+                late_steps(d);
+            }
         }
     }
+}
+
+/// Run 40 (mac_late): what macOS 13.5 does after the SMC's AP power 0x201 and before the CPUs
+/// go down (hv run 135r6): the power chip's boot stage to "asleep", SIO idle, then the PMP
+/// idle (with pmp_idle=1). Kept in pmp_note: 0x40 late, bit 0 PMP acked, bit 1 SIO idled,
+/// bit 2 boot stage written.
+fn late_steps(d: &mut Driver) {
+    let mut note = 0x40u8;
+    if d.seq.stage_early(&mut d.hw) {
+        note |= 4;
+    }
+    // SAFETY: plain C call; apple-sio's hook runs in process context, as here.
+    let sio = unsafe { s2r_rs_sio_idle() };
+    if sio == 0 {
+        note |= 2;
+    }
+    let mut pmp = 0;
+    if *module_parameters::pmp_idle.value() != 0 && !d.hw.dry {
+        // SAFETY: plain C call; the hook runs in process context, as here.
+        pmp = unsafe { apple_s2r_pmp_power_call(true) };
+        d.pmp_idled = pmp == 0;
+        if pmp == 0 {
+            note |= 1;
+        }
+    }
+    d.seq.pmp_note = note;
+    pr_info!("late steps after the SMC: boot stage {}, SIO idle {}, PMP idle {}\n", note & 4 != 0, sio, pmp);
 }
 
 struct S2rModule;
@@ -834,6 +873,7 @@ impl kernel::Module for S2rModule {
             aop_sensors_off: p(*module_parameters::aop_sensors_off.value()),
             aop_stop_acked: p(*module_parameters::aop_stop_acked.value()),
         };
+        let mac_late = *module_parameters::mac_late.value();
         let dry = p(*module_parameters::dry.value());
         if cfg.wake_path {
             // SAFETY: plain C call. What the boot core's set/way loop will walk (s2r_rs_off.S),
@@ -872,6 +912,7 @@ impl kernel::Module for S2rModule {
                 returned: false,
                 sep_dart_quiesced: false,
                 pmp_idled: false,
+                late_done: false,
                 selftest_ok: true,
                 resumed: false,
             });
@@ -879,7 +920,7 @@ impl kernel::Module for S2rModule {
         // SAFETY: plain C call; the driver's state is in place.
         kernel::error::to_result(unsafe { s2r_rs_register_ops() })?;
         pr_info!(
-            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={} gate_record={} fpwm_settle={} relock_off={} mac_order={} sep_target={} sio_on={} wd2_extend_s={} mac_off={} pmp_idle={} aop_sensors_off={} aop_stop_acked={}\n",
+            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={} gate_record={} fpwm_settle={} relock_off={} mac_order={} sep_target={} sio_on={} wd2_extend_s={} mac_off={} pmp_idle={} aop_sensors_off={} aop_stop_acked={} mac_late={}\n",
             u8::from(dry),
             cfg.alarm_secs,
             u8::from(cfg.no_alarm_ok),
@@ -913,7 +954,8 @@ impl kernel::Module for S2rModule {
             u8::from(cfg.mac_off),
             *module_parameters::pmp_idle.value(),
             u8::from(cfg.aop_sensors_off),
-            u8::from(cfg.aop_stop_acked)
+            u8::from(cfg.aop_stop_acked),
+            mac_late
         );
         let selftest = *module_parameters::pmu_selftest.value();
         if selftest != 0 {
@@ -1143,6 +1185,10 @@ module! {
         aop_stop_acked: u8 {
             default: 0,
             description: "Run 39: with aop_queue_stop, stop the AOP queues in macOS 13.5's order, each answer (0x87) waited for; record in 0x9f17 bits 1-4 (1)",
+        },
+        mac_late: u8 {
+            default: 0,
+            description: "Run 40: after the SMC's AP power 0x201, set the power chip's boot stage, idle SIO (apple_sio.s2r_late=1) and then the PMP (pmp_idle=1), in macOS 13.5's order; prepare no longer idles the PMP (1)",
         },
         wd2_extend_s: u32 {
             default: 0,

@@ -34,6 +34,7 @@
 #include <linux/of_platform.h>
 #include <linux/once.h>
 #include <linux/platform_device.h>
+#include <linux/suspend.h>
 #include <linux/pm_domain.h>
 #include <linux/soc/apple/rtkit.h>
 #include <linux/soc/apple/sart.h>
@@ -2534,6 +2535,11 @@ static void apple_nvme_shutdown(struct platform_device *pdev)
 	}
 }
 
+static bool s2r_idle;
+module_param(s2r_idle, bool, 0644);
+MODULE_PARM_DESC(s2r_idle,
+		 "Run 40: for suspend-to-RAM put the ANS in RTKit idle (0x201) with its domains on, as macOS 13.5 does, instead of shutting it down");
+
 static int apple_nvme_resume(struct device *dev)
 {
 	struct apple_nvme *anv = dev_get_drvdata(dev);
@@ -2595,6 +2601,18 @@ static int apple_nvme_suspend(struct device *dev)
 	}
 
 	if (apple_rtkit_is_running(anv->rtk)) {
+		if (s2r_idle && pm_suspend_target_state == PM_SUSPEND_MEM) {
+			/*
+			 * Run 40: as macOS 13.5 leaves the ANS for suspend-to-RAM (hv run
+			 * 135r6): AP and IOP power 0x201, the coprocessor still running
+			 * and its domains kept on; resume wakes it (the reset path finds
+			 * CPU_CONTROL.RUN set and calls apple_rtkit_wake).
+			 */
+			ret = apple_rtkit_idle(anv->rtk);
+			apple_nvme_keep_link_powered(anv);
+			dev_info(anv->dev, "system sleep: ANS to RTKit idle (0x201): %d\n", ret);
+			return ret;
+		}
 		ret = apple_rtkit_shutdown(anv->rtk);
 
 		writel(0, anv->mmio_coproc + APPLE_ANS_COPROC_CPU_CONTROL);

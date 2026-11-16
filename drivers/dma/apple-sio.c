@@ -20,6 +20,7 @@
 #include <linux/of_dma.h>
 #include <linux/overflow.h>
 #include <linux/platform_device.h>
+#include <linux/suspend.h>
 #include <linux/pm_runtime.h>
 #include <linux/soc/apple/rtkit.h>
 #include <linux/wait.h>
@@ -166,6 +167,8 @@ struct sio_data {
 
 	int nchannels;
 	bool s2r_parked;
+	/* Run 40: suspend_late left the idle to the S2R driver's late hook. */
+	bool s2r_deferred;
 #if IS_ENABLED(CONFIG_APPLE_SIO_T6030)
 	bool t6030;
 #endif
@@ -1464,6 +1467,9 @@ badprop:
 	return dev_err_probe(sio->dev, err, "failed to read '%s'\n", propname);
 }
 
+static void sio_s2r_register(struct sio_data *sio);
+static void sio_s2r_unregister(struct sio_data *sio);
+
 static int sio_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
@@ -1598,6 +1604,8 @@ static int sio_probe(struct platform_device *pdev)
 
 rpm_put:
 	pm_runtime_put(&pdev->dev);
+	if (!err)
+		sio_s2r_register(sio);
 
 	return err;
 }
@@ -1606,6 +1614,7 @@ static void sio_remove(struct platform_device *pdev)
 {
 	struct sio_data *sio = platform_get_drvdata(pdev);
 
+	sio_s2r_unregister(sio);
 	of_dma_controller_free(pdev->dev.of_node);
 	dma_async_device_unregister(&sio->dma);
 }
@@ -1634,7 +1643,56 @@ module_param(s2r_idle, bool, 0644);
 MODULE_PARM_DESC(s2r_idle,
 		 "Put the SIO coprocessor in RTKit idle (0x201) for system sleep, as DCP does for deep sleep");
 
+static bool s2r_late;
+module_param(s2r_late, bool, 0644);
+MODULE_PARM_DESC(s2r_late,
+		 "Run 40: with s2r_idle, leave the idle to the suspend-to-RAM driver, which asks for it after the SMC's AP power 0x201, as macOS 13.5 orders it");
+
 #define REG_CPU_STATUS	0x48
+
+#if IS_ENABLED(CONFIG_APPLE_S2R_RS)
+void apple_s2r_rs_set_sio_idle(int (*fn)(void));
+#else
+static inline void apple_s2r_rs_set_sio_idle(int (*fn)(void)) { }
+#endif
+
+/* The one SIO the S2R driver's late hook idles. */
+static struct sio_data *sio_s2r;
+
+static int sio_idle_now(struct sio_data *sio, const char *when)
+{
+	int ret = apple_rtkit_idle(sio->rtk);
+
+	sio->s2r_parked = !ret;
+	dev_info(sio->dma.dev, "system sleep: coprocessor to RTKit idle (%s): %d (cpu control %#x status %#x)\n",
+		 when, ret, readl(sio->base + REG_CPU_CONTROL), readl(sio->base + REG_CPU_STATUS));
+	return ret;
+}
+
+/* Called by the S2R driver from the SMC's suspend_late, process context, interrupts on. */
+static int sio_s2r_late_idle(void)
+{
+	struct sio_data *sio = READ_ONCE(sio_s2r);
+
+	if (!sio || !sio->s2r_deferred)
+		return -ENODEV;
+	sio->s2r_deferred = false;
+	return sio_idle_now(sio, "late, after the SMC");
+}
+
+static void sio_s2r_register(struct sio_data *sio)
+{
+	WRITE_ONCE(sio_s2r, sio);
+	apple_s2r_rs_set_sio_idle(sio_s2r_late_idle);
+}
+
+static void sio_s2r_unregister(struct sio_data *sio)
+{
+	if (READ_ONCE(sio_s2r) != sio)
+		return;
+	apple_s2r_rs_set_sio_idle(NULL);
+	WRITE_ONCE(sio_s2r, NULL);
+}
 
 static __maybe_unused int sio_suspend_late(struct device *dev)
 {
@@ -1643,6 +1701,11 @@ static __maybe_unused int sio_suspend_late(struct device *dev)
 
 	if (!s2r_idle)
 		return 0;
+	if (s2r_late && pm_suspend_target_state == PM_SUSPEND_MEM) {
+		sio->s2r_deferred = true;
+		dev_info(dev, "system sleep: idle left to the S2R driver (after the SMC)\n");
+		return 0;
+	}
 	ret = apple_rtkit_idle(sio->rtk);
 	sio->s2r_parked = !ret;
 	dev_info(dev, "system sleep: coprocessor to RTKit idle: %d (cpu control %#x status %#x)\n",
@@ -1655,6 +1718,7 @@ static __maybe_unused int sio_resume_early(struct device *dev)
 	struct sio_data *sio = dev_get_drvdata(dev);
 	int ret;
 
+	sio->s2r_deferred = false;
 	if (!sio->s2r_parked)
 		return 0;
 	sio->s2r_parked = false;

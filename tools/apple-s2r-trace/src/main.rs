@@ -1215,6 +1215,38 @@ mod tests {
         assert_eq!(m.pmu[&0x9f17], 1 | 0x48 << 1);
     }
 
+    /// Run 40 (mac_late): the boot stage set at the SMC's AP power stays through the entry.
+    #[test]
+    fn stage_early_is_kept_by_the_entry() {
+        let mut m = Model::new();
+        m.pmu.insert(0x9f01, 0x30);
+        let mut seq = Seq::new(all_cfg());
+        seq.begin(&mut m);
+        seq.note_smc(&mut m, SMC_SLPW);
+        assert!(seq.prepare(&mut m).is_ok());
+        seq.note_smc(&mut m, SMC_SLPW | SMC_WKTP | SMC_SLPA | SMC_AP_POWER);
+        assert!(seq.stage_early(&mut m));
+        assert_eq!(m.pmu[&0x9f01], 0x50);
+        assert!(!seq.stage_early(&mut m), "written once");
+        let r = seq.enter(&mut m);
+        assert!(r.is_ok(), "{:?}", r.err().map(|f| f as u32));
+        assert_eq!(m.pmu[&0x9f01], 0x50);
+    }
+
+    /// Run 40 (mac_late): an entry stopped after the early boot stage puts the byte back.
+    #[test]
+    fn stage_early_put_back_after_a_stopped_entry() {
+        let mut m = Model::new();
+        m.pmu.insert(0x9f01, 0x30);
+        let mut seq = Seq::new(all_cfg());
+        seq.begin(&mut m);
+        seq.note_smc(&mut m, SMC_SLPW);
+        assert!(seq.prepare(&mut m).is_ok());
+        assert!(seq.stage_early(&mut m));
+        seq.unprepare(&mut m);
+        assert_eq!(m.pmu[&0x9f01], 0x30);
+    }
+
     /// Never armed within 200 ms: nothing written to watchdog 2, the record says 0.
     #[test]
     fn wd2_extend_without_the_engine_leaves_watchdog_2_alone() {
