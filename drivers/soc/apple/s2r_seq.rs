@@ -809,6 +809,11 @@ pub struct Cfg {
     /// but watches for this many milliseconds (wake status, cluster words, the engine's
     /// progress word), keeping what it sees in the scratch; then it waits after all.
     pub watch_ms: u32,
+    /// DIAGNOSTIC (run 36): right after the release the boot core waits (at most 200 ms)
+    /// for the engine to arm watchdog 2 with its 5 s deadline, moves that deadline to this
+    /// many seconds, and goes down as usual. A reset that stays at ~5 s is then not
+    /// watchdog 2. Record in RECORD (0x9f10-17), see [`Seq::wd2_extend`].
+    pub wd2_extend_s: u32,
 }
 
 impl Cfg {
@@ -844,6 +849,7 @@ impl Cfg {
         aic_restore: false,
         wake_restore: false,
         watch_ms: 0,
+        wd2_extend_s: 0,
     };
 }
 
@@ -1564,6 +1570,41 @@ impl Seq {
         self.late_write(b, PMU_STAGE, &[b'S']);
     }
 
+    /// Run 36: the engine's sleep sequence 0 arms watchdog 2 as its first command (count 0,
+    /// alarm 120 000 000 = 5 s at 24 MHz, control 4); sequence 1 disarms it as its last.
+    /// Seen armed with that alarm, the alarm is moved to `wd2_extend_s` seconds. RECORD:
+    /// 0xd2, polls (capped 255), control seen, alarm seen in s, alarm read back in s, engine
+    /// progress top byte, ms waited (capped 255), 1 if moved / 0 if never seen armed.
+    fn wd2_extend<B: Bus>(&mut self, b: &mut B) {
+        const ENGINE_ALARM: u32 = 120_000_000;
+        let t0 = b.now_us();
+        let mut polls = 0u32;
+        let (mut ctl, mut alarm) = (0u32, 0u32);
+        let mut moved = 0u32;
+        while b.now_us() - t0 < 200_000 && !b.dry() {
+            polls += 1;
+            ctl = b.r32(WD2_CTL);
+            alarm = b.r32(WD2_ALARM);
+            if ctl & 0xf != 0 && alarm == ENGINE_ALARM {
+                Self::w32(b, WD2_ALARM, self.cfg.wd2_extend_s.min(170) * 24_000_000);
+                moved = b.r32(WD2_ALARM);
+                break;
+            }
+        }
+        let ms = (b.now_us() - t0) / 1000;
+        let rec = [
+            0xd2,
+            polls.min(255) as u8,
+            ctl as u8,
+            (alarm / 24_000_000).min(255) as u8,
+            (moved / 24_000_000).min(255) as u8,
+            (b.r32(ENG_PROGRESS) >> 24) as u8,
+            ms.min(255) as u8,
+            u8::from(moved != 0),
+        ];
+        self.late_write(b, PMU_RECORD, &rec);
+    }
+
     fn spmi_ack<B: Bus>(b: &mut B) {
         for bus in SPMI {
             for w in 0..SPMI_IRQ_WORDS as u64 {
@@ -2032,6 +2073,9 @@ impl Seq {
         }
         Self::rec(b, 0, Kind::Release, 0, 0, 0);
         b.release();
+        if self.cfg.wd2_extend_s != 0 {
+            self.wd2_extend(b);
+        }
         if self.cfg.watch_ms != 0 {
             self.watch(b);
         }

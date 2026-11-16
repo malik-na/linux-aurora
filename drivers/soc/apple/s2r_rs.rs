@@ -807,6 +807,7 @@ impl kernel::Module for S2rModule {
             aic_restore: p(*module_parameters::aic_restore.value()),
             wake_restore: p(*module_parameters::wake_restore.value()),
             watch_ms: (*module_parameters::watch_ms.value()).min(2500),
+            wd2_extend_s: (*module_parameters::wd2_extend_s.value()).min(170),
         };
         let dry = p(*module_parameters::dry.value());
         if cfg.wake_path {
@@ -852,7 +853,7 @@ impl kernel::Module for S2rModule {
         // SAFETY: plain C call; the driver's state is in place.
         kernel::error::to_result(unsafe { s2r_rs_register_ops() })?;
         pr_info!(
-            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={} gate_record={} fpwm_settle={} relock_off={} mac_order={} sep_target={} sio_on={}\n",
+            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={} gate_record={} fpwm_settle={} relock_off={} mac_order={} sep_target={} sio_on={} wd2_extend_s={}\n",
             u8::from(dry),
             cfg.alarm_secs,
             u8::from(cfg.no_alarm_ok),
@@ -881,7 +882,8 @@ impl kernel::Module for S2rModule {
             u8::from(cfg.relock_off),
             u8::from(cfg.mac_order),
             u8::from(cfg.sep_target),
-            u8::from(cfg.sio_on)
+            u8::from(cfg.sio_on),
+            cfg.wd2_extend_s
         );
         let selftest = *module_parameters::pmu_selftest.value();
         if selftest != 0 {
@@ -1095,6 +1097,10 @@ module! {
         watch_ms: u32 {
             default: 0,
             description: "DIAGNOSTIC, not an entry into sleep: after the release the boot core watches for this many ms (max 2500) and keeps what it sees in the scratch, then waits",
+        },
+        wd2_extend_s: u32 {
+            default: 0,
+            description: "DIAGNOSTIC (run 36): after the release, wait up to 200 ms for the engine to arm watchdog 2 (5 s) and move its deadline to this many seconds (max 170); record in 0x9f10-17",
         },
     },
 }

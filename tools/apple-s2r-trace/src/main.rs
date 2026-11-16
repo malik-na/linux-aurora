@@ -50,6 +50,8 @@ struct Model {
     ps_stuck: Vec<u64>,
     /// Run 35: SIO running and idle; a parent with the auto flag (bit 28) set reads actual 4.
     sio_idle: bool,
+    /// Run 36: at the release the engine's sequence 0 arms watchdog 2 (count 0, 5 s, ctl 4).
+    engine_wd2: bool,
 }
 
 impl Model {
@@ -108,6 +110,7 @@ impl Model {
             sec: (0, 0),
             ps_stuck: Vec::new(),
             sio_idle: false,
+            engine_wd2: false,
         }
     }
 
@@ -254,6 +257,11 @@ impl Bus for Model {
         0xfe
     }
     fn release(&mut self) {
+        if self.engine_wd2 {
+            self.reg.insert(0x2_3d2b_0020, 0);
+            self.reg.insert(0x2_3d2b_0024, 120_000_000);
+            self.reg.insert(0x2_3d2b_002c, 4);
+        }
         // The held cores wake on the release and run the same routine as the boot core. On the
         // machine theirs is the existing assembly (arch/arm64/kernel/smp_apple_asm.S), which
         // holds the same constants; here the routine is the model of it.
@@ -1093,6 +1101,34 @@ mod tests {
         for a in &SIO_PARENTS[..2] {
             assert_eq!((m.reg[a] >> 4) & 0xf, 0xf, "{a:#x} not on");
         }
+    }
+
+    /// Run 36: wd2_extend_s finds the engine's 5 s watchdog 2 after the release, moves it to
+    /// the asked seconds and says so in the record.
+    #[test]
+    fn wd2_extend_moves_the_engine_deadline() {
+        let mut m = Model::new();
+        m.engine_wd2 = true;
+        let mut cfg = all_cfg();
+        cfg.wd2_extend_s = 100;
+        let (_, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok(), "{:?}", r.err().map(|f| f as u32));
+        assert_eq!(m.reg[&0x2_3d2b_0024], 2_400_000_000);
+        assert_eq!(m.reg[&0x2_3d2b_002c], 4, "control left armed");
+        let rec: Vec<u8> = (0x9f10..0x9f18).map(|r| m.pmu[&r]).collect();
+        assert_eq!((rec[0], rec[2], rec[3], rec[4], rec[7]), (0xd2, 4, 5, 100, 1), "{rec:02x?}");
+    }
+
+    /// Never armed within 200 ms: nothing written to watchdog 2, the record says 0.
+    #[test]
+    fn wd2_extend_without_the_engine_leaves_watchdog_2_alone() {
+        let mut m = Model::new();
+        let mut cfg = all_cfg();
+        cfg.wd2_extend_s = 100;
+        let (_, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok());
+        assert_ne!(m.reg.get(&0x2_3d2b_0024).copied(), Some(2_400_000_000));
+        assert_eq!((m.pmu[&0x9f10], m.pmu[&0x9f17]), (0xd2, 0));
     }
 
     /// Without `sio_on` the parents are not written before the first cluster word.
