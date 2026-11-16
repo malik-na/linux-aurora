@@ -250,6 +250,10 @@ pub const WAKE_MASK_NAMED_ONLY: [u32; 5] = [0xf3ff_afff, 0xffb9_7eff, 0xfffd_eff
 /// AOP.CPUWakeupAP, 81 SMC.OutboxNotEmpty) masked as there (penguin's reading after run 14).
 pub const WAKE_MASK_NAMED_NO_MBOX: [u32; 5] = [0xffff_afff, 0xffb9_7eff, 0xffff_effe, 0xffff_ffff, 0xffff_ff87];
 
+/// Run 38: every wake source masked, named or not: whether the ~5 s restart after the release
+/// is a wake (it goes) or a reset by firmware (it stays).
+pub const WAKE_MASK_ALL: [u32; 5] = [0xffff_ffff; 5];
+
 /// `base_steps` bit: switch APSC off on both clusters (bit 22, wait bit 7 clear).
 pub const BASE_APSC: u32 = 1 << 0;
 /// `base_steps` bit: clear bit 63 of the throttler words of each cluster.

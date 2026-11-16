@@ -1139,6 +1139,21 @@ mod tests {
         }
     }
 
+    /// Run 38: wake_mask 4 masks every wake source; with no alarm the entry still goes.
+    #[test]
+    fn every_wake_source_masked_without_an_alarm() {
+        let mut m = Model::new();
+        let mut cfg = all_cfg();
+        cfg.wake_mask = Some(WAKE_MASK_ALL);
+        cfg.alarm_secs = 0;
+        cfg.no_alarm_ok = true;
+        let (_, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok(), "{:?}", r.err().map(|f| f as u32));
+        for i in 0..5u64 {
+            assert_eq!(m.reg[&(WAKE_MASK + 4 * i)], 0xffff_ffff, "mask word {i}");
+        }
+    }
+
     /// Never armed within 200 ms: nothing written to watchdog 2, the record says 0.
     #[test]
     fn wd2_extend_without_the_engine_leaves_watchdog_2_alone() {

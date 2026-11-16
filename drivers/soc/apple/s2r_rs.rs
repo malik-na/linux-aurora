@@ -806,6 +806,7 @@ impl kernel::Module for S2rModule {
                 0 => None,
                 2 => Some(s2r_seq::WAKE_MASK_NAMED_ONLY),
                 3 => Some(s2r_seq::WAKE_MASK_NAMED_NO_MBOX),
+                4 => Some(s2r_seq::WAKE_MASK_ALL),
                 _ => Some(s2r_seq::WAKE_MASK_RECORDED),
             },
             window_record: p(*module_parameters::window_record.value()),
@@ -1041,7 +1042,7 @@ module! {
         },
         wake_mask: u8 {
             default: 1,
-            description: "Wake masks before the last stage: those of the recorded runs that stayed down (1), named sources only (2), named only but the AOP / SMC mailbox lines masked (3), or as found (0)",
+            description: "Wake masks before the last stage: those of the recorded runs that stayed down (1), named sources only (2), named only but the AOP / SMC mailbox lines masked (3), every source masked (4, run 38), or as found (0)",
         },
         window_record: u8 {
             default: 0,
