@@ -831,6 +831,8 @@ impl kernel::Module for S2rModule {
             wake_restore: p(*module_parameters::wake_restore.value()),
             watch_ms: (*module_parameters::watch_ms.value()).min(2500),
             wd2_extend_s: (*module_parameters::wd2_extend_s.value()).min(170),
+            aop_sensors_off: p(*module_parameters::aop_sensors_off.value()),
+            aop_stop_acked: p(*module_parameters::aop_stop_acked.value()),
         };
         let dry = p(*module_parameters::dry.value());
         if cfg.wake_path {
@@ -877,7 +879,7 @@ impl kernel::Module for S2rModule {
         // SAFETY: plain C call; the driver's state is in place.
         kernel::error::to_result(unsafe { s2r_rs_register_ops() })?;
         pr_info!(
-            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={} gate_record={} fpwm_settle={} relock_off={} mac_order={} sep_target={} sio_on={} wd2_extend_s={} mac_off={} pmp_idle={}\n",
+            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={} gate_record={} fpwm_settle={} relock_off={} mac_order={} sep_target={} sio_on={} wd2_extend_s={} mac_off={} pmp_idle={} aop_sensors_off={} aop_stop_acked={}\n",
             u8::from(dry),
             cfg.alarm_secs,
             u8::from(cfg.no_alarm_ok),
@@ -909,7 +911,9 @@ impl kernel::Module for S2rModule {
             u8::from(cfg.sio_on),
             cfg.wd2_extend_s,
             u8::from(cfg.mac_off),
-            *module_parameters::pmp_idle.value()
+            *module_parameters::pmp_idle.value(),
+            u8::from(cfg.aop_sensors_off),
+            u8::from(cfg.aop_stop_acked)
         );
         let selftest = *module_parameters::pmu_selftest.value();
         if selftest != 0 {
@@ -1131,6 +1135,14 @@ module! {
         pmp_idle: u8 {
             default: 0,
             description: "Run 37: in prepare (between MBSE slpw and slpa) idle the PMP through the pmp_v1 hook (AP 0x201, IOP 0x201), as macOS does; woken again if the entry stops (1)",
+        },
+        aop_sensors_off: u8 {
+            default: 0,
+            description: "Run 39: before the AOP queue stops, set the light and lid angle sensors' report intervals to 0 as macOS 13.5 does at its sleep (put back after a stopped entry); record in 0x9f17 bits 5-7 (1)",
+        },
+        aop_stop_acked: u8 {
+            default: 0,
+            description: "Run 39: with aop_queue_stop, stop the AOP queues in macOS 13.5's order, each answer (0x87) waited for; record in 0x9f17 bits 1-4 (1)",
         },
         wd2_extend_s: u32 {
             default: 0,

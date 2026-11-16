@@ -236,6 +236,14 @@ const AIC_MASK_CLR: u64 = AIC + 0x4180;
 pub const AOP_QUEUE_STOP: u8 = 0xa4;
 /// Its restart.
 pub const AOP_QUEUE_START: u8 = 0xa3;
+/// Run 39 (aop.rs): the light and lid angle sensors' report intervals to 0, as macOS 13.5
+/// does before its sleep; the answer is how many property writes the AOP accepted.
+pub const AOP_SENSORS_OFF: u8 = 0xb0;
+/// Their intervals back as the Linux sensor drivers set them.
+pub const AOP_SENSORS_ON: u8 = 0xb1;
+/// Run 39 (aop.rs): the queue stops in macOS 13.5's order, each answer (0x87) waited for;
+/// the answer is acked | sent << 8.
+pub const AOP_QUEUE_STOP_ORDERED: u8 = 0xc4;
 
 /// Wake masks of the recorded runs that stayed down (sources 26, 27, 38 and 81 masked).
 pub const WAKE_MASK_RECORDED: [u32; 5] = [0x0c00_0000, 0x0000_0040, 0x0002_0000, 0, 0];
@@ -824,6 +832,13 @@ pub struct Cfg {
     /// that stays at ~5 s is then not
     /// watchdog 2. Record in RECORD (0x9f10-17), see [`Seq::wd2_extend`].
     pub wd2_extend_s: u32,
+    /// Run 39: before the queue stops, the AOP's light and lid angle sensors' report intervals
+    /// set to 0 (macOS 13.5 at its sleep; Linux's light sensor otherwise reports every
+    /// 200 ms through the sleep); put back after a stopped entry. Kept in [`Seq::aop_note`].
+    pub aop_sensors_off: bool,
+    /// Run 39: with `aop_queue_stop`, the stops in macOS 13.5's order, each answer waited for,
+    /// in place of all at once. Kept in [`Seq::aop_note`].
+    pub aop_stop_acked: bool,
 }
 
 impl Cfg {
@@ -861,6 +876,8 @@ impl Cfg {
         wake_restore: false,
         watch_ms: 0,
         wd2_extend_s: 0,
+        aop_sensors_off: false,
+        aop_stop_acked: false,
     };
 }
 
@@ -930,6 +947,10 @@ pub struct Seq {
     /// Run 37: what the PMP idle in "prepare" gave (0 not asked, 1 acked, 0x80 | -errno);
     /// set by the platform glue, kept in the wd2_extend record.
     pub pmp_note: u8,
+    /// Run 39: the AOP's answers (low nibble: queue stops answered; bits 4-6: sensor property
+    /// writes accepted); in the wd2_extend record's byte 7, bits 1-7.
+    pub aop_note: u8,
+    aop_sensors_offed: bool,
 }
 
 impl Seq {
@@ -959,6 +980,8 @@ impl Seq {
             wake_stuck: 0,
             wake_p_up: false,
             pmp_note: 0,
+            aop_note: 0,
+            aop_sensors_offed: false,
         }
     }
 
@@ -1135,7 +1158,24 @@ impl Seq {
             None => return Err(Self::fail(b, Fail::SepSleep, 2, 0)),
         }
 
-        if self.cfg.aop_queue_stop {
+        if self.cfg.aop_sensors_off {
+            let n = b.aop_queues(AOP_SENSORS_OFF);
+            Self::rec(b, 0, Kind::Msg, 0x24, u64::from(AOP_SENSORS_OFF) << 48 | n as u32 as u64, Cop::Aop as u64);
+            if n > 0 {
+                self.aop_sensors_offed = true;
+                self.aop_note |= (n.min(7) as u8) << 4;
+            }
+        }
+        if self.cfg.aop_queue_stop && self.cfg.aop_stop_acked {
+            // As macOS 13.5: one endpoint at a time, each answer waited for.
+            let r = b.aop_queues(AOP_QUEUE_STOP_ORDERED);
+            if r > 0 && r >> 8 > 0 {
+                self.aop_queues_stopped = true;
+                self.aop_note |= (r & 0xf) as u8;
+            }
+            Self::rec(b, 0, Kind::Msg, 0x20, u64::from(AOP_QUEUE_STOP_ORDERED) << 48 | r as u32 as u64, Cop::Aop as u64);
+            b.sleep_ms(10);
+        } else if self.cfg.aop_queue_stop {
             // As the reference: the stops are not waited for, then 50 ms.
             let n = b.aop_queues(AOP_QUEUE_STOP);
             if n > 0 {
@@ -1194,6 +1234,11 @@ impl Seq {
             self.aop_queues_stopped = false;
             Self::rec(b, 0, Kind::Msg, 0x20, u64::from(AOP_QUEUE_START) << 48, Cop::Aop as u64);
             let _ = b.aop_queues(AOP_QUEUE_START);
+        }
+        if self.aop_sensors_offed {
+            self.aop_sensors_offed = false;
+            Self::rec(b, 0, Kind::Msg, 0x24, u64::from(AOP_SENSORS_ON) << 48, Cop::Aop as u64);
+            let _ = b.aop_queues(AOP_SENSORS_ON);
         }
     }
 
@@ -1622,7 +1667,7 @@ impl Seq {
             (moved / 24_000_000).min(255) as u8,
             (b.r32(ENG_PROGRESS) >> 24) as u8,
             self.pmp_note,
-            u8::from(moved != 0),
+            u8::from(moved != 0) | self.aop_note << 1,
         ];
         self.late_write(b, PMU_RECORD, &rec);
     }

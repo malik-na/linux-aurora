@@ -52,6 +52,8 @@ struct Model {
     sio_idle: bool,
     /// Run 36: at the release the engine's sequence 0 arms watchdog 2 (count 0, 5 s, ctl 4).
     engine_wd2: bool,
+    /// Every AOP queue/sensor operation and AP power state sent, in order (op, or 0x1000 | state).
+    aop: Vec<u32>,
 }
 
 impl Model {
@@ -111,6 +113,7 @@ impl Model {
             ps_stuck: Vec::new(),
             sio_idle: false,
             engine_wd2: false,
+            aop: Vec::new(),
         }
     }
 
@@ -249,9 +252,21 @@ impl Bus for Model {
     fn refused(&self) -> bool {
         self.refused.is_some()
     }
-    fn aop_ap_power(&mut self, _state: u32) -> Result<(), ()> {
+    fn aop_ap_power(&mut self, state: u32) -> Result<(), ()> {
         self.t += AOP_ECHO_US;
+        self.aop.push(0x1000 | state);
         Ok(())
+    }
+    /// As aop.rs answers: sensor writes accepted (3 ALS + 1 LAS off, 3 on), ordered stops
+    /// acked | sent << 8 for eight endpoints, eight sends otherwise.
+    fn aop_queues(&mut self, op: u8) -> i32 {
+        self.aop.push(u32::from(op));
+        match op {
+            AOP_SENSORS_OFF => 4,
+            AOP_SENSORS_ON => 3,
+            AOP_QUEUE_STOP_ORDERED => 8 | 8 << 8,
+            _ => 8,
+        }
     }
     fn parked_mask(&mut self) -> u8 {
         0xfe
@@ -1152,6 +1167,52 @@ mod tests {
         for i in 0..5u64 {
             assert_eq!(m.reg[&(WAKE_MASK + 4 * i)], 0xffff_ffff, "mask word {i}");
         }
+    }
+
+    /// Run 39: the sensors off, then the ordered stops, then the AP power state, as macOS 13.5.
+    #[test]
+    fn aop_sensors_off_then_ordered_stops_then_ap_power() {
+        let mut m = Model::new();
+        let mut cfg = all_cfg();
+        cfg.aop_sensors_off = true;
+        cfg.aop_stop_acked = true;
+        let (seq, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok(), "{:?}", r.err().map(|f| f as u32));
+        assert_eq!(m.aop, [u32::from(AOP_SENSORS_OFF), u32::from(AOP_QUEUE_STOP_ORDERED), 0x1201]);
+        assert_eq!(seq.aop_note, 0x48);
+    }
+
+    /// Run 39: a stopped entry starts the queues again and puts the sensors back.
+    #[test]
+    fn aop_stopped_entry_puts_the_sensors_back() {
+        let mut m = Model::new();
+        let mut cfg = all_cfg();
+        cfg.aop_sensors_off = true;
+        cfg.aop_stop_acked = true;
+        let mut seq = Seq::new(cfg);
+        seq.begin(&mut m);
+        seq.note_smc(&mut m, SMC_SLPW);
+        assert!(seq.prepare(&mut m).is_ok());
+        seq.unprepare(&mut m);
+        assert_eq!(
+            m.aop,
+            [u32::from(AOP_SENSORS_OFF), u32::from(AOP_QUEUE_STOP_ORDERED), 0x1201, 0x1020,
+             u32::from(AOP_QUEUE_START), u32::from(AOP_SENSORS_ON)]
+        );
+    }
+
+    /// Run 39: the AOP's answers ride in the wd2_extend record's byte 7 above the moved bit.
+    #[test]
+    fn aop_note_in_the_wd2_record() {
+        let mut m = Model::new();
+        m.engine_wd2 = true;
+        let mut cfg = all_cfg();
+        cfg.wd2_extend_s = 100;
+        cfg.aop_sensors_off = true;
+        cfg.aop_stop_acked = true;
+        let (_, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok());
+        assert_eq!(m.pmu[&0x9f17], 1 | 0x48 << 1);
     }
 
     /// Never armed within 200 ms: nothing written to watchdog 2, the record says 0.

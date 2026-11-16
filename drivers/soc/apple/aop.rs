@@ -101,6 +101,7 @@ const AFK_OPC_INIT_UNK: u64 = 0x8c;
 const AFK_OPC_SEND: u64 = 0xa2;
 const AFK_OPC_START_ACK: u64 = 0x86;
 const AFK_OPC_SHUTDOWN_ACK: u64 = 0xc1;
+const AFK_OPC_STOP_ACK: u64 = 0x87;
 const AFK_OPC_RECV: u64 = 0x85;
 const AFK_MSG_GET_BUF_ACK: u64 = 0xa1 << 48;
 const AFK_MSG_INIT: u64 = AFK_OPC_INIT << 48;
@@ -479,6 +480,8 @@ impl AFKEndpoint {
             AFK_OPC_SHUTDOWN_ACK => {
                 client.shutdown_complete(self.index);
             }
+            // The answer to a queue stop (0xa4); the suspend driver's ordered stop waits on it.
+            AFK_OPC_STOP_ACK => s2r_hook::stop_acked(self.index),
             _ => dev_err!(
                 client.dev,
                 "AFK endpoint {} got unknown message {}",
@@ -1443,6 +1446,7 @@ impl AopData {
             channel,
             endpoint: ep.index,
         };
+        s2r_hook::note_service(name, svc);
         let dev_name = match name {
             b"aop-audio" => c_str!("audio"),
             b"las" => c_str!("las"),
@@ -2437,17 +2441,24 @@ unsafe impl Send for AopDriver {}
 mod s2r_hook {
     use super::{
         AopData,
+        EPICService,
         AFK_ENDPOINT_COUNT,
-        AFK_ENDPOINT_START, //
+        AFK_ENDPOINT_START,
+        AOP, //
     };
     use core::sync::atomic::{
         AtomicPtr,
+        AtomicU32,
+        AtomicU64,
         Ordering, //
     };
     use kernel::{
         prelude::*,
-        sync::Arc, //
+        sync::Arc,
+        time::{delay::fsleep, Delta}, //
     };
+
+    const QUEUE_STOP: u8 = 0xa4;
 
     /// The running AOP, with a reference of its own.
     static AOP: AtomicPtr<AopData> = AtomicPtr::new(core::ptr::null_mut());
@@ -2473,6 +2484,12 @@ mod s2r_hook {
         // QUEUE_OP | op: send `op << 48` to every service endpoint this driver started at
         // boot (the ones the AOP announced and that took the start), not waited for; the
         // result is how many sends were accepted. 0xa4 stops a queue, 0xa3 starts it again.
+        if state == QUEUE_OP | u32::from(SENSORS_OFF) || state == QUEUE_OP | u32::from(SENSORS_ON) {
+            return sensors(data, state & 0xff == u32::from(SENSORS_OFF));
+        }
+        if state == QUEUE_OP | u32::from(STOP_ORDERED) {
+            return stop_ordered(data);
+        }
         if state & 0xffff_ff00 == QUEUE_OP && matches!(state & 0xff, 0xa3 | 0xa4) {
             let msg = u64::from(state & 0xff) << 48;
             let mut sent = 0;
@@ -2501,6 +2518,106 @@ mod s2r_hook {
         }
     }
 
+    /// Run 39: the light (ALS) and lid angle (LAS) sensors' report intervals set to 0 before
+    /// the sleep, as macOS 13.5 does (traced 2026-11-16, runs 135r5/r6: ALS 0x16 = 0,
+    /// 0x5c = 0, 0x00 = 0; LAS 0x00 = 0); `SENSORS_ON` puts back the ALS values aop_als.rs
+    /// sets at probe. The result is how many property calls the AOP answered with status 0.
+    const SENSORS_OFF: u8 = 0xb0;
+    const SENSORS_ON: u8 = 0xb1;
+    /// Run 39: the queue stops (0xa4) in macOS 13.5's order, each waited for (0x87, up to
+    /// 100 ms). The result is acked | sent << 8.
+    const STOP_ORDERED: u8 = 0xc4;
+    const STOP_ORDER: [u8; 8] = [0x22, 0x21, 0x26, 0x20, 0x28, 0x25, 0x24, 0x27];
+    /// The EPIC "set property" subtype of the sensor services (aop_als.rs).
+    const SET_PROPERTY: u16 = 0x4;
+    const ALS_PROPS_OFF: [(u32, u32); 3] = [(0x16, 0), (0x5c, 0), (0x00, 0)];
+    const ALS_PROPS_ON: [(u32, u32); 3] = [(0x16, 1), (0x5c, 0), (0x00, 200_000)];
+    const LAS_PROPS_OFF: [(u32, u32); 1] = [(0x00, 0)];
+
+    /// The services as announced: 1 << 63 | endpoint << 32 | channel, 0 if not seen.
+    static ALS: AtomicU64 = AtomicU64::new(0);
+    static LAS: AtomicU64 = AtomicU64::new(0);
+    /// Bit n: endpoint 0x20 + n answered a queue stop since it was cleared.
+    static STOP_ACKS: AtomicU32 = AtomicU32::new(0);
+
+    pub(super) fn note_service(name: &[u8], svc: EPICService) {
+        let v = 1 << 63 | u64::from(svc.endpoint) << 32 | u64::from(svc.channel);
+        match name {
+            b"als" => ALS.store(v, Ordering::Release),
+            b"las" => LAS.store(v, Ordering::Release),
+            _ => {}
+        }
+    }
+
+    pub(super) fn stop_acked(endpoint: u8) {
+        if let Some(i) = endpoint.checked_sub(AFK_ENDPOINT_START).filter(|i| *i < 32) {
+            STOP_ACKS.fetch_or(1 << i, Ordering::AcqRel);
+        }
+    }
+
+    fn service(slot: &AtomicU64) -> Option<EPICService> {
+        let v = slot.load(Ordering::Acquire);
+        (v >> 63 != 0).then(|| EPICService {
+            channel: v as u32,
+            endpoint: (v >> 32) as u8,
+        })
+    }
+
+    fn set_props(data: &AopData, svc: &EPICService, props: &[(u32, u32)]) -> c_int {
+        let mut ok = 0;
+        for &(tag, val) in props {
+            let mut msg = [0u8; 12];
+            msg[4..8].copy_from_slice(&tag.to_le_bytes());
+            msg[8..12].copy_from_slice(&val.to_le_bytes());
+            if matches!(data.epic_call(svc, SET_PROPERTY, &msg), Ok(0)) {
+                ok += 1;
+            }
+        }
+        ok
+    }
+
+    fn sensors(data: &AopData, off: bool) -> c_int {
+        let mut ok = 0;
+        if let Some(svc) = service(&ALS) {
+            ok += set_props(data, &svc, if off { &ALS_PROPS_OFF } else { &ALS_PROPS_ON });
+        }
+        if off {
+            if let Some(svc) = service(&LAS) {
+                ok += set_props(data, &svc, &LAS_PROPS_OFF);
+            }
+        }
+        ok
+    }
+
+    fn stop_ordered(data: &AopData) -> c_int {
+        let (mut sent, mut acked) = (0, 0);
+        for ep in STOP_ORDER {
+            let i = usize::from(ep - AFK_ENDPOINT_START);
+            if i >= AFK_ENDPOINT_COUNT as usize || !data.endpoints[i].lock().started {
+                continue;
+            }
+            STOP_ACKS.fetch_and(!(1 << i), Ordering::AcqRel);
+            {
+                let mut guard = data.rtkit.lock();
+                let Some(mut rtk) = guard.as_mut().as_pin_mut() else {
+                    return ENODEV.to_errno();
+                };
+                if rtk.as_mut().send_message(ep, u64::from(QUEUE_STOP) << 48).is_err() {
+                    continue;
+                }
+            }
+            sent += 1;
+            for _ in 0..100 {
+                if STOP_ACKS.load(Ordering::Acquire) & 1 << i != 0 {
+                    acked += 1;
+                    break;
+                }
+                fsleep(Delta::from_millis(1));
+            }
+        }
+        acked | sent << 8
+    }
+
     pub(super) fn register(data: &Arc<AopData>) {
         let p = Arc::into_raw(data.clone()).cast_mut();
         let old = AOP.swap(p, Ordering::AcqRel);
@@ -2525,9 +2642,11 @@ mod s2r_hook {
 
 #[cfg(not(CONFIG_APPLE_S2R_RS))]
 mod s2r_hook {
-    use super::AopData;
+    use super::{AopData, EPICService};
     use kernel::sync::Arc;
 
+    pub(super) fn note_service(_name: &[u8], _svc: EPICService) {}
+    pub(super) fn stop_acked(_endpoint: u8) {}
     pub(super) fn register(_data: &Arc<AopData>) {}
     pub(super) fn unregister() {}
 }
