@@ -30,6 +30,8 @@ pub const CPM_GATE: [u64; 2] = [PMGR + 0x1c080, PMGR + 0x1c088];
 pub const CLUSTER_PS: [u64; 2] = [PMGR + 0x18000, PMGR + 0x18004];
 /// Three power-state words whose bit 28 is cleared at sleep, in this order.
 pub const SIO_PS: [u64; 3] = [PMGR + 0x1c8, PMGR + 0x1c0, PMGR + 0x1d0];
+/// The SIO island's parents, parent first: sio_busif, sio, sio_cpu.
+pub const SIO_PARENTS: [u64; 3] = [PMGR + 0x1c0, PMGR + 0x1c8, PMGR + 0x1d0];
 /// Four words whose bit 0 is cleared at sleep (they read 0 under Linux), in the order read.
 pub const TVM: [u64; 4] = [PMGR + 0x48000, PMGR + 0x48c00, PMGR + 0x48800, PMGR + 0x48400];
 /// Five clock words: bits 27:24 cleared, bit 31 set, then bit 30 waited clear.
@@ -775,6 +777,14 @@ pub struct Cfg {
     /// never claimed and `prepare` refused. With this set the mailbox is claimed while the target
     /// is on and the sleep message is sent as the vendor OS does; no answer within 5 s still stops.
     pub sep_target: bool,
+    /// Run 30 (2026-11-16, 13.5 firmware): at the end of the slow part (after `fpwm_settle`,
+    /// before the gate reading) the SIO island's parents ([`SIO_PARENTS`]) are turned on, parent
+    /// first: target (bits 3:0) to 0xf, then the actual state (bits 7:4) polled up to 50 ms; one
+    /// that does not read on refuses the entry. The chip's sleep program powers the island down
+    /// itself and waits for its gate (#45); with the parents left off by Linux's suspend the
+    /// island never reads ready and the watchdog resets the SoC. macOS turns them on about 1 ms
+    /// before its commit (docs/evidence/2026-11-16-run29-sio-island/README.md).
+    pub sio_on: bool,
     /// RECORD ONLY: every word of [`SEQ0_GATES`] read into the trace twice: at the end of the
     /// slow part (before the cluster words; how many open and the first three open indices into
     /// RECORD bytes 3-6, 0x9f13-16) and just before the release (into 0x9f1a and 0x9f1c-1e, in
@@ -827,6 +837,7 @@ impl Cfg {
         relock_off: false,
         mac_order: false,
         sep_target: false,
+        sio_on: false,
         gate_record: false,
         fpwm_settle: false,
         disp_gpu_check: false,

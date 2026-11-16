@@ -46,6 +46,8 @@ struct Model {
     timers: u8,
     /// What the secondaries recorded: the OR of their timer bytes, how many recorded.
     sec: (u8, u8),
+    /// SIO parents whose actual state does not follow a new target.
+    ps_stuck: Vec<u64>,
 }
 
 impl Model {
@@ -55,9 +57,10 @@ impl Model {
         reg.insert(SEP_PS, 0x1f00_22ff);
         reg.insert(CLUSTER_PS[0], 0xf);
         reg.insert(CLUSTER_PS[1], 0xf);
-        reg.insert(SIO_PS[0], 0x1f00_00ff);
-        reg.insert(SIO_PS[1], 0x1400_024f);
-        reg.insert(SIO_PS[2], 0x1f00_00ff);
+        // Run 29: Linux's suspend leaves the SIO island's parents off.
+        for a in SIO_PARENTS {
+            reg.insert(a, 0x0f00_0200);
+        }
         reg.insert(AIC + 0x4, 0x000a_0380);
         reg.insert(WDT + 0x14, 0x55d4_a800);
         reg.insert(WDT + 0x1c, 0x4);
@@ -101,6 +104,7 @@ impl Model {
             out: Vec::new(),
             timers: 0,
             sec: (0, 0),
+            ps_stuck: Vec::new(),
         }
     }
 
@@ -152,7 +156,12 @@ impl Bus for Model {
         self.t += MMIO_US;
         if self.allowed(a, 4, true) {
             self.wlog.push(a);
-            self.reg.insert(a, v.into());
+            let mut v = u64::from(v);
+            let old = *self.reg.get(&a).unwrap_or(&0);
+            if SIO_PARENTS.contains(&a) && (old ^ v) & 0xf != 0 && !self.ps_stuck.contains(&a) {
+                v = (v & !0xf0) | (v & 0xf) << 4;
+            }
+            self.reg.insert(a, v);
         }
     }
     fn r64(&mut self, a: u64) -> u64 {
@@ -1034,5 +1043,48 @@ mod tests {
         let (seq, r) = enter_all(&mut m, cfg);
         assert!(matches!(r, Err(Fail::SepSleep)));
         assert!(!seq.sep_told());
+    }
+
+    /// Run 30: with `sio_on` the SIO island's parents are turned on parent first, before the
+    /// first cluster word, and read on.
+    #[test]
+    fn sio_on_turns_the_parents_on_parent_first() {
+        let mut m = Model::new();
+        let mut cfg = all_cfg();
+        cfg.sio_on = true;
+        let (_, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok(), "sio_on must enter: {:?}", r.err().map(|f| f as u32));
+        let w = m.wlog.clone();
+        let cluster = w.iter().position(|x| *x == CLUSTER_PS[0]).unwrap();
+        let pos: Vec<usize> = SIO_PARENTS
+            .iter()
+            .map(|a| w.iter().position(|x| x == a).unwrap_or_else(|| panic!("no write to {a:#x}")))
+            .collect();
+        assert!(pos[0] < pos[1] && pos[1] < pos[2] && pos[2] < cluster);
+        for a in SIO_PARENTS {
+            assert_eq!((m.reg[&a] >> 4) & 0xf, 0xf, "{a:#x} not on");
+        }
+    }
+
+    /// Without `sio_on` the parents are not written before the first cluster word.
+    #[test]
+    fn without_sio_on_the_parents_stay_off() {
+        let mut m = Model::new();
+        let (_, r) = enter_all(&mut m, all_cfg());
+        assert!(r.is_ok());
+        let w = m.wlog.clone();
+        let cluster = w.iter().position(|x| *x == CLUSTER_PS[0]).unwrap();
+        assert!(!w[..cluster].contains(&SIO_PARENTS[0]));
+    }
+
+    /// With `sio_on`, a parent that does not read on refuses the entry.
+    #[test]
+    fn sio_on_refuses_a_parent_that_stays_off() {
+        let mut m = Model::new();
+        m.ps_stuck.push(SIO_PARENTS[1]);
+        let mut cfg = all_cfg();
+        cfg.sio_on = true;
+        let (_, r) = enter_all(&mut m, cfg);
+        assert!(matches!(r, Err(Fail::Precheck)));
     }
 }
