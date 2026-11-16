@@ -1340,7 +1340,10 @@ impl Seq {
         if self.cfg.sio_on {
             for a in SIO_PARENTS {
                 Self::rmw32(b, a, 0xf, 0xf);
-                if !Self::poll(b, a, 0xf0, 0xf0, 50_000) && !b.dry() {
+                // sio_cpu is the SIO coprocessor's own domain and clock-gates itself when idle:
+                // macOS's commit value for it reads target f, actual 4 (0x0400024f).
+                let up = if a == SIO_PARENTS[2] { 0x40 } else { 0xf0 };
+                if !Self::poll(b, a, up, up, 50_000) && !b.dry() {
                     let v = Self::r32(b, a);
                     return Err(Self::fail(b, Fail::Precheck, a, v.into()));
                 }
