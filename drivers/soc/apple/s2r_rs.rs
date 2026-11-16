@@ -804,7 +804,7 @@ fn late_steps(d: &mut Driver) {
         }
     }
     d.seq.pmp_note = note;
-    pr_info!("late steps after the SMC: boot stage {}, SIO idle {}, PMP idle {}\n", note & 4 != 0, sio, pmp);
+    pr_info!("late steps after the SMC: boot stage {}, SIO idle {}, PMP idle {}\n", (note & 4) != 0, sio, pmp);
 }
 
 struct S2rModule;
