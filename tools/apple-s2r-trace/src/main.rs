@@ -1273,6 +1273,33 @@ mod tests {
         }
     }
 
+    /// Run 42: the DRAM controllers get bit 12 and the auto flag; nothing is refused, and the
+    /// model's controllers, which never leave state 3, are recorded as 0 of 8 switched.
+    #[test]
+    fn dram_gate_sets_bit_12_and_the_auto_flag() {
+        let mut m = Model::new();
+        for i in 0..8u64 {
+            m.reg.insert(DCS + DCS_STRIDE * i + 0xc, 0x070a_0100);
+            m.reg.insert(DCS + DCS_STRIDE * i + 0x7b0, 3);
+        }
+        for a in DCS_PS {
+            m.reg.insert(a, 0x1f00_02ff);
+        }
+        let mut cfg = all_cfg();
+        cfg.dram_gate = true;
+        let (seq, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok(), "{:?}", r.err().map(|f| f as u32));
+        assert_eq!(m.refused, None);
+        for i in 0..8u64 {
+            assert_eq!(m.reg[&(DCS + DCS_STRIDE * i + 0xc)], 0x070a_1100);
+        }
+        for a in DCS_PS {
+            assert_eq!(m.reg[&a] & (1 << 28 | 0xf), 1 << 28 | 0xf, "{a:#x}");
+        }
+        assert_eq!(m.reg[&(DCS + 0x584)], 0x1ff);
+        assert_eq!(seq.dram_note, 0x80);
+    }
+
     /// Never armed within 200 ms: nothing written to watchdog 2, the record says 0.
     #[test]
     fn wd2_extend_without_the_engine_leaves_watchdog_2_alone() {

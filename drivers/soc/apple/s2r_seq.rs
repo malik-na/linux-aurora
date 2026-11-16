@@ -70,6 +70,93 @@ pub const MAC_STATE_WORDS: [(u64, u32); 19] = [
     (0x2_3d24_003c, 0x8110_0100),
     (0x2_3d24_0048, 0x8210_0100),
 ];
+/// Run 42: the DRAM controllers as macOS 13.5 runs them. XNU sets this up in its first second
+/// (hv runs 135dcs1/135dcs3); at the m1n1 proxy, bit 12 of every controller's +0xc word plus a
+/// 0 -> 1 edge of the auto flag on the eight ps_dcs words switches DCSn+0x7b0 from 3 to 0 and
+/// lets the controllers power-gate themselves (2026-11-16). The engine's program reads that
+/// field. Linux leaves it at 3.
+pub const DCS: u64 = 0x2_0020_0000;
+pub const DCS_STRIDE: u64 = 0x4_0000;
+/// The ps_dcs words, controller 0 to 7.
+pub const DCS_PS: [u64; 8] = [
+    PMGR + 0x300, PMGR + 0x310, PMGR + 0x308, PMGR + 0x318, PMGR + 0x320, PMGR + 0x330,
+    PMGR + 0x328, PMGR + 0x338,
+];
+/// XNU's table on controller 0, in its order of writing (offset, value).
+pub const DCS0_TABLE: [(u64, u32); 72] = [
+    (0x058c, 0x03ff_001a),
+    (0x0590, 0x0000_0000),
+    (0x0594, 0x0000_0033),
+    (0x0598, 0x0000_0000),
+    (0x059c, 0x0000_0000),
+    (0x05a0, 0x0000_0000),
+    (0x0580, 0x0000_0071),
+    (0x0584, 0x0000_0001),
+    (0x05a0, 0x03ff_0039),
+    (0x05a4, 0x0000_0000),
+    (0x05a8, 0x0000_0032),
+    (0x05ac, 0x0000_0000),
+    (0x05b0, 0x0000_0000),
+    (0x05b4, 0x0000_0000),
+    (0x0580, 0x0000_0071),
+    (0x0584, 0x0000_0003),
+    (0x05b4, 0x03ff_003a),
+    (0x05b8, 0x0000_0000),
+    (0x05bc, 0x0000_0032),
+    (0x05c0, 0x0000_0000),
+    (0x05c4, 0x0000_0000),
+    (0x05c8, 0x0000_0000),
+    (0x0580, 0x0000_0071),
+    (0x0584, 0x0000_0007),
+    (0x05c8, 0x03ff_0013),
+    (0x05cc, 0x0000_0000),
+    (0x05d0, 0x0000_0000),
+    (0x05d4, 0x0000_0000),
+    (0x05d8, 0x0000_0000),
+    (0x05dc, 0x0000_0200),
+    (0x0580, 0x0000_0071),
+    (0x0584, 0x0000_000f),
+    (0x05dc, 0x03ff_0016),
+    (0x05e0, 0x0000_0000),
+    (0x05e4, 0x0000_0000),
+    (0x05e8, 0x0000_0000),
+    (0x05ec, 0x0000_0000),
+    (0x05f0, 0x0000_0200),
+    (0x0580, 0x0000_0071),
+    (0x0584, 0x0000_001f),
+    (0x05f0, 0x03ff_0012),
+    (0x05f4, 0x0000_0000),
+    (0x05f8, 0x0000_0033),
+    (0x05fc, 0x0000_0000),
+    (0x0600, 0x0000_0000),
+    (0x0604, 0x0000_0200),
+    (0x0580, 0x0000_0071),
+    (0x0584, 0x0000_003f),
+    (0x0604, 0x03ff_0014),
+    (0x0608, 0x0000_0000),
+    (0x060c, 0x0000_0033),
+    (0x0610, 0x0000_0000),
+    (0x0614, 0x0000_0000),
+    (0x0618, 0x0000_0200),
+    (0x0580, 0x0000_0071),
+    (0x0584, 0x0000_007f),
+    (0x0618, 0x03ff_001a),
+    (0x061c, 0x0000_0000),
+    (0x0620, 0x0000_0031),
+    (0x0624, 0x0000_0000),
+    (0x0628, 0x0000_0000),
+    (0x062c, 0x0000_0000),
+    (0x0580, 0x0000_0071),
+    (0x0584, 0x0000_00ff),
+    (0x062c, 0x03ff_001a),
+    (0x0630, 0x0000_0000),
+    (0x0634, 0x0000_0032),
+    (0x0638, 0x0000_0000),
+    (0x063c, 0x0000_0000),
+    (0x0640, 0x0000_0000),
+    (0x0580, 0x0000_0071),
+    (0x0584, 0x0000_01ff),
+];
 pub const MAC_OFF: [u64; 4] = [PMGR + 0x420, PMGR + 0x3f8, PMGR + 0x1f0, PMGR + 0x208];
 /// Four words whose bit 0 is cleared at sleep (they read 0 under Linux), in the order read.
 pub const TVM: [u64; 4] = [PMGR + 0x48000, PMGR + 0x48c00, PMGR + 0x48800, PMGR + 0x48400];
@@ -146,7 +233,8 @@ const MCC_STATUS_BUSY: u32 = 0x7fe0;
 /// Every register range the driver may touch, with what it is for. An address outside
 /// them is refused by the bus, on the machine and in the model alike, and a refusal stops
 /// the entry before the cluster words.
-pub const REGIONS: [(u64, usize); 20] = [
+pub const REGIONS: [(u64, usize); 21] = [
+    (DCS, 0x20_0000),          // run 42: the eight DRAM controllers
     (PMGR, 0x8_0000),          // power manager
     (0x2_3b04_0000, 0x1000),   // the five clock words (and run 41's clock words)
     (0x2_3b04_8000, 0x1000),   // run 41: the NCO word
@@ -882,6 +970,10 @@ pub struct Cfg {
     /// commit between macOS 13.5 and Linux to macOS's state ([`MAC_STATE_ON`],
     /// [`MAC_STATE_OFF`], [`MAC_STATE_WORDS`]).
     pub mac_state: bool,
+    /// Run 42: in the slow part put the DRAM controllers into the state macOS runs them in
+    /// (bit 12 of DCSn+0xc, an auto-flag edge on the ps_dcs words, XNU's table and MCC words)
+    /// and wait up to 100 ms for DCSn+0x7b0 to read 0; kept in [`Seq::dram_note`].
+    pub dram_gate: bool,
 }
 
 impl Cfg {
@@ -922,6 +1014,7 @@ impl Cfg {
         aop_sensors_off: false,
         aop_stop_acked: false,
         mac_state: false,
+        dram_gate: false,
     };
 }
 
@@ -997,6 +1090,9 @@ pub struct Seq {
     aop_sensors_offed: bool,
     /// Run 41: how many of [`MAC_STATE_ON`] read fully on after their write.
     pub mac_state_on: u8,
+    /// Run 42: 0x80 | how many DRAM controllers read state 0 after the switch (0: not asked);
+    /// record byte 1 in place of the watchdog poll count.
+    pub dram_note: u8,
 }
 
 impl Seq {
@@ -1029,6 +1125,7 @@ impl Seq {
             aop_note: 0,
             aop_sensors_offed: false,
             mac_state_on: 0,
+            dram_note: 0,
         }
     }
 
@@ -1518,6 +1615,40 @@ impl Seq {
                 Self::w32(b, a, v);
             }
         }
+        // Run 42: the DRAM controllers into the state macOS runs them in, see [`DCS`]. Only the
+        // boot core runs here, so the memory bus can go idle and the switch can happen.
+        if self.cfg.dram_gate {
+            Self::w32(b, PMGR + 0x1_c000, 0x8000_0000);
+            for (o, v) in DCS0_TABLE {
+                Self::w32(b, DCS + o, v);
+            }
+            for i in 0..4u64 {
+                Self::w32(b, MCC_PLANES + 0x4_0000 * i + 0x72c, 0xffff_ffff);
+                Self::w32(b, MCC_PLANES + 0x4_0000 * i + 0x730, 0x3_0000);
+            }
+            for i in 0..8u64 {
+                Self::rmw32(b, DCS + DCS_STRIDE * i + 0xc, 0, 1 << 12);
+            }
+            for a in DCS_PS {
+                let v = b.r32(a);
+                Self::w32(b, a, v & !(1 << 28));
+                Self::w32(b, a, v | 1 << 28);
+            }
+            let t0 = b.now_us();
+            let mut n: u8;
+            loop {
+                n = 0;
+                for i in 0..8u64 {
+                    if b.r32(DCS + DCS_STRIDE * i + 0x7b0) & 0xf == 0 {
+                        n += 1;
+                    }
+                }
+                if n == 8 || b.now_us() - t0 > 100_000 || b.dry() {
+                    break;
+                }
+            }
+            self.dram_note = 0x80 | n;
+        }
         // RECORD ONLY: what sequence 0 would find as Linux leaves it, before anything of the
         // chip's own way down has started; kept in the last stage's record (bytes 3-6).
         if self.cfg.gate_record {
@@ -1753,7 +1884,7 @@ impl Seq {
         }
         let rec = [
             0xd2,
-            polls.min(255) as u8,
+            if self.dram_note != 0 { self.dram_note } else { polls.min(255) as u8 },
             ctl as u8,
             (alarm / 24_000_000).min(255) as u8,
             (moved / 24_000_000).min(255) as u8,
