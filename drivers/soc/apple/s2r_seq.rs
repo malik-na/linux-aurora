@@ -1335,6 +1335,18 @@ impl Seq {
             }
             Self::r32(b, FPWM1_PS);
         }
+        // Run 30: the chip's sleep program waits for the SIO island's gate, which never reads
+        // ready while Linux has its parents off.
+        if self.cfg.sio_on {
+            for a in SIO_PARENTS {
+                Self::rmw32(b, a, 0xf, 0xf);
+                if !Self::poll(b, a, 0xf0, 0xf0, 50_000) && !b.dry() {
+                    let v = Self::r32(b, a);
+                    return Err(Self::fail(b, Fail::Precheck, a, v.into()));
+                }
+                Self::r32(b, a);
+            }
+        }
         // RECORD ONLY: what sequence 0 would find as Linux leaves it, before anything of the
         // chip's own way down has started; kept in the last stage's record (bytes 3-6).
         if self.cfg.gate_record {
