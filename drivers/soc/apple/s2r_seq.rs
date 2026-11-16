@@ -33,6 +33,43 @@ pub const SIO_PS: [u64; 3] = [PMGR + 0x1c8, PMGR + 0x1c0, PMGR + 0x1d0];
 /// The SIO island's parents, parent first: sio_busif, sio, sio_cpu.
 pub const SIO_PARENTS: [u64; 3] = [PMGR + 0x1c0, PMGR + 0x1c8, PMGR + 0x1d0];
 /// Run 37: atc0_common, gfx, i2c0, i2c3 (see [`Cfg::mac_off`]).
+/// Run 41: every power-state and clock word that differed at the commit between macOS 13.5
+/// (hv run 135snap1) and Linux run40 (hv run lx12), both read by the same tracer when the
+/// last core reached its commit (m1-power-lab var/commit-state/). On under macOS, off under
+/// Linux: gpio, uart_n, uart1-8.
+pub const MAC_STATE_ON: [u64; 10] = [
+    PMGR + 0x130, PMGR + 0x268, PMGR + 0x278, PMGR + 0x280, PMGR + 0x288, PMGR + 0x290,
+    PMGR + 0x298, PMGR + 0x2a0, PMGR + 0x2a8, PMGR + 0x2b0,
+];
+/// Off under macOS, on or idle under Linux, in macOS's order of writing where it wrote them:
+/// dispext_cpu0, dispext_fe, disp0_cpu0, disp0_fe, rmx, then fpwm0-2 and dpa0.
+pub const MAC_STATE_OFF: [u64; 9] = [
+    PMGR + 0x378, PMGR + 0x368, PMGR + 0x1_0018, PMGR + 0x360, PMGR + 0x350,
+    PMGR + 0x1d8, PMGR + 0x1e0, PMGR + 0x1e8, PMGR + 0x2e8,
+];
+/// The clock words as macOS has them: sixteen of the SoC clock generator, the NCO word and
+/// two of the always-on clock generator.
+pub const MAC_STATE_WORDS: [(u64, u32); 19] = [
+    (0x2_3b04_0088, 0x8810_0100),
+    (0x2_3b04_0094, 0x8710_0100),
+    (0x2_3b04_009c, 0x8510_0100),
+    (0x2_3b04_00a0, 0x8510_0100),
+    (0x2_3b04_00a4, 0x8010_0100),
+    (0x2_3b04_00b0, 0x8710_0100),
+    (0x2_3b04_00d4, 0x0000_0100),
+    (0x2_3b04_00d8, 0x0000_0100),
+    (0x2_3b04_00dc, 0x0000_0100),
+    (0x2_3b04_00e0, 0x0000_0100),
+    (0x2_3b04_00e4, 0x0000_0100),
+    (0x2_3b04_00e8, 0x0000_0100),
+    (0x2_3b04_00f0, 0x8510_0000),
+    (0x2_3b04_0108, 0x8510_0100),
+    (0x2_3b04_0128, 0x8510_0000),
+    (0x2_3b04_0150, 0x8510_0100),
+    (0x2_3b04_8000, 0x8000_0000),
+    (0x2_3d24_003c, 0x8110_0100),
+    (0x2_3d24_0048, 0x8210_0100),
+];
 pub const MAC_OFF: [u64; 4] = [PMGR + 0x420, PMGR + 0x3f8, PMGR + 0x1f0, PMGR + 0x208];
 /// Four words whose bit 0 is cleared at sleep (they read 0 under Linux), in the order read.
 pub const TVM: [u64; 4] = [PMGR + 0x48000, PMGR + 0x48c00, PMGR + 0x48800, PMGR + 0x48400];
@@ -109,9 +146,11 @@ const MCC_STATUS_BUSY: u32 = 0x7fe0;
 /// Every register range the driver may touch, with what it is for. An address outside
 /// them is refused by the bus, on the machine and in the model alike, and a refusal stops
 /// the entry before the cluster words.
-pub const REGIONS: [(u64, usize); 18] = [
+pub const REGIONS: [(u64, usize); 20] = [
     (PMGR, 0x8_0000),          // power manager
-    (0x2_3b04_0000, 0x1000),   // the five clock words
+    (0x2_3b04_0000, 0x1000),   // the five clock words (and run 41's clock words)
+    (0x2_3b04_8000, 0x1000),   // run 41: the NCO word
+    (0x2_3d24_0000, 0x1000),   // run 41: two always-on clock words
     (S2R_TIMER, 0x1000),       // S2R timer
     (AIC, 0x1_0000),           // interrupt controller
     (WDT, 0x1_0000),           // watchdogs, and the two words at +0x8008 / +0x800c
@@ -839,6 +878,10 @@ pub struct Cfg {
     /// Run 39: with `aop_queue_stop`, the stops in macOS 13.5's order, each answer waited for,
     /// in place of all at once. Kept in [`Seq::aop_note`].
     pub aop_stop_acked: bool,
+    /// Run 41: in the slow part, set the power-state and clock words that differ at the
+    /// commit between macOS 13.5 and Linux to macOS's state ([`MAC_STATE_ON`],
+    /// [`MAC_STATE_OFF`], [`MAC_STATE_WORDS`]).
+    pub mac_state: bool,
 }
 
 impl Cfg {
@@ -878,6 +921,7 @@ impl Cfg {
         wd2_extend_s: 0,
         aop_sensors_off: false,
         aop_stop_acked: false,
+        mac_state: false,
     };
 }
 
@@ -951,6 +995,8 @@ pub struct Seq {
     /// writes accepted); in the wd2_extend record's byte 7, bits 1-7.
     pub aop_note: u8,
     aop_sensors_offed: bool,
+    /// Run 41: how many of [`MAC_STATE_ON`] read fully on after their write.
+    pub mac_state_on: u8,
 }
 
 impl Seq {
@@ -982,6 +1028,7 @@ impl Seq {
             pmp_note: 0,
             aop_note: 0,
             aop_sensors_offed: false,
+            mac_state_on: 0,
         }
     }
 
@@ -1447,6 +1494,28 @@ impl Seq {
         if self.cfg.mac_off {
             for a in MAC_OFF {
                 Self::rmw32(b, a, 1 << 28 | 0xf, 0);
+            }
+        }
+        // Run 41: the rest of the state macOS has at its commit, see MAC_STATE_*.
+        if self.cfg.mac_state {
+            for a in MAC_STATE_ON {
+                Self::rmw32(b, a, 1 << 28 | 0xf, 0xf);
+            }
+            let mut on = 0u8;
+            for a in MAC_STATE_ON {
+                for _ in 0..400 {
+                    if b.r32(a) & 0xf0 == 0xf0 {
+                        on += 1;
+                        break;
+                    }
+                }
+            }
+            self.mac_state_on = on;
+            for a in MAC_STATE_OFF {
+                Self::rmw32(b, a, 1 << 28 | 0xf, 0);
+            }
+            for (a, v) in MAC_STATE_WORDS {
+                Self::w32(b, a, v);
             }
         }
         // RECORD ONLY: what sequence 0 would find as Linux leaves it, before anything of the

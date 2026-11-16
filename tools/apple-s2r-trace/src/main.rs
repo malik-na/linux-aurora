@@ -1247,6 +1247,32 @@ mod tests {
         assert_eq!(m.pmu[&0x9f01], 0x30);
     }
 
+    /// Run 41: the words that differ from macOS's commit state are set to it, nothing refused.
+    #[test]
+    fn mac_state_sets_the_words_as_macos_has_them() {
+        let mut m = Model::new();
+        for a in MAC_STATE_ON {
+            m.reg.insert(a, 0x0000_0200);
+        }
+        for (a, v) in MAC_STATE_OFF.iter().zip([0x1404_024fu64, 0x23ff, 0x1404_024f, 0x20ff, 0x1f00_00ff, 0x244, 0x2ff, 0x244, 0xff]) {
+            m.reg.insert(*a, v);
+        }
+        let mut cfg = all_cfg();
+        cfg.mac_state = true;
+        let (_, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok(), "{:?}", r.err().map(|f| f as u32));
+        assert_eq!(m.refused, None);
+        for a in MAC_STATE_ON {
+            assert_eq!(m.reg[&a] & (1 << 28 | 0xf), 0xf, "{a:#x}");
+        }
+        for a in MAC_STATE_OFF {
+            assert_eq!(m.reg[&a] & (1 << 28 | 0xf), 0, "{a:#x}");
+        }
+        for (a, v) in MAC_STATE_WORDS {
+            assert_eq!(m.reg[&a], u64::from(v), "{a:#x}");
+        }
+    }
+
     /// Never armed within 200 ms: nothing written to watchdog 2, the record says 0.
     #[test]
     fn wd2_extend_without_the_engine_leaves_watchdog_2_alone() {
