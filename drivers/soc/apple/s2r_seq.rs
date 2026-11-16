@@ -252,8 +252,8 @@ pub const REGIONS: [(u64, usize); 21] = [
     (0x2_11e2_0000, 0x1000),   // P cluster
     (0x2_11e4_0000, 0x1000),
     (0x2_11e4_8000, 0x1000),
-    (MCC_GLOBAL, 0x1000),      // memory-cache controller, global block
-    (MCC_PLANES, 0xc_2000),    // memory-cache controller, the four planes
+    (MCC_GLOBAL, 0x5_9000),    // memory-cache controller, global block (run 43: +0x55000, +0x58000)
+    (MCC_PLANES, 0xe_2000),    // memory-cache controller, the four planes and their event blocks
     (AOP_ASC, 0x1000),         // the AOP's wrapper: run control and status, read only
 ];
 
@@ -974,6 +974,9 @@ pub struct Cfg {
     /// (bit 12 of DCSn+0xc, an auto-flag edge on the ps_dcs words, XNU's table and MCC words)
     /// and wait up to 100 ms for DCSn+0x7b0 to read 0; kept in [`Seq::dram_note`].
     pub dram_gate: bool,
+    /// Run 43: after the cache flush, quiet the memory controller as macOS 13.5 does in the last
+    /// 50 ms before its commit ([`Seq::mem_quiet`]).
+    pub mem_quiet: bool,
 }
 
 impl Cfg {
@@ -1015,6 +1018,7 @@ impl Cfg {
         aop_stop_acked: false,
         mac_state: false,
         dram_gate: false,
+        mem_quiet: false,
     };
 }
 
@@ -1925,6 +1929,48 @@ impl Seq {
         flushed
     }
 
+    /// Run 43. What macOS 13.5 does in the memory controller between the cache flush and its
+    /// commit: the same 135 writes, in the same order, in two hypervisor captures (touch maps
+    /// 135map3 and 135map4, 2026-11-17). Linux did none of it. In order:
+    /// the event counters' enable words to 0 (macOS clears them a bit at a time and reads each
+    /// counter; under Linux they read 0 already, so they are read and cleared only if set);
+    /// `MCC_GLOBAL + 0x55000` to 0; on each of the four event blocks the enable word (+0x1008)
+    /// then the mask word (+0x1000) to 0; `DCSn + 0x7a0` to 0 on the eight DRAM controllers.
+    /// Before that, as macOS does through its sleep entry, the pending bit 26 of each block's
+    /// status word (+0x1004) is written back to clear it. Read on the running machine under
+    /// Linux before this run: enables 0x700, masks 0xffedfc3d, status 0x4000000 (0x14000000 on
+    /// the fourth block), +0x55000 0xffffffff, DCSn+0x7a0 0xc0000.
+    fn mem_quiet<B: Bus>(b: &mut B) {
+        for a in [MCC_GLOBAL + 0x5_8000, MCC_PLANES + 0x2_4000, MCC_PLANES + 0x2_4008] {
+            if Self::r64(b, a) != 0 {
+                Self::w64(b, a, 0);
+            }
+        }
+        if Self::r32(b, DCS + 0x584) != 0 {
+            Self::w32(b, DCS + 0x584, 0);
+        }
+        for n in 0..4u64 {
+            let blk = MCC_PLANES + 0x2_0000 + n * MCC_PLANE_STEP;
+            Self::r32(b, blk + 0x1004);
+            Self::w32(b, blk + 0x1004, 0x400_0000);
+        }
+        Self::r32(b, MCC_GLOBAL + 0x5_5000);
+        Self::w32(b, MCC_GLOBAL + 0x5_5000, 0);
+        for n in 0..4u64 {
+            let blk = MCC_PLANES + 0x2_0000 + n * MCC_PLANE_STEP;
+            Self::w32(b, blk + 0x1008, 0);
+            Self::w32(b, blk + 0x1000, 0);
+        }
+        for n in 0..8u64 {
+            Self::r32(b, DCS + n * 0x4_0000 + 0x7a0);
+            Self::w32(b, DCS + n * 0x4_0000 + 0x7a0, 0);
+        }
+        for n in 0..4u64 {
+            Self::r32(b, MCC_PLANES + 0x2_0000 + n * MCC_PLANE_STEP + 0x1004);
+        }
+        b.sync();
+    }
+
     /// The boot core's last stage, up to the release. `Err` only before the cluster words:
     /// after them there is no way back and the stage runs to its end.
     fn last_stage<B: Bus>(&mut self, b: &mut B) -> Result<(), Fail> {
@@ -1952,6 +1998,9 @@ impl Seq {
 
         if self.cfg.carry_over & CARRY_MCC != 0 && self.mcc_flush(b) {
             flags |= 4;
+        }
+        if self.cfg.mem_quiet {
+            Self::mem_quiet(b);
         }
 
         // 2. The Secure Enclave's power domain must read off: at most 5 s, else stop.

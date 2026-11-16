@@ -875,6 +875,7 @@ impl kernel::Module for S2rModule {
             aop_stop_acked: p(*module_parameters::aop_stop_acked.value()),
             mac_state: p(*module_parameters::mac_state.value()),
             dram_gate: p(*module_parameters::dram_gate.value()),
+            mem_quiet: p(*module_parameters::mem_quiet.value()),
         };
         let mac_late = *module_parameters::mac_late.value();
         let dry = p(*module_parameters::dry.value());
@@ -923,7 +924,7 @@ impl kernel::Module for S2rModule {
         // SAFETY: plain C call; the driver's state is in place.
         kernel::error::to_result(unsafe { s2r_rs_register_ops() })?;
         pr_info!(
-            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={} gate_record={} fpwm_settle={} relock_off={} mac_order={} sep_target={} sio_on={} wd2_extend_s={} mac_off={} pmp_idle={} aop_sensors_off={} aop_stop_acked={} mac_late={} mac_state={} dram_gate={}\n",
+            "enabled for \"mem\": dry={} alarm_secs={} no_alarm_ok={} net_wd1_secs={} base_steps={} carry_over={} spmi_setup={} spmi_ack={} wake_mask={} window_record={} aop_notify={} mark_release={} watch_ms={} go_last={} timer_record={} wake_path={} timer_stop={} sec_timer_stop={} aop_queue_stop={} disp_gpu_check={} aic_restore={} wake_restore={} disp_park={} gate_record={} fpwm_settle={} relock_off={} mac_order={} sep_target={} sio_on={} wd2_extend_s={} mac_off={} pmp_idle={} aop_sensors_off={} aop_stop_acked={} mac_late={} mac_state={} dram_gate={} mem_quiet={}\n",
             u8::from(dry),
             cfg.alarm_secs,
             u8::from(cfg.no_alarm_ok),
@@ -960,7 +961,8 @@ impl kernel::Module for S2rModule {
             u8::from(cfg.aop_stop_acked),
             mac_late,
             u8::from(cfg.mac_state),
-            u8::from(cfg.dram_gate)
+            u8::from(cfg.dram_gate),
+            u8::from(cfg.mem_quiet)
         );
         let selftest = *module_parameters::pmu_selftest.value();
         if selftest != 0 {
@@ -1194,6 +1196,10 @@ module! {
         mac_state: u8 {
             default: 0,
             description: "Run 41: in the slow part set the power-state and clock words that differ at the commit between macOS 13.5 and Linux to macOS's state: gpio and the UARTs on; display, rmx, fpwm0-2 and dpa0 off; 19 clock words (1)",
+        },
+        mem_quiet: u8 {
+            default: 0,
+            description: "Run 43: after the cache flush, quiet the memory controller as macOS 13.5 does just before its commit: event counters off, pending status cleared, the four event blocks' enable and mask words and MCC+0x55000 to 0, DCSn+0x7a0 to 0 on the eight DRAM controllers",
         },
         dram_gate: u8 {
             default: 0,

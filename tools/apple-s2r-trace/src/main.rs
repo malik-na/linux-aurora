@@ -1300,6 +1300,47 @@ mod tests {
         assert_eq!(seq.dram_note, 0x80);
     }
 
+    /// Run 43: with the words as Linux leaves them (read on the machine, 2026-11-17), the
+    /// memory controller's enables, masks and the DRAM controllers' +0x7a0 end at 0, every
+    /// address is inside the driver's ranges, and without the switch nothing is touched.
+    #[test]
+    fn mem_quiet_zeroes_what_macos_zeroes() {
+        let blocks = [0x2_0002_0000u64, 0x2_0006_0000, 0x2_000a_0000, 0x2_000e_0000];
+        let seed = |m: &mut Model| {
+            for b in blocks {
+                m.reg.insert(b + 0x1000, 0xffed_fc3d);
+                m.reg.insert(b + 0x1004, 0x0400_0000);
+                m.reg.insert(b + 0x1008, 0x700);
+            }
+            m.reg.insert(0x2_0015_5000, 0xffff_ffff);
+            for i in 0..8u64 {
+                m.reg.insert(DCS + DCS_STRIDE * i + 0x7a0, 0xc_0000);
+            }
+        };
+        let mut m = Model::new();
+        seed(&mut m);
+        let mut cfg = all_cfg();
+        cfg.mem_quiet = true;
+        let (_, r) = enter_all(&mut m, cfg);
+        assert!(r.is_ok(), "{:?}", r.err().map(|f| f as u32));
+        assert_eq!(m.refused, None);
+        for b in blocks {
+            assert_eq!((m.reg[&(b + 0x1000)], m.reg[&(b + 0x1008)]), (0, 0), "{b:#x}");
+            assert_eq!(m.reg[&(b + 0x1004)], 0x0400_0000, "{b:#x}: the pending bit written back");
+        }
+        assert_eq!(m.reg[&0x2_0015_5000], 0);
+        for i in 0..8u64 {
+            assert_eq!(m.reg[&(DCS + DCS_STRIDE * i + 0x7a0)], 0);
+        }
+
+        let mut m = Model::new();
+        seed(&mut m);
+        let (_, r) = enter_all(&mut m, all_cfg());
+        assert!(r.is_ok());
+        assert_eq!(m.reg[&0x2_0002_1008], 0x700);
+        assert_eq!(m.reg[&(DCS + 0x7a0)], 0xc_0000);
+    }
+
     /// Never armed within 200 ms: nothing written to watchdog 2, the record says 0.
     #[test]
     fn wd2_extend_without_the_engine_leaves_watchdog_2_alone() {
