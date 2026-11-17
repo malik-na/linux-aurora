@@ -635,6 +635,9 @@ fn main() -> ExitCode {
 }
 
 #[cfg(test)]
+mod spec_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1339,6 +1342,44 @@ mod tests {
         assert!(r.is_ok());
         assert_eq!(m.reg[&0x2_0002_1008], 0x700);
         assert_eq!(m.reg[&(DCS + 0x7a0)], 0xc_0000);
+    }
+
+    /// Follow-up to the independent tests (spec_tests a2_*, 2026-11-17): they saw watchdog words
+    /// written on an entry refused before the last stage. Those writes are the put-back: the
+    /// words hold after the refusal what they held before it.
+    #[test]
+    fn refused_entry_leaves_the_watchdog_words_as_found() {
+        let words = [WDT + 0x0c, WDT + 0x14, WDT + 0x1c, WDT + 0x24, WDT + 0x2c, WDT + 0x8008, WDT + 0x800c];
+        let mut m = Model::new();
+        m.ps_stuck = vec![SIO_PARENTS[1]];
+        let before: Vec<u64> = words.iter().map(|a| *m.reg.get(a).unwrap_or(&0)).collect();
+        let mut cfg = all_cfg();
+        cfg.sio_on = true;
+        let (_, r) = enter_all(&mut m, cfg);
+        assert_eq!(r.err(), Some(Fail::Precheck));
+        let after: Vec<u64> = words.iter().map(|a| *m.reg.get(a).unwrap_or(&0)).collect();
+        assert_eq!(before, after);
+    }
+
+    /// Found while reading the undo path for the same follow-up: an entry that stops at the
+    /// Secure Enclave's gate, after run 43's step, must put the memory controller's words back
+    /// like everything else it changed.
+    #[test]
+    fn stopped_entry_puts_back_what_mem_quiet_zeroed() {
+        let mut m = Model::new();
+        m.sep_gates = false;
+        m.reg.insert(0x2_0002_1008, 0x700);
+        m.reg.insert(0x2_0002_1000, 0xffed_fc3d);
+        m.reg.insert(0x2_0015_5000, 0xffff_ffff);
+        m.reg.insert(DCS + 0x7a0, 0xc_0000);
+        let mut cfg = all_cfg();
+        cfg.mem_quiet = true;
+        let (_, r) = enter_all(&mut m, cfg);
+        assert_eq!(r.err(), Some(Fail::SepGate));
+        assert_eq!(m.reg[&0x2_0002_1008], 0x700, "enable word");
+        assert_eq!(m.reg[&0x2_0002_1000], 0xffed_fc3d, "mask word");
+        assert_eq!(m.reg[&0x2_0015_5000], 0xffff_ffff, "MCC+0x55000");
+        assert_eq!(m.reg[&(DCS + 0x7a0)], 0xc_0000, "DCS0+0x7a0");
     }
 
     /// Never armed within 200 ms: nothing written to watchdog 2, the record says 0.
